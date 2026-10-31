@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Wand2 } from 'lucide-react'
 import type { Profile, ProfileRecord } from '@shared/types'
 import { api } from '@renderer/lib/api'
 import { useAsync } from '@renderer/lib/hooks'
@@ -8,7 +9,8 @@ import { AnswerBank } from '@renderer/components/AnswerBank'
 import { DocumentSection } from '@renderer/components/DocumentSection'
 import { ProfileEditor, cleanProfile } from '@renderer/components/ProfileEditor'
 import { VoiceCard } from '@renderer/components/VoiceCard'
-import { Button, ErrorBlock, Loading, Page, PageHeader, Tabs } from '@renderer/components/ui'
+import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
+import { Button, Card, ErrorBlock, Loading, Page, PageHeader, Tabs } from '@renderer/components/ui'
 
 type TabId = 'profile' | 'documents' | 'voice' | 'answers'
 
@@ -18,6 +20,10 @@ export function ProfilePage(): React.JSX.Element {
   const rec = useAsync(() => api.getProfile(), [])
   const [draft, setDraft] = useState<Profile | null>(null)
   const [saving, setSaving] = useState(false)
+  const [reading, setReading] = useState(false)
+  const [confirmRead, setConfirmRead] = useState(false)
+  const resumes = useAsync(() => api.listDocuments('resume'), [tab])
+  const resumeId = (resumes.data?.find((d) => d.isPrimary) ?? resumes.data?.[0])?.id ?? null
 
   useEffect(() => {
     if (rec.data) setDraft((cur) => cur ?? rec.data?.profile ?? null)
@@ -38,6 +44,20 @@ export function ProfilePage(): React.JSX.Element {
       toast.error(e)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function readResume(): Promise<void> {
+    if (!resumeId) return
+    setReading(true)
+    try {
+      const read = await api.extractProfileFromResume(resumeId)
+      setDraft(read)
+      toast.success('Read your resume. Check the draft, then press Save profile.')
+    } catch (e) {
+      toast.error(e)
+    } finally {
+      setReading(false)
     }
   }
 
@@ -87,11 +107,26 @@ export function ProfilePage(): React.JSX.Element {
         />
       </div>
 
-      {tab === 'profile' && <ProfileEditor value={draft} onChange={setDraft} />}
+      {tab === 'profile' && (
+        <>
+          <Card className="mb-4 flex items-center justify-between gap-4 p-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-fg">Fill this in from your resume</p>
+              <p className="text-xs text-faint">
+                {resumeId ? 'Uses your extraction model and replaces the fields below with a draft. Nothing is saved until you press Save profile.' : 'Upload a resume on the Documents tab first.'}
+              </p>
+            </div>
+            <Button icon={<Wand2 size={14} />} loading={reading} disabled={!resumeId} onClick={() => (draft.fullName.trim() ? setConfirmRead(true) : void readResume())}>
+              Read my resume
+            </Button>
+          </Card>
+          <ProfileEditor value={draft} onChange={setDraft} />
+        </>
+      )}
 
       {tab === 'documents' && (
         <>
-          <DocumentSection kind="resume" title="Resumes" hint="The primary resume is attached to applications." emptyText="No resume yet. Upload a PDF or Word file, then read it on the Profile tab to fill in your details." />
+          <DocumentSection kind="resume" title="Resumes" hint="The primary resume is attached to applications." emptyText="No resume yet. Upload a PDF or Word file, then press Read my resume on the Profile tab to fill in your details." />
           <DocumentSection kind="cover_letter_sample" title="Sample cover letters" hint="Past letters you were happy with." emptyText="No sample letters. Add one so drafts match how you open and close." />
           <DocumentSection kind="writing_sample" title="Writing samples" hint="Emails, posts or notes in your own words." allowPaste emptyText="No writing samples. A few pages of your own writing is enough to learn your voice." />
           <DocumentSection kind="portfolio" title="Portfolio links" allowLink emptyText="No portfolio links yet." />
@@ -102,6 +137,16 @@ export function ProfilePage(): React.JSX.Element {
       {tab === 'voice' && <VoiceTab voice={draft.voice} onBuilt={(voice) => { setDraft({ ...draft, voice }); rec.reload() }} />}
 
       {tab === 'answers' && <AnswerBank />}
+
+      {confirmRead && (
+        <ConfirmDialog
+          title="Replace the profile fields?"
+          message="The fields on this page will be replaced with a draft read from your resume, including anything you have not saved. Nothing is saved until you press Save profile."
+          confirmLabel="Read my resume"
+          onClose={() => setConfirmRead(false)}
+          onConfirm={readResume}
+        />
+      )}
     </Page>
   )
 }

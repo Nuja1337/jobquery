@@ -5,7 +5,10 @@ import { hasVisibleCaptcha } from './browser'
 // left out because many job descriptions end with it.
 const CONFIRMATION_TEXT =
   /thank(s| you) for (applying|submitting|your application)|application (has been |was )?(successfully )?(received|submitted|sent)|we('ve| have) received your application|your application is (complete|on its way)|application submitted|successfully submitted/gi
-const CONFIRMATION_URL = /confirm|thank|submitted|success|complete/i
+// A page address alone counts only with these words, and never for a step that still wants
+// something from the person, such as "/confirm-email" or "/complete-profile".
+const CONFIRMATION_URL = /thank|submitted|success|complete|confirmation/i
+const UNFINISHED_URL = /verify|e-?mail|sign-?in|log-?in|account|password|profile/i
 const INVALID_TEXT = /(this field is|is) required|please (fill|complete|enter|select|upload)|can'?t be blank|must be (filled|completed)/i
 const SUBMIT_NAME = /^(submit|submit application|send application|submit your application|apply|complete application)$/i
 
@@ -62,7 +65,8 @@ export async function confirmationSeen(page: Page, baseline: PageBaseline): Prom
   const moved = page.url() !== baseline.url
   const formGone = !(await anySubmitVisible(page))
   if (matches.length > baseline.confirmationCount && (moved || formGone)) return matches[matches.length - 1][0]
-  if (moved && formGone && CONFIRMATION_URL.test(new URL(page.url()).pathname + new URL(page.url()).search)) return page.url()
+  const where = new URL(page.url()).pathname + new URL(page.url()).search
+  if (moved && formGone && CONFIRMATION_URL.test(where) && !UNFINISHED_URL.test(where)) return page.url()
   return null
 }
 

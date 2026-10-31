@@ -15,10 +15,14 @@ export interface ExtractedField {
   placeholder: string | null
   maxLength: number | null
   fileHint: 'resume' | 'cover_letter' | 'other' | null
+  /** The field already holds something: typed text, a chosen option, a ticked box or a file. */
+  hasValue: boolean
 }
 
 export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
-  const clean = (s) => (s || '').replace(/\s+/g, ' ').replace(/\s*\*\s*$/, '').trim();
+  // Labels keep a trailing "*" until isRequired has seen it. clean() drops it for display.
+  const tidy = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const clean = (s) => tidy(s).replace(/\s*\*\s*$/, '').trim();
   const isVisible = (el) => {
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
@@ -37,45 +41,45 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
 
   const labelFor = (el) => {
     const labelledBy = el.getAttribute('aria-labelledby');
-    if (labelledBy) { const t = clean(textOfIds(labelledBy)); if (t) return t; }
+    if (labelledBy) { const t = tidy(textOfIds(labelledBy)); if (t) return t; }
     if (el.id) {
       const lab = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
-      if (lab) { const t = clean(lab.textContent); if (t) return t; }
+      if (lab) { const t = tidy(lab.textContent); if (t) return t; }
     }
     const wrap = el.closest('label');
     if (wrap) {
       const copy = wrap.cloneNode(true);
       copy.querySelectorAll('input, select, textarea, option').forEach((n) => n.remove());
-      const t = clean(copy.textContent);
+      const t = tidy(copy.textContent);
       if (t) return t;
     }
     const aria = el.getAttribute('aria-label');
-    if (aria) return clean(aria);
+    if (aria) return tidy(aria);
     // Walk up a few levels looking for a label-like element in the same field container.
     let node = el.parentElement;
     for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
       const cand = node.querySelector('label, legend, [class*="label" i], [class*="question" i], h3, h4');
-      if (cand && !cand.contains(el)) { const t = clean(cand.textContent); if (t && t.length < 400) return t; }
+      if (cand && !cand.contains(el)) { const t = tidy(cand.textContent); if (t && t.length < 400) return t; }
     }
-    return clean(el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '');
+    return tidy(el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '');
   };
 
   const groupLabel = (el) => {
     const fs = el.closest('fieldset');
-    if (fs) { const lg = fs.querySelector('legend'); if (lg) { const t = clean(lg.textContent); if (t) return t; } }
+    if (fs) { const lg = fs.querySelector('legend'); if (lg) { const t = tidy(lg.textContent); if (t) return t; } }
     const group = el.closest('[role="radiogroup"], [role="group"]');
     if (group) {
       const lb = group.getAttribute('aria-labelledby');
-      if (lb) { const t = clean(textOfIds(lb)); if (t) return t; }
+      if (lb) { const t = tidy(textOfIds(lb)); if (t) return t; }
       const al = group.getAttribute('aria-label');
-      if (al) return clean(al);
+      if (al) return tidy(al);
     }
     let node = el.parentElement;
     for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
       const cand = node.querySelector('legend, [class*="label" i], [class*="question" i], h3, h4, p');
-      if (cand && !cand.contains(el) && !cand.querySelector('input')) { const t = clean(cand.textContent); if (t && t.length < 400) return t; }
+      if (cand && !cand.contains(el) && !cand.querySelector('input')) { const t = tidy(cand.textContent); if (t && t.length < 400) return t; }
     }
-    return clean(el.name || '');
+    return tidy(el.name || '');
   };
 
   const isRequired = (el, label) =>
@@ -114,7 +118,8 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
         const rawLabel = labelFor(el);
         fields.push({
           key: uniqueKey(name || el.id || rawLabel), jpId: idFor(el), label: clean(rawLabel), type: 'checkbox',
-          required: isRequired(el, rawLabel), options: [], optionIds: [], placeholder: null, maxLength: null, fileHint: null
+          required: isRequired(el, rawLabel), options: [], optionIds: [], placeholder: null, maxLength: null, fileHint: null,
+          hasValue: el.checked
         });
         continue;
       }
@@ -123,8 +128,8 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
       const rawLabel = groupLabel(el);
       fields.push({
         key: uniqueKey(name || rawLabel), jpId: idFor(el), label: clean(rawLabel), type: type === 'radio' ? 'radio' : 'checkboxes',
-        required: peers.some((p) => isRequired(p, rawLabel)), options: peers.map((p) => labelFor(p)), optionIds: peers.map(idFor),
-        placeholder: null, maxLength: null, fileHint: null
+        required: peers.some((p) => isRequired(p, rawLabel)), options: peers.map((p) => clean(labelFor(p))), optionIds: peers.map(idFor),
+        placeholder: null, maxLength: null, fileHint: null, hasValue: peers.some((p) => p.checked)
       });
       continue;
     }
@@ -155,7 +160,8 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
       optionIds: [],
       placeholder: el.getAttribute('placeholder'),
       maxLength: max,
-      fileHint: fieldType === 'file' ? fileHint(rawLabel + ' ' + (el.name || '') + ' ' + (el.id || '')) : null
+      fileHint: fieldType === 'file' ? fileHint(rawLabel + ' ' + (el.name || '') + ' ' + (el.id || '')) : null,
+      hasValue: fieldType === 'file' ? Boolean(el.files && el.files.length) : (el.value || '').trim() !== ''
     });
   }
   document.documentElement.dataset.jpCounter = String(counter);

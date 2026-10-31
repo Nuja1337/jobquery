@@ -94,6 +94,9 @@ function noSponsorship(description: string): boolean {
 
 const ANYWHERE = /\b(anywhere|worldwide|global|multiple locations|various|flexible|remote)\b/i
 
+/** Words that describe an area without naming the place, so they don't have to appear in the job's location. */
+const AREA_WORDS = new Set(['area', 'greater', 'metro', 'metropolitan', 'region', 'county', 'city'])
+
 function locationMatches(location: string, wanted: string[]): boolean {
   if (ANYWHERE.test(location)) return true
   const loc = location.toLowerCase()
@@ -105,10 +108,15 @@ function locationMatches(location: string, wanted: string[]): boolean {
     // and a state or province preference ("California") covers its cities ("San Jose, CA").
     if (isCountryName(w) && countryOf(location) !== null && countryOf(location) === countryOf(w)) return true
     const wantedRegion = regionOf(w)
-    if (wantedRegion && !w.includes(',') && regionOf(location) === wantedRegion) return true
-    // "San Francisco Bay Area" and "San Francisco, CA" share half of their long words.
-    const words = target.split(/[^\p{L}\p{N}]+/u).filter((x) => x.length >= 4)
-    return words.length > 0 && words.filter((x) => loc.includes(x)).length >= words.length / 2
+    const wantedIsRegion = wantedRegion !== null && !w.includes(',')
+    if (wantedIsRegion && regionOf(location) === wantedRegion) return true
+    // A country, state or province is settled by the checks above. Matching on its words would let
+    // "United Kingdom" pass "Austin, United States" and "North Carolina" pass "Fargo, North Dakota".
+    if (isCountryName(w) || wantedIsRegion) return false
+    // "San Francisco Bay Area" and "San Francisco, CA" share their place words. Every one of them
+    // has to appear, so "South Africa" does not pass "Seoul, South Korea".
+    const words = target.split(/[^\p{L}\p{N}]+/u).filter((x) => x.length >= 4 && !AREA_WORDS.has(x))
+    return words.length > 0 && words.every((x) => loc.includes(x))
   })
 }
 

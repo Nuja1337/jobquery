@@ -140,11 +140,15 @@ export const BUILTIN_PRICES: Record<string, ModelPrice> = {
   'gemini-2.5-flash-lite': { inputPerMTok: 0.1, outputPerMTok: 0.4 }
 }
 
+/**
+ * A score below the shortlist line is always in the lowest bucket, so a job the app archives is
+ * never labeled as a great fit. The cut-offs for perfect and great only apply above the line.
+ */
 export function bucketFor(score: number, shortlistScore: number): FitBucket {
+  if (score < shortlistScore) return 'weak'
   if (score >= 85) return 'perfect'
   if (score >= 70) return 'great'
-  if (score >= shortlistScore) return 'good'
-  return 'weak'
+  return 'good'
 }
 
 export const BUCKET_LABELS: Record<FitBucket, string> = {

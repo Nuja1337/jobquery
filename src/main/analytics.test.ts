@@ -71,7 +71,7 @@ describe('getAnalytics', () => {
     const weak = seedJob(env, 'w1', DAY, 'scored')
     ctx.jobs.saveFit(weak.id, fit(50, 'weak', [], ['Kubernetes', 'Go']), 1)
     const gone = seedJob(env, 'x1', DAY, 'dismissed')
-    ctx.db.run("UPDATE jobs SET dismiss_tags = '[\"too senior\",\"other\"]' WHERE id = :id", { id: gone.id })
+    ctx.db.run("UPDATE jobs SET dismiss_tags = '[\"too senior\",\"other\"]', dismissed_at = :at WHERE id = :id", { id: gone.id, at: new Date(Date.now() - HOUR).toISOString() })
 
     // Outside the 7 day range
     seedJob(env, 'old', 30 * DAY, 'filtered_out', {}, { reason: 'company blocked' })
@@ -144,10 +144,73 @@ describe('getAnalytics', () => {
     expect(report.tokenSavings.estimatedUsdSaved).toBeCloseTo(0.04, 6)
     expect(report.tokenSavings.cacheHits).toBe(1)
 
-    // Spent on the two submitted jobs: 0.01 triage + 0.05 cover letter, shared by 2 applications.
-    expect(report.averages.costPerApplicationUsd).toBeCloseTo(0.03, 6)
+    // All paid spend in the range (two triage calls and a cover letter, 0.07), shared by 2 applications sent.
+    expect(report.averages.costPerApplicationUsd).toBeCloseTo(0.035, 6)
     expect(report.averages.hoursDiscoveryToApply).toBeCloseTo((24 + 4) / 2, 1)
     expect(report.averages.daysToFirstResponse).toBeCloseTo(1.5, 1)
+  })
+
+  it('counts a dismissal on the day it happened, not when the posting was last seen', async () => {
+    const env = await makeTestEnv()
+    const { ctx } = env
+    const dismissedAt = (id: string, daysAgo: number) =>
+      ctx.db.run("UPDATE jobs SET dismissed_at = :at, dismiss_tags = '[\"not remote\"]' WHERE id = :id", { id, at: new Date(Date.now() - daysAgo * DAY).toISOString() })
+    // Found long ago and dismissed two days ago.
+    const recent = seedJob(env, 'recent', 40 * DAY, 'dismissed')
+    dismissedAt(recent.id, 2)
+    // Dismissed a month ago, but the board listed it again today, which bumps updated_at.
+    const old = seedJob(env, 'old', 40 * DAY, 'dismissed')
+    dismissedAt(old.id, 30)
+    ctx.db.run('UPDATE jobs SET updated_at = :at WHERE id = :id', { id: old.id, at: new Date().toISOString() })
+
+    const report = getAnalytics(ctx, 7)
+    expect(report.dismissReasons).toEqual([{ key: 'not remote', count: 1 }])
+  })
+
+  it('divides all AI spend in the range by the applications sent in the range', async () => {
+    const env = await makeTestEnv()
+    const { ctx } = env
+    const sent = seedJob(env, 'sent', 3 * DAY, 'applied')
+    const app = ctx.applications.create(sent.id)
+    ctx.applications.update(app.id, { status: 'submitted', submittedAt: new Date(Date.now() - DAY).toISOString() })
+    // Triage of jobs that were never applied to still costs money.
+    const other = seedJob(env, 'other', DAY, 'scored')
+    seedCall(env, { task: 'triage', jobId: other.id, tokens: 1000, cost: 0.3 })
+    seedCall(env, { task: 'cover_letter', jobId: sent.id, tokens: 1000, cost: 0.1 })
+    // Outside the range and cached calls are left out.
+    seedCall(env, { task: 'triage', jobId: other.id, tokens: 1000, cost: 5, ageMs: 20 * DAY })
+    seedCall(env, { task: 'triage', jobId: other.id, tokens: 0, cost: 0, hit: true })
+    expect(getAnalytics(ctx, 7).averages.costPerApplicationUsd).toBeCloseTo(0.4, 6)
+  })
+
+  it('builds the funnel from the jobs discovered in the range, so no step is larger than the one before', async () => {
+    const env = await makeTestEnv()
+    const { ctx } = env
+    ctx.settings.update({ thresholds: { shortlistScore: 60 } })
+    // Found a month ago, applied to yesterday. It is not part of this week's cohort.
+    const older = seedJob(env, 'older', 30 * DAY, 'applied')
+    ctx.jobs.saveFit(older.id, fit(90, 'perfect', [], []), 1)
+    const olderApp = ctx.applications.create(older.id)
+    ctx.applications.update(olderApp.id, { status: 'submitted', submittedAt: new Date(Date.now() - DAY).toISOString() })
+    // Found this week, scored and applied to.
+    const a = seedJob(env, 'a', 2 * DAY, 'applied')
+    ctx.jobs.saveFit(a.id, fit(80, 'great', [], []), 1)
+    const appA = ctx.applications.create(a.id)
+    ctx.applications.update(appA.id, { status: 'submitted', submittedAt: new Date(Date.now() - DAY).toISOString() })
+    // Found this week and prepared by hand without a score.
+    const b = seedJob(env, 'b', 2 * DAY, 'preparing')
+    ctx.applications.create(b.id)
+    // Found this week, scored below the line.
+    const c = seedJob(env, 'c', 2 * DAY, 'scored')
+    ctx.jobs.saveFit(c.id, fit(40, 'weak', [], []), 1)
+
+    const { funnel, averages, outcomesBySource } = getAnalytics(ctx, 7)
+    expect(funnel).toMatchObject({ discovered: 3, scored: 3, shortlisted: 2, prepared: 2, submitted: 1 })
+    const steps = [funnel.discovered, funnel.scored, funnel.shortlisted, funnel.prepared, funnel.submitted, funnel.responses, funnel.interviews, funnel.offers]
+    for (let i = 1; i < steps.length; i++) expect(steps[i]).toBeLessThanOrEqual(steps[i - 1])
+    // Averages and outcomes still follow the applications sent in the range, whenever the job was found.
+    expect(outcomesBySource.reduce((n, o) => n + o.submitted, 0)).toBe(2)
+    expect(averages.hoursDiscoveryToApply).not.toBeNull()
   })
 
   it('returns zeros and nulls for an empty database', async () => {

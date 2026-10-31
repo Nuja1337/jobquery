@@ -15,7 +15,7 @@ export function LintScore({ score, min }: { score: number; min: number }): React
   return (
     <div className="flex items-baseline gap-1.5" title="100 reads as written by a person. Drafts below your minimum are revised.">
       <span className={clsx('text-3xl font-semibold tabular-nums', tone === 'good' ? 'text-good' : tone === 'warn' ? 'text-warn' : 'text-bad')}>{score}</span>
-      <span className="text-xs text-faint">of 100 human score, minimum {min}</span>
+      <span className="text-xs text-faint">out of 100 for sounding human. Your minimum is {min}.</span>
     </div>
   )
 }

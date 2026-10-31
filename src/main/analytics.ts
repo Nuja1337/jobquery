@@ -56,6 +56,10 @@ interface JobRow {
   fit_score: number | null
   fit_json: string | null
   filter_reason: string | null
+  /** Set when the job has an application. */
+  application_id: string | null
+  submitted_at: string | null
+  outcome: ApplicationOutcome | null
 }
 
 interface AppRow {
@@ -95,13 +99,15 @@ export function getAnalytics(ctx: AppContext, rangeDays: number): AnalyticsRepor
   }
   const since = from.toISOString()
 
+  // The funnel follows the jobs discovered in the range, so a later step can never be larger than an earlier one.
   const jobs = ctx.db.all<JobRow>(
-    'SELECT source, stage, discovered_at, fit_score, fit_json, filter_reason FROM jobs WHERE discovered_at >= :since',
+    `SELECT j.source, j.stage, j.discovered_at, j.fit_score, j.fit_json, j.filter_reason,
+       a.id AS application_id, a.submitted_at, a.outcome
+     FROM jobs j LEFT JOIN applications a ON a.job_id = j.id WHERE j.discovered_at >= :since`,
     { since }
   )
-  const dismissedRows = ctx.db.all<{ dismiss_tags: string }>("SELECT dismiss_tags FROM jobs WHERE stage = 'dismissed' AND updated_at >= :since", { since })
-  const preparedCount =
-    ctx.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM applications WHERE created_at >= :since', { since })?.n ?? 0
+  // Dismissals are counted by the day they happened, whenever the job was found.
+  const dismissedRows = ctx.db.all<{ dismiss_tags: string }>("SELECT dismiss_tags FROM jobs WHERE stage = 'dismissed' AND dismissed_at >= :since", { since })
   const submitted = ctx.db.all<AppRow>(
     `SELECT a.job_id, a.created_at, a.submitted_at, a.outcome, a.outcome_at, j.source, j.fit_bucket, j.discovered_at
      FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.submitted_at >= :since`,
@@ -114,22 +120,26 @@ export function getAnalytics(ctx: AppContext, rangeDays: number): AnalyticsRepor
   )
   const paidCalls = calls.filter((c) => c.cache_hit === 0)
 
-  // Funnel
-  const isResponse = (a: AppRow) => RESPONSE_OUTCOMES.includes(a.outcome)
+  // Funnel. Each job counts at the furthest step it reached. A job with an application got at least
+  // as far as the shortlist, even when the user prepared it without a score.
+  const isResponse = (a: Pick<AppRow, 'outcome'>) => RESPONSE_OUTCOMES.includes(a.outcome)
   const count = (stage: string) => jobs.filter((j) => j.stage === stage).length
+  const withApplication = jobs.filter((j) => j.application_id !== null)
+  const sent = withApplication.filter((j) => j.submitted_at !== null)
+  const outcomeOf = (j: JobRow): ApplicationOutcome => j.outcome ?? 'none'
   const funnel: AnalyticsReport['funnel'] = {
     discovered: jobs.length,
     filteredOut: count('filtered_out'),
     prescoredOut: count('prescored_out'),
     duplicates: count('duplicate'),
-    scored: jobs.filter((j) => j.fit_score !== null).length,
-    shortlisted: jobs.filter((j) => j.fit_score !== null && j.fit_score >= thresholds.shortlistScore).length,
-    dismissed: dismissedRows.length,
-    prepared: preparedCount,
-    submitted: submitted.length,
-    responses: submitted.filter(isResponse).length,
-    interviews: submitted.filter((a) => INTERVIEW_OUTCOMES.includes(a.outcome)).length,
-    offers: submitted.filter((a) => OFFER_OUTCOMES.includes(a.outcome)).length
+    scored: jobs.filter((j) => j.fit_score !== null || j.application_id !== null).length,
+    shortlisted: jobs.filter((j) => (j.fit_score !== null && j.fit_score >= thresholds.shortlistScore) || j.application_id !== null).length,
+    dismissed: count('dismissed'),
+    prepared: withApplication.length,
+    submitted: sent.length,
+    responses: sent.filter((j) => isResponse({ outcome: outcomeOf(j) })).length,
+    interviews: sent.filter((j) => INTERVIEW_OUTCOMES.includes(outcomeOf(j))).length,
+    offers: sent.filter((j) => OFFER_OUTCOMES.includes(outcomeOf(j))).length
   }
 
   // Daily rows, zeros filled in
@@ -214,8 +224,8 @@ export function getAnalytics(ctx: AppContext, rangeDays: number): AnalyticsRepor
   const skipped = funnel.filteredOut + funnel.prescoredOut + funnel.duplicates
 
   // Averages
-  const paidForSubmitted = new Set(submitted.map((a) => a.job_id))
-  const spentOnSubmitted = paidCalls.filter((c) => c.job_id && paidForSubmitted.has(c.job_id)).reduce((sum, c) => sum + c.cost_usd, 0)
+  // All AI spend in the range, including scoring of jobs that were never applied to, per application sent in the range.
+  const totalSpend = paidCalls.reduce((sum, c) => sum + c.cost_usd, 0)
   const hours = submitted.map((a) => (Date.parse(a.submitted_at!) - Date.parse(a.discovered_at)) / 3_600_000).filter((h) => Number.isFinite(h) && h >= 0)
   const responseDays = submitted
     .filter((a) => isResponse(a) && a.outcome_at && a.submitted_at)
@@ -242,7 +252,7 @@ export function getAnalytics(ctx: AppContext, rangeDays: number): AnalyticsRepor
       cacheHits: calls.filter((c) => c.cache_hit === 1).length
     },
     averages: {
-      costPerApplicationUsd: submitted.length ? spentOnSubmitted / submitted.length : null,
+      costPerApplicationUsd: submitted.length ? totalSpend / submitted.length : null,
       hoursDiscoveryToApply: average(hours),
       daysToFirstResponse: average(responseDays)
     }

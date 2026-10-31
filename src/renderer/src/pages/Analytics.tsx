@@ -48,8 +48,13 @@ export function Analytics(): React.JSX.Element {
 
 function Report({ r }: { r: AnalyticsReport }): React.JSX.Element {
   const f = r.funnel
-  const responseRate = ratio(f.responses, f.submitted)
-  const interviewRate = ratio(f.interviews, f.submitted)
+  // The tiles count applications sent in the period. The funnel follows the jobs found in the period.
+  const sent = r.outcomesBySource.reduce(
+    (t, o) => ({ submitted: t.submitted + o.submitted, responses: t.responses + o.responses, interviews: t.interviews + o.interviews }),
+    { submitted: 0, responses: 0, interviews: 0 }
+  )
+  const responseRate = ratio(sent.responses, sent.submitted)
+  const interviewRate = ratio(sent.interviews, sent.submitted)
 
   const funnelRows = [
     { name: 'Discovered', value: f.discovered },
@@ -73,10 +78,10 @@ function Report({ r }: { r: AnalyticsReport }): React.JSX.Element {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-6 gap-3">
-        <Stat label="Submitted" value={f.submitted} />
-        <Stat label="Reply rate" value={formatPercent(responseRate)} hint={`${plural(f.responses, 'reply', 'replies')}`} />
-        <Stat label="Interview rate" value={formatPercent(interviewRate)} hint={plural(f.interviews, 'interview')} />
-        <Stat label="Cost per application" value={formatUsd(r.averages.costPerApplicationUsd)} />
+        <Stat label="Submitted" value={sent.submitted} />
+        <Stat label="Reply rate" value={formatPercent(responseRate)} hint={`${plural(sent.responses, 'reply', 'replies')}`} />
+        <Stat label="Interview rate" value={formatPercent(interviewRate)} hint={plural(sent.interviews, 'interview')} />
+        <Stat label="AI spend per application" value={formatUsd(r.averages.costPerApplicationUsd)} hint="All AI spend in the period, divided by applications sent" />
         <Stat label="Discovery to apply" value={r.averages.hoursDiscoveryToApply == null ? '-' : `${r.averages.hoursDiscoveryToApply.toFixed(0)} h`} />
         <Stat label="Days to first reply" value={r.averages.daysToFirstResponse == null ? '-' : r.averages.daysToFirstResponse.toFixed(1)} />
       </div>
@@ -85,7 +90,7 @@ function Report({ r }: { r: AnalyticsReport }): React.JSX.Element {
         <ChartCard
           className="col-span-2"
           title="Funnel"
-          hint={`${f.filteredOut + f.prescoredOut + f.duplicates} of ${f.discovered} jobs never reached the AI: ${f.filteredOut} filtered, ${f.prescoredOut} low keyword match, ${f.duplicates} duplicates.`}
+          hint={`Jobs found in this period and how far they got. ${f.filteredOut + f.prescoredOut + f.duplicates} of ${f.discovered} never reached the AI: ${f.filteredOut} filtered, ${f.prescoredOut} low keyword match, ${f.duplicates} duplicates.`}
           table={{ columns: ['Stage', 'Jobs'], rows: funnelRows.map((x) => [x.name, x.value]) }}
         >
           <HBarChart

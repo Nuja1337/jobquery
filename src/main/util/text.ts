@@ -18,7 +18,12 @@ const BOILERPLATE = [
  * since they cost tokens and never change a fit score or a cover letter.
  */
 export function trimDescription(text: string, maxChars: number): string {
-  const paragraphs = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+  // Prompts quote the posting between triple quotes. A posting can't end that block early.
+  const paragraphs = text
+    .replace(/"{3,}/g, '"')
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
   const kept = paragraphs.filter((p) => !BOILERPLATE.some((re) => re.test(p)))
   let out = kept.join('\n\n')
   if (out.length <= maxChars) return out

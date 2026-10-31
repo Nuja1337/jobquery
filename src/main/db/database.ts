@@ -40,13 +40,30 @@ export class Db {
       return loaded
     }
     if (filePath && fs.existsSync(filePath)) {
-      try {
-        db = load(filePath)
-      } catch (err) {
-        // A save that failed between writing the temp file and renaming it leaves a good copy there.
-        const tmp = `${filePath}.tmp`
-        if (!fs.existsSync(tmp)) throw err
-        db = load(tmp)
+      const tmp = `${filePath}.tmp`
+      let fromTmp: Database | null = null
+      // A save that failed at the rename leaves the newest data in the temp file. Use it when it is
+      // newer than the main file and intact. A half written temp file fails the check.
+      if (fs.existsSync(tmp) && fs.statSync(tmp).mtimeMs > fs.statSync(filePath).mtimeMs) {
+        try {
+          const candidate = load(tmp)
+          const check = candidate.exec('PRAGMA quick_check')
+          if (check[0]?.values[0]?.[0] === 'ok') fromTmp = candidate
+          else candidate.close()
+        } catch {
+          // Unusable. Fall back to the main file.
+        }
+      }
+      if (fromTmp) {
+        db = fromTmp
+      } else {
+        try {
+          db = load(filePath)
+        } catch (err) {
+          // The main file is damaged. An older temp copy is still better than nothing.
+          if (!fs.existsSync(tmp)) throw err
+          db = load(tmp)
+        }
       }
     } else {
       db = new SQL.Database()
@@ -65,7 +82,9 @@ export class Db {
     while (version < MIGRATIONS.length) {
       this.db.exec('BEGIN')
       try {
-        this.db.exec(MIGRATIONS[version])
+        const migration = MIGRATIONS[version]
+        if (typeof migration === 'string') this.db.exec(migration)
+        else migration(this.db)
         version += 1
         this.db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", [String(version)])
         this.db.exec('COMMIT')

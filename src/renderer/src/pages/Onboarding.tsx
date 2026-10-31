@@ -175,7 +175,7 @@ export function Onboarding(): React.JSX.Element {
           <div className="mt-5 space-y-4">
             {step === 0 && (
               <>
-                <p className="text-sm text-muted">JobPilot uses your own AI account. Pick a provider, paste a key and test the connection. The key is stored encrypted on this computer.</p>
+                <p className="text-sm text-muted">JobPilot uses your own AI account. Pick a provider, paste a key and test the connection.</p>
                 {list.length > 0 && (
                   <Card>
                     <ul className="divide-y divide-line">
@@ -211,7 +211,7 @@ export function Onboarding(): React.JSX.Element {
                           providers={list}
                           value={routing[s.id]}
                           onChange={(ref) => setRouting({ ...routing, [s.id]: ref })}
-                          suggested={SUGGESTED_MODELS[list.find((p) => p.id === routing[s.id]?.providerId)?.kind ?? 'anthropic']?.[s.id]}
+                          suggested={(kind) => SUGGESTED_MODELS[kind]?.[s.id]}
                         />
                       </Field>
                     ))}
@@ -242,7 +242,7 @@ export function Onboarding(): React.JSX.Element {
 
             {step === 4 && (
               <>
-                <p className="text-sm text-muted">Optional, and the biggest help for how your letters sound. A few things you wrote yourself teach JobPilot your voice.</p>
+                <p className="text-sm text-muted">This step is optional, and it helps the most with how your letters sound. A few things you wrote yourself teach JobPilot your voice.</p>
                 <DocumentSection kind="writing_sample" title="Writing samples" allowPaste emptyText="Emails, posts or notes in your own words." onChange={(d) => setSamples((s) => ({ ...s, writing: d.length }))} />
                 <DocumentSection kind="cover_letter_sample" title="Sample cover letter" emptyText="A past cover letter you were happy with." onChange={(d) => setSamples((s) => ({ ...s, letters: d.length }))} />
                 <DocumentSection kind="portfolio" title="Portfolio links" allowLink emptyText="Links to your portfolio, GitHub or published work." />
@@ -267,7 +267,7 @@ export function Onboarding(): React.JSX.Element {
 
             {step === 7 && (
               <Card className="space-y-3 p-5">
-                <p className="text-sm text-fg">You are ready. Here is what happens next.</p>
+                <p className="text-sm text-fg">Setup is done. This is what JobPilot does from now on.</p>
                 <ul className="list-inside list-disc space-y-1.5 text-sm text-muted">
                   <li>Press Run now. JobPilot looks at your sources and drops what does not fit, using free filters first.</li>
                   <li>Jobs that pass get an AI fit score. The good ones land on your shortlist.</li>

@@ -48,6 +48,11 @@ export interface AppInfo {
   version: string
   dataDir: string
   platform: string
+  /**
+   * False when the operating system offers no real key store (or, on Linux, only the "basic_text"
+   * fallback). API keys are then only obscured on disk, and the UI should say so.
+   */
+  secureKeyStorage: boolean
 }
 
 export interface ProviderTestResult {
@@ -138,6 +143,8 @@ export interface Api {
   runPipeline(options: RunOptions): Promise<RunStats>
   cancelPipeline(): Promise<void>
   getPipelineStatus(): Promise<PipelineProgress>
+  /** When autopilot runs next, as an ISO time, or null when autopilot is off. */
+  getNextRunAt(): Promise<string | null>
   listRuns(limit: number): Promise<RunRecord[]>
   listEvents(query: { limit: number; types?: EventType[]; jobId?: string }): Promise<EventRecord[]>
   /** Filter changes suggested by the jobs you dismissed. Accepting one calls updateSettings. */

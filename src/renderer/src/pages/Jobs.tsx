@@ -42,6 +42,8 @@ const EMPTY_TEXT: Record<TabId, { title: string; text: string }> = {
 }
 
 const PAGE = 100
+/** The most rows the main process returns for one request. */
+const MAX_REQUEST = 500
 
 export function Jobs(): React.JSX.Element {
   const navigate = useNavigate()
@@ -72,7 +74,28 @@ export function Jobs(): React.JSX.Element {
     [tab, bucket, source, debouncedSearch, starredOnly, sort, limit]
   )
 
-  const list = useAsync(() => api.listJobs(query), [query], ['jobs:changed'])
+  // Loads `limit` rows in requests of at most MAX_REQUEST, paging with offset and appending.
+  const list = useAsync(
+    async () => {
+      const items: JobSummary[] = []
+      const seen = new Set<string>()
+      let total = 0
+      while (items.length < (query.limit ?? PAGE)) {
+        const page = await api.listJobs({ ...query, limit: Math.min(MAX_REQUEST, (query.limit ?? PAGE) - items.length), offset: items.length })
+        total = page.total
+        for (const j of page.items) {
+          if (!seen.has(j.id)) {
+            seen.add(j.id)
+            items.push(j)
+          }
+        }
+        if (page.items.length === 0 || items.length >= total) break
+      }
+      return { items, total }
+    },
+    [query],
+    ['jobs:changed']
+  )
   const counts = useAsync(
     async () => {
       const entries = await Promise.all(TAB_LABELS.map(async (t) => [t.id, (await api.listJobs({ stages: TAB_STAGES[t.id], limit: 1 })).total] as const))
@@ -84,6 +107,8 @@ export function Jobs(): React.JSX.Element {
 
   const items = list.data?.items ?? []
   const allSelected = items.length > 0 && items.every((j) => selected.has(j.id))
+  /** Selected rows that are still on screen. Rows hidden by a filter or tab don't count. */
+  const selectedRows = items.filter((j) => selected.has(j.id))
 
   function changeTab(next: TabId): void {
     setTab(next)
@@ -178,10 +203,10 @@ export function Jobs(): React.JSX.Element {
         </div>
       </div>
 
-      {selected.size > 0 && (
+      {selectedRows.length > 0 && (
         <div className="mb-3 flex items-center gap-3 rounded-lg border border-accent/40 bg-accent-soft px-3 py-2 text-sm">
-          <span className="text-fg">{selected.size} selected</span>
-          <Button size="sm" variant="danger" icon={<X size={13} />} onClick={() => setDismissing(items.filter((j) => selected.has(j.id)))}>
+          <span className="text-fg">{selectedRows.length} selected</span>
+          <Button size="sm" variant="danger" icon={<X size={13} />} onClick={() => setDismissing(selectedRows)}>
             Dismiss selected
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
@@ -253,9 +278,11 @@ export function Jobs(): React.JSX.Element {
                       </div>
                     </td>
                     <td className={clsx(TD, 'max-w-md')}>
-                      <p className="truncate font-medium text-fg">{j.title}</p>
-                      <p className="truncate text-xs text-muted">{j.company}</p>
-                      {reason && tab !== 'shortlist' && <p className="mt-0.5 line-clamp-1 text-xs text-faint">{reason}</p>}
+                      <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/jobs/${j.id}`) }} className="block w-full text-left">
+                        <span className="block truncate font-medium text-fg group-hover:text-accent-strong">{j.title}</span>
+                        <span className="block truncate text-xs text-muted">{j.company}</span>
+                        {reason && tab !== 'shortlist' && <span className="mt-0.5 line-clamp-1 block text-xs text-faint">{reason}</span>}
+                      </button>
                     </td>
                     <td className={clsx(TD, 'text-muted')}>
                       <p className="max-w-44 truncate">{j.location ?? 'Not listed'}</p>
@@ -348,16 +375,17 @@ function AddJobDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (id:
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" loading={busy} disabled={!/^https?:\/\//.test(url.trim())} onClick={() => void submit()}>
+          <Button type="submit" form="add-job-form" variant="primary" loading={busy} disabled={!/^https?:\/\//.test(url.trim())}>
             Add job
           </Button>
         </>
       }
     >
       <form
+        id="add-job-form"
         onSubmit={(e) => {
           e.preventDefault()
-          if (/^https?:\/\//.test(url.trim())) void submit()
+          if (!busy && /^https?:\/\//.test(url.trim())) void submit()
         }}
       >
         <Field label="Posting address" hint="Paste the link to a single job posting. JobPilot reads it and runs it through the free filters.">

@@ -14,14 +14,19 @@ interface SafeStorageLike {
   isEncryptionAvailable(): boolean
   encryptString(plain: string): Buffer
   decryptString(encrypted: Buffer): string
+  /** Linux only. "basic_text" means no keyring was found and a fixed password is used. */
+  getSelectedStorageBackend?(): string
 }
 
-export function createSafeStorageVault(safeStorage: SafeStorageLike): KeyVault {
-  const secure = safeStorage.isEncryptionAvailable()
+export function createSafeStorageVault(safeStorage: SafeStorageLike, platform: string = process.platform): KeyVault {
+  const available = safeStorage.isEncryptionAvailable()
+  const backend = platform === 'linux' ? safeStorage.getSelectedStorageBackend?.() : undefined
+  const secure = available && backend !== 'basic_text' && backend !== 'unknown'
   return {
     secure,
     encrypt(plain) {
-      if (!secure) return `plain:${Buffer.from(plain, 'utf8').toString('base64')}`
+      // basic_text still encrypts (with a fixed key), which is no worse than base64, so use it.
+      if (!available) return `plain:${Buffer.from(plain, 'utf8').toString('base64')}`
       return `enc:${safeStorage.encryptString(plain).toString('base64')}`
     },
     decrypt(stored) {

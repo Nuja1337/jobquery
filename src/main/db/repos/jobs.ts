@@ -1,4 +1,6 @@
+import { bucketFor } from '@shared/defaults'
 import type {
+  ApplicationStatus,
   AtsKind,
   FitAssessment,
   FitBucket,
@@ -50,6 +52,8 @@ interface JobRow {
   dismiss_tags: string
   starred: number
   updated_at: string
+  last_seen_at: string | null
+  dismissed_at: string | null
   application_id: string | null
 }
 
@@ -99,6 +103,41 @@ function toJob(row: JobRow): Job {
 /** Stages where the posting is gone and nothing more should happen to the job. */
 const KEEP_OPEN_STAGES: JobStage[] = ['applied', 'closed', 'dismissed', 'duplicate']
 
+/** Stages a fit score may move a job out of. Later stages (preparing, ready, applied, dismissed, closed) keep theirs. */
+export const SCORE_MOVABLE_STAGES: JobStage[] = ['new', 'filtered_out', 'prescored_out', 'duplicate', 'scored', 'shortlisted']
+
+/** A job that no source has listed for this many days is treated as gone. */
+export const STALE_JOB_DAYS = 30
+/** Sources that come from saved searches. They have no board, so nothing tells us when a posting is removed. */
+export const SEARCH_SOURCES: SourceKind[] = ['remotive', 'remoteok', 'arbeitnow', 'hn_whoishiring', 'adzuna']
+/** Stages where a search job that went unseen is closed. Later stages belong to the user. */
+const STALE_CLOSE_STAGES: JobStage[] = ['new', 'filtered_out', 'prescored_out', 'scored', 'shortlisted']
+
+/**
+ * The stage a closed job returns to when its posting comes back. A job without an application
+ * starts over at 'new'. One with an application goes back to the stage its application needs, so
+ * a ready application is not left behind a shortlisted job.
+ */
+export function stageForReopened(status: ApplicationStatus | null): JobStage {
+  switch (status) {
+    case null:
+      return 'new'
+    case 'draft':
+      return 'preparing'
+    case 'ready':
+    case 'needs_attention':
+    case 'submitting':
+    case 'failed':
+      return 'ready'
+    case 'submitted':
+      return 'applied'
+    case 'withdrawn':
+      return 'dismissed'
+  }
+}
+
+const sqlList = (stages: JobStage[]) => stages.map((s) => `'${s}'`).join(', ')
+
 export interface FreeResult {
   stage: JobStage
   filterReason: string | null
@@ -108,7 +147,12 @@ export interface FreeResult {
 export class JobsRepo {
   constructor(private readonly db: Db) {}
 
-  /** Inserts a posting or refreshes one already stored. A reappearing closed posting goes back to `new`. */
+  /**
+   * Inserts a posting or refreshes one already stored, and notes that a source saw it just now.
+   * A reappearing closed posting goes back to `new`, or to the stage its application needs.
+   * A record without a description comes from a list that has no detail page (SmartRecruiters
+   * after the first run). It keeps the stored description, pay, work type and links.
+   */
   upsertRaw(raw: RawJob, companyId: string | null): { job: Job; isNew: boolean } {
     const key = canonicalKey(raw)
     const hash = contentHash(raw)
@@ -116,15 +160,26 @@ export class JobsRepo {
     const at = now()
     if (existing) {
       this.db.run(
-        `UPDATE jobs SET title = :title, location = :location, remote = :remote, salary_min = :salaryMin,
-           salary_max = :salaryMax, salary_currency = :salaryCurrency, employment_type = :employmentType,
-           url = :url, apply_url = :applyUrl, description = CASE WHEN :description = '' THEN description ELSE :description END, posted_at = COALESCE(:postedAt, posted_at),
-           content_hash = CASE WHEN :description = '' THEN content_hash ELSE :hash END, company_id = COALESCE(:companyId, company_id), updated_at = :at
+        `UPDATE jobs SET title = :title, location = :location, employment_type = :employmentType,
+           company = :company, company_norm = :companyNorm,
+           remote = CASE WHEN :description = '' AND remote != 'unknown' THEN remote ELSE :remote END,
+           salary_min = CASE WHEN :description = '' THEN COALESCE(salary_min, :salaryMin) ELSE :salaryMin END,
+           salary_max = CASE WHEN :description = '' THEN COALESCE(salary_max, :salaryMax) ELSE :salaryMax END,
+           salary_currency = CASE WHEN :description = '' THEN COALESCE(salary_currency, :salaryCurrency) ELSE :salaryCurrency END,
+           url = CASE WHEN :description = '' THEN url ELSE :url END,
+           apply_url = CASE WHEN :description = '' THEN COALESCE(apply_url, :applyUrl) ELSE :applyUrl END,
+           description = CASE WHEN :description = '' THEN description ELSE :description END, posted_at = COALESCE(:postedAt, posted_at),
+           content_hash = CASE WHEN :description = '' THEN content_hash ELSE :hash END, company_id = COALESCE(:companyId, company_id),
+           last_seen_at = :at, updated_at = :at
          WHERE id = :id`,
-        { ...rawParams(raw), hash, companyId, at, id: existing.id }
+        { ...rawParams(raw), company: raw.company, companyNorm: normalizeCompany(raw.company), hash, companyId, at, id: existing.id }
       )
       if (existing.stage === 'closed') {
-        this.db.run("UPDATE jobs SET stage = 'new', closed_at = NULL, filter_reason = NULL WHERE id = :id", { id: existing.id })
+        const status = this.db.get<{ status: ApplicationStatus }>('SELECT status FROM applications WHERE job_id = :id', { id: existing.id })?.status ?? null
+        this.db.run('UPDATE jobs SET stage = :stage, closed_at = NULL, filter_reason = NULL WHERE id = :id', {
+          id: existing.id,
+          stage: stageForReopened(status)
+        })
       }
       return { job: this.get(existing.id)!, isNew: false }
     }
@@ -132,10 +187,10 @@ export class JobsRepo {
     this.db.run(
       `INSERT INTO jobs (id, source, external_id, canonical_key, content_hash, company, company_norm, company_id, title,
          location, remote, salary_min, salary_max, salary_currency, employment_type, url, apply_url, ats, ats_token,
-         description, posted_at, discovered_at, stage, updated_at)
+         description, posted_at, discovered_at, last_seen_at, stage, updated_at)
        VALUES (:id, :source, :externalId, :key, :hash, :company, :companyNorm, :companyId, :title, :location, :remote,
          :salaryMin, :salaryMax, :salaryCurrency, :employmentType, :url, :applyUrl, :ats, :atsToken, :description,
-         :postedAt, :at, 'new', :at)`,
+         :postedAt, :at, :at, 'new', :at)`,
       {
         ...rawParams(raw),
         id,
@@ -244,11 +299,26 @@ export class JobsRepo {
     this.db.run('UPDATE jobs SET stage = :stage, updated_at = :at WHERE id = :id', { id, stage, at: now() })
   }
 
-  /** Stores an AI fit assessment. Pass a stage to move the job, or leave it out to keep the current stage. */
+  /**
+   * Moves a job only if it is still in one of the `from` stages. Background work reads a job,
+   * waits on the AI or a browser, then writes. The user may have dismissed it in between.
+   */
+  moveStage(id: string, stage: JobStage, from: JobStage[]): boolean {
+    if (from.length === 0) return false
+    this.db.run(`UPDATE jobs SET stage = :stage, updated_at = :at WHERE id = :id AND stage IN (${sqlList(from)})`, { id, stage, at: now() })
+    return this.db.get<{ n: number }>('SELECT changes() AS n')?.n === 1
+  }
+
+  /**
+   * Stores an AI fit assessment. Pass a stage to move the job. The move only happens while the job is
+   * still in an early stage, so a score that lands after the user dismissed the job leaves it dismissed.
+   */
   saveFit(id: string, fit: FitAssessment, profileVersion: number, stage?: JobStage): void {
     this.db.run(
       `UPDATE jobs SET fit_score = :score, fit_bucket = :bucket, fit_summary = :summary, fit_json = :json,
-         scored_profile_version = :version, stage = COALESCE(:stage, stage), updated_at = :at WHERE id = :id`,
+         scored_profile_version = :version,
+         stage = CASE WHEN :stage IS NOT NULL AND stage IN (${sqlList(SCORE_MOVABLE_STAGES)}) THEN :stage ELSE stage END,
+         updated_at = :at WHERE id = :id`,
       {
         id,
         score: fit.score,
@@ -269,7 +339,7 @@ export class JobsRepo {
 
   dismiss(id: string, reason: string | null, tags: string[]): void {
     this.db.run(
-      "UPDATE jobs SET stage = 'dismissed', dismiss_reason = :reason, dismiss_tags = :tags, updated_at = :at WHERE id = :id AND stage != 'applied'",
+      "UPDATE jobs SET stage = 'dismissed', dismiss_reason = :reason, dismiss_tags = :tags, dismissed_at = :at, updated_at = :at WHERE id = :id AND stage != 'applied'",
       { id, reason, tags: JSON.stringify(tags), at: now() }
     )
   }
@@ -280,7 +350,7 @@ export class JobsRepo {
     if (!row || ['applied', 'preparing', 'ready'].includes(row.stage)) return
     const stage: JobStage = row.fit_score === null ? 'new' : row.fit_score >= shortlistScore ? 'shortlisted' : 'scored'
     this.db.run(
-      "UPDATE jobs SET stage = :stage, dismiss_reason = NULL, dismiss_tags = '[]', filter_reason = NULL, updated_at = :at WHERE id = :id",
+      "UPDATE jobs SET stage = :stage, dismiss_reason = NULL, dismiss_tags = '[]', dismissed_at = NULL, filter_reason = NULL, updated_at = :at WHERE id = :id",
       { id, stage, at: now() }
     )
   }
@@ -312,10 +382,138 @@ export class JobsRepo {
     return closed
   }
 
-  /** External ids already stored for a board, so a source can skip fetching details for them. */
+  /**
+   * External ids already stored for a board with a description, so a source can skip fetching details
+   * for them. A stored posting that has no description yet is not known, so its detail is fetched again.
+   */
   knownExternalIds(source: SourceKind, atsToken: string): Set<string> {
-    const rows = this.db.all<{ external_id: string }>('SELECT external_id FROM jobs WHERE source = :source AND ats_token = :token', { source, token: atsToken })
+    const rows = this.db.all<{ external_id: string }>(
+      "SELECT external_id FROM jobs WHERE source = :source AND ats_token = :token AND description != ''",
+      { source, token: atsToken }
+    )
     return new Set(rows.map((r) => r.external_id))
+  }
+
+  /**
+   * Closes jobs from the given search sources that no search has returned for `days` days.
+   * Only early stages are touched. A job the user is working on stays open.
+   */
+  closeUnseenSearchJobs(sources: SourceKind[], days = STALE_JOB_DAYS): string[] {
+    if (sources.length === 0) return []
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
+    const params: Record<string, string> = { cutoff }
+    const names = sources.map((s, i) => {
+      params[`src${i}`] = s
+      return `:src${i}`
+    })
+    const rows = this.db.all<{ id: string }>(
+      `SELECT id FROM jobs WHERE source IN (${names.join(', ')}) AND stage IN (${sqlList(STALE_CLOSE_STAGES)})
+         AND COALESCE(last_seen_at, discovered_at) < :cutoff`,
+      params
+    )
+    const at = now()
+    this.db.transaction(() => {
+      for (const row of rows) this.db.run("UPDATE jobs SET stage = 'closed', closed_at = :at, updated_at = :at WHERE id = :id", { id: row.id, at })
+    })
+    return rows.map((r) => r.id)
+  }
+
+  /** True when no source has listed the job for more than `days` days. */
+  isUnseen(id: string, days = STALE_JOB_DAYS): boolean {
+    const row = this.db.get<{ seen: string | null }>('SELECT COALESCE(last_seen_at, discovered_at) AS seen FROM jobs WHERE id = :id', { id })
+    if (!row?.seen) return false
+    return Date.parse(row.seen) < Date.now() - days * 86_400_000
+  }
+
+  /** Jobs filtered out because the user applied to the company recently. Their reason can expire. */
+  listCooldownFiltered(): Job[] {
+    return this.db
+      .all<JobRow>(`${SELECT_JOB} WHERE j.stage = 'filtered_out' AND j.filter_reason LIKE 'applied to this company%'`)
+      .map(toJob)
+  }
+
+  /**
+   * Hands a closed posting over to the live row that replaces it. Copies the score onto the new
+   * row, so it needs no new AI call, and points the closed originals and anything that was a
+   * duplicate of them at the new row.
+   */
+  adoptClosedOriginals(newId: string, closedIds: string[]): void {
+    if (closedIds.length === 0) return
+    const withFit = closedIds
+      .map((id) => this.db.get<{ id: string; fit_score: number | null }>('SELECT id, fit_score FROM jobs WHERE id = :id', { id }))
+      .find((row) => row?.fit_score !== null && row?.fit_score !== undefined)
+    const at = now()
+    this.db.transaction(() => {
+      if (withFit) {
+        this.db.run(
+          `UPDATE jobs SET
+             fit_score = (SELECT fit_score FROM jobs WHERE id = :from), fit_bucket = (SELECT fit_bucket FROM jobs WHERE id = :from),
+             fit_summary = (SELECT fit_summary FROM jobs WHERE id = :from), fit_json = (SELECT fit_json FROM jobs WHERE id = :from),
+             scored_profile_version = (SELECT scored_profile_version FROM jobs WHERE id = :from), updated_at = :at
+           WHERE id = :id AND fit_score IS NULL`,
+          { id: newId, from: withFit.id, at }
+        )
+      }
+      for (const id of closedIds) {
+        this.db.run('UPDATE jobs SET dup_of = :newId WHERE dup_of = :id AND id != :newId', { id, newId })
+        this.db.run('UPDATE jobs SET dup_of = :newId WHERE id = :id', { id, newId })
+      }
+    })
+  }
+
+  /**
+   * Duplicates whose original has just closed. The first one becomes the live job and takes over the
+   * original's score, and the rest follow it. Returns the ids that changed.
+   */
+  reviveDuplicatesOfClosed(closedIds: string[]): string[] {
+    const changed: string[] = []
+    for (const closedId of closedIds) {
+      const copies = this.db.all<{ id: string }>(
+        // Only a repost on the same board under a new id. A copy of the same posting (an older row
+        // for it) or one from a job site that aggregated it would lead to the same closed page.
+        `SELECT c.id FROM jobs c JOIN jobs o ON o.id = :id
+         WHERE c.dup_of = :id AND c.stage = 'duplicate' AND c.source = o.source AND c.external_id != o.external_id
+         ORDER BY c.discovered_at, c.id`,
+        { id: closedId }
+      )
+      if (copies.length === 0) continue
+      const [live, ...rest] = copies
+      this.db.transaction(() => {
+        this.db.run("UPDATE jobs SET stage = 'new', dup_of = NULL, filter_reason = NULL, updated_at = :at WHERE id = :id", { id: live.id, at: now() })
+        for (const other of rest) this.db.run('UPDATE jobs SET dup_of = :live WHERE id = :id', { id: other.id, live: live.id })
+        this.adoptClosedOriginals(live.id, [closedId])
+      })
+      changed.push(live.id, ...rest.map((r) => r.id))
+    }
+    return changed
+  }
+
+  /**
+   * Puts scored jobs on the right side of the shortlist line and refreshes their stored bucket.
+   * Only jobs in `scored` or `shortlisted` move. Returns the ids that changed.
+   */
+  restageForShortlistScore(shortlistScore: number): string[] {
+    const rows = this.db.all<{ id: string; stage: JobStage; fit_score: number; fit_bucket: FitBucket | null; fit_json: string | null }>(
+      "SELECT id, stage, fit_score, fit_bucket, fit_json FROM jobs WHERE stage IN ('scored', 'shortlisted') AND fit_score IS NOT NULL"
+    )
+    const changed: string[] = []
+    const at = now()
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const stage: JobStage = row.fit_score >= shortlistScore ? 'shortlisted' : 'scored'
+        const bucket = bucketFor(row.fit_score, shortlistScore)
+        if (stage === row.stage && bucket === row.fit_bucket) continue
+        const fit = parseJson<FitAssessment | null>(row.fit_json, null)
+        const json = fit ? JSON.stringify({ ...fit, bucket }) : row.fit_json
+        this.db.run(
+          `UPDATE jobs SET stage = :stage, fit_bucket = :bucket, fit_json = :json, updated_at = :at
+           WHERE id = :id AND stage IN ('scored', 'shortlisted')`,
+          { id: row.id, stage, bucket, json, at }
+        )
+        changed.push(row.id)
+      }
+    })
+    return changed
   }
 
   countByStage(): Record<string, number> {

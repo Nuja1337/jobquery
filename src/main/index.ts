@@ -81,6 +81,11 @@ function createWindow(): void {
   }
 }
 
+// JOBPILOT_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
+// Electron's own files and the one-copy-at-a-time lock follow it, so a second profile can run
+// while the normal one is open.
+if (process.env.JOBPILOT_DATA_DIR) app.setPath('userData', process.env.JOBPILOT_DATA_DIR)
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
@@ -93,8 +98,7 @@ if (!gotLock) {
   })
 
   app.whenReady().then(async () => {
-    // JOBPILOT_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
-    const paths = appPaths(process.env.JOBPILOT_DATA_DIR || app.getPath('userData'))
+    const paths = appPaths(app.getPath('userData'))
     const vault = createSafeStorageVault(safeStorage)
     shutdown = await registerIpc({ ipcMain, paths, vault, emit, appVersion: app.getVersion(), isTrustedSender })
     createWindow()

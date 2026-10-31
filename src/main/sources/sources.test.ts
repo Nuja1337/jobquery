@@ -201,6 +201,16 @@ describe('company board parsers', () => {
     expect(parseAshby(json, 'ramp')).toHaveLength(2)
   })
 
+  it('Ashby: joins the primary and secondary locations', () => {
+    const base = { id: 'a1', title: 'Engineer', employmentType: 'FullTime', descriptionPlain: 'Build things.', jobUrl: 'https://jobs.ashbyhq.com/x/a1' }
+    const [multi] = parseAshby({ jobs: [{ ...base, location: 'San Francisco', secondaryLocations: [{ location: 'New York' }, { location: 'san francisco' }, { location: ' London ' }, {}] }] }, 'x')
+    expect(multi.location).toBe('San Francisco; New York; London')
+    const [single] = parseAshby({ jobs: [{ ...base, location: 'Berlin', secondaryLocations: [] }] }, 'x')
+    expect(single.location).toBe('Berlin')
+    const [onlySecondary] = parseAshby({ jobs: [{ ...base, secondaryLocations: [{ location: 'Paris' }] }] }, 'x')
+    expect(onlySecondary.location).toBe('Paris')
+  })
+
   it('SmartRecruiters: joins the list item and its detail', () => {
     const list = fixture('smartrecruiters-list.json')
     const detail = fixture('smartrecruiters-detail.json')
@@ -231,6 +241,19 @@ describe('company board parsers', () => {
       location: 'Paris, Île-de-France, France'
     })
     expect(jobs[0].description).toContain('Hugging Face')
+  })
+
+  it('Workable: lists every visible location', () => {
+    const board = fixture('workable.json')
+    board.jobs[0].locations = [
+      { country: 'France', city: 'Paris', region: 'Île-de-France', hidden: false },
+      { country: 'Germany', city: 'Berlin', region: 'Berlin', hidden: false },
+      { country: 'Spain', city: 'Madrid', region: 'Madrid', hidden: true }
+    ]
+    const [first, second] = parseWorkable(board, 'huggingface')
+    expect(first.location).toBe('Paris, Île-de-France, France; Berlin, Berlin, Germany')
+    // A posting whose locations repeat the primary one keeps a single place.
+    expect(second.location).not.toContain(';')
   })
 })
 
@@ -354,6 +377,18 @@ describe('fetchJobByUrl', () => {
       postedAt: '2026-10-20T00:00:00.000Z'
     })
     expect(raw.description).toBe('Build APIs in Go.')
+  })
+
+  it('reads a JSON-LD description that contains &quot; inside a string', () => {
+    const body = '{"@type":"JobPosting","title":"Backend Engineer","description":"We use &quot;Go&quot; and Postgres.","hiringOrganization":{"name":"Initech"}}'
+    const postings = findJobPostings(page(`<script type="application/ld+json">${body}</script>`))
+    expect(postings).toHaveLength(1)
+    expect(rawFromJsonLd(postings[0], 'https://careers.initech.test/jobs/43').description).toBe('We use "Go" and Postgres.')
+  })
+
+  it('still reads a JSON-LD block that was escaped as a whole', () => {
+    const body = '{&quot;@type&quot;:&quot;JobPosting&quot;,&quot;title&quot;:&quot;Backend Engineer&quot;}'
+    expect(findJobPostings(page(`<script type="application/ld+json">${body}</script>`))).toHaveLength(1)
   })
 
   it('falls back to the page title and text', () => {

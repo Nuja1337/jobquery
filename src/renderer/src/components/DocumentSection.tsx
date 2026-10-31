@@ -105,7 +105,7 @@ export function DocumentSection({ kind, title, hint, allowLink, allowPaste, empt
                   icon={<Star size={13} />}
                   onClick={() =>
                     void api.setPrimaryResume(d.id).then(() => {
-                      toast.success('Primary resume changed.')
+                      toast.success('Primary resume changed. Applications that are not sent yet will use it.')
                       docs.reload()
                     }, toast.error)
                   }
@@ -128,7 +128,11 @@ export function DocumentSection({ kind, title, hint, allowLink, allowPaste, empt
       {deleting && (
         <ConfirmDialog
           title="Delete document"
-          message={`Delete ${deleting.name}? JobPilot will stop using it for new applications. Applications already written are not changed.`}
+          message={
+            kind === 'resume'
+              ? `Delete ${deleting.name}? Applications that are not sent yet switch to your primary resume. Applications you already sent are not changed.`
+              : `Delete ${deleting.name}? JobPilot will stop using it for new applications. Applications already written are not changed.`
+          }
           confirmLabel="Delete"
           danger
           onClose={() => setDeleting(null)}

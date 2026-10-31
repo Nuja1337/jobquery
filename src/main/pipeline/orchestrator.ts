@@ -5,17 +5,30 @@ import type {
   PipelineProgress,
   RunOptions,
   RunStats,
+  SourceKind,
   SubmitResult
 } from '@shared/types'
 import type { AppContext } from '../context'
+import { SEARCH_SOURCES } from '../db/repos/jobs'
 import { emptyStats } from '../db/repos/runs'
 import { BudgetExceededError } from '../llm/errors'
 import { type TaskProvider, defaultTasks } from '../sources'
 import { mapLimit } from '../sources/http'
-import { applyFree, buildFreeEnv, freeFingerprint, getMeta, ingestJob, ingestRaw, setMeta } from './ingest'
+import {
+  applyFree,
+  buildFreeEnv,
+  freeFingerprint,
+  getMeta,
+  ingestJob,
+  ingestRaw,
+  restageForShortlist,
+  reviveDuplicatesOfClosed,
+  setMeta,
+  shortlistNeedsRestage
+} from './ingest'
 import { triageJobs } from './triage'
 
-export { ingestJob }
+export { ingestJob, restageForShortlist }
 
 /** Prepare and submit are built elsewhere and plugged in here. */
 export interface PipelineHooks {
@@ -128,6 +141,10 @@ export class Pipeline {
     const tasks = this.tasks(ctx)
     if (tasks.length === 0) return
     let done = 0
+    /** Jobs that closed during discovery, for the duplicate re-check afterwards. */
+    const closedIds: string[] = []
+    /** Search sources that answered in this run. Only these may close jobs nobody lists any more. */
+    const answeredSearches = new Set<SourceKind>()
     this.setProgress('discovering', `Checking ${plural(tasks.length, 'source')}`, 0, tasks.length)
     await mapLimit(tasks, DISCOVERY_CONCURRENCY, async (task) => {
       if (signal.aborted) return
@@ -147,9 +164,12 @@ export class Pipeline {
           }
         }
         if (task.board && result.complete !== false) {
-          changed.push(...ctx.jobs.markClosedMissing(task.board.source, task.board.atsToken, result.jobs.map((j) => j.externalId)))
+          const closed = ctx.jobs.markClosedMissing(task.board.source, task.board.atsToken, result.jobs.map((j) => j.externalId))
+          closedIds.push(...closed)
+          changed.push(...closed)
         }
         if (task.searchId) ctx.searches.markRun(task.searchId)
+        if (task.searchSource && result.jobs.length > 0) answeredSearches.add(task.searchSource)
       } catch (err) {
         if (!signal.aborted) {
           stats.errors += 1
@@ -160,6 +180,14 @@ export class Pipeline {
       done += 1
       this.setProgress('discovering', `Checked ${done} of ${plural(tasks.length, 'source')}`, done, tasks.length)
     })
+    // Saved searches have no board to compare against. A job no search has returned for 30 days is gone.
+    const sources = SEARCH_SOURCES.filter((source) => answeredSearches.has(source))
+    const stale = ctx.jobs.closeUnseenSearchJobs(sources)
+    closedIds.push(...stale)
+    // A repost under a new id may have been stored as a duplicate of a job that has just closed.
+    const revived = reviveDuplicatesOfClosed(ctx, closedIds)
+    const touched = [...stale, ...revived]
+    if (touched.length) ctx.emit('jobs:changed', { jobIds: touched })
     if (stats.discovered > 0) {
       ctx.events.add(
         'discovered',
@@ -176,10 +204,15 @@ export class Pipeline {
     const { ctx } = this
     const env = buildFreeEnv(ctx)
     const fingerprint = freeFingerprint(env)
-    // Jobs dropped earlier get a second look only when a setting or the profile changed.
+    // A changed shortlist score moves scored jobs across the line and refreshes their bucket.
+    if (shortlistNeedsRestage(ctx)) restageForShortlist(ctx)
+    // Jobs dropped earlier get a second look when a setting or the profile changed.
     const settingsChanged = getMeta(ctx.db, FINGERPRINT_KEY) !== fingerprint
     const stages: JobStage[] = settingsChanged ? ['new', 'filtered_out', 'prescored_out'] : ['new']
     const jobs = ctx.jobs.listByStage(stages)
+    // A job dropped because of a recent application is let back in once the cooldown ends, which no
+    // setting change signals. Checking it is free, so it runs every time.
+    if (!settingsChanged) jobs.push(...ctx.jobs.listCooldownFiltered())
     if (jobs.length === 0) {
       setMeta(ctx.db, FINGERPRINT_KEY, fingerprint)
       return
@@ -257,6 +290,8 @@ export class Pipeline {
     const jobs: Job[] = ctx.jobs
       .listByStage('shortlisted', { orderBy: 'fit' })
       .filter((j) => !j.applicationId && (j.fit?.score ?? 0) >= thresholds.autoPrepareScore)
+      // A posting no source has listed for a month is probably gone. Don't spend the writing model on it.
+      .filter((j) => !ctx.jobs.isUnseen(j.id))
       .slice(0, budget.maxPreparePerRun)
     if (jobs.length === 0) return
     this.setProgress('preparing', `Preparing ${plural(jobs.length, 'application')}`, 0, jobs.length)
@@ -298,7 +333,7 @@ export class Pipeline {
     }
     const ready = ctx.applications
       .listReady()
-      .filter((a) => (a.fitScore ?? 0) >= thresholds.autoSubmitScore && a.flaggedCount === 0)
+      .filter((a) => (a.fitScore ?? 0) >= thresholds.autoSubmitScore && a.flaggedCount === 0 && a.guessCount === 0)
       .slice(0, left)
     if (ready.length === 0) return
     this.setProgress('submitting', `Submitting ${plural(ready.length, 'application')}`, 0, ready.length)
@@ -319,6 +354,7 @@ export class Pipeline {
         current.status !== 'ready' ||
         job.stage !== 'ready' ||
         current.flaggedCount > 0 ||
+        current.guessCount > 0 ||
         (job.fit?.score ?? 0) < now.thresholds.autoSubmitScore
       ) {
         done += 1

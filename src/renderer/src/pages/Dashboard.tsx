@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Activity, AlertTriangle, ArrowRight, Check, Inbox, Lightbulb, X } from 'lucide-react'
 import { BUCKET_LABELS } from '@shared/defaults'
@@ -8,6 +9,7 @@ import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { formatPercent, formatUsd, plural, relativeTime } from '@renderer/lib/format'
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Loading, Page, PageHeader, Stat, Toggle, type Tone } from '@renderer/components/ui'
+import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 
 const WEEK = 7 * 24 * 3600 * 1000
 const BUCKETS: FitBucket[] = ['perfect', 'great', 'good']
@@ -50,6 +52,10 @@ export function Dashboard(): React.JSX.Element {
   const runs = useAsync(() => api.listRuns(1), [], ['pipeline:progress'])
   const events = useAsync(() => api.listEvents({ limit: 12 }), [], ['event:new'])
   const suggestions = useAsync(() => api.listSuggestions(), [], ['jobs:changed'])
+  const autopilotOn = settings?.autopilot.enabled ?? false
+  const intervalHours = settings?.autopilot.intervalHours
+  const nextRunAt = useAsync(() => api.getNextRunAt(), [autopilotOn, intervalHours], ['pipeline:progress'])
+  const [confirmAutopilot, setConfirmAutopilot] = useState(false)
 
   const firstError = queue.error ?? shortlist.error ?? submitted.error ?? events.error
   if (firstError) {
@@ -70,14 +76,15 @@ export function Dashboard(): React.JSX.Element {
   }
 
   const ready = queue.data.items
-  const needYou = ready.filter((a) => a.flaggedCount > 0).length
+  const needYou = ready.filter((a) => a.flaggedCount > 0 || a.guessCount > 0).length
   const counts: Record<FitBucket, number> = { perfect: 0, great: 0, good: 0, weak: 0 }
   shortlist.data.items.forEach((j) => j.fitBucket && (counts[j.fitBucket] += 1))
   const sentApps = submitted.data.items
   const thisWeek = sentApps.filter((a) => a.submittedAt && Date.now() - new Date(a.submittedAt).getTime() < WEEK).length
   const responded = sentApps.filter((a) => a.outcome !== 'none' && a.outcome !== 'ghosted').length
   const lastRun = runs.data?.[0]
-  const nextRun = settings?.autopilot.enabled && lastRun ? new Date(new Date(lastRun.startedAt).getTime() + settings.autopilot.intervalHours * 3600_000).toISOString() : null
+  const nextRun = settings?.autopilot.enabled ? nextRunAt.data : null
+  const autoSends = !!settings && settings.autopilot.autoSubmit && !settings.autopilot.dryRun
 
   async function applySuggestion(id: string, patch: Parameters<typeof updateSettings>[0]): Promise<void> {
     if (await updateSettings(patch)) {
@@ -136,9 +143,18 @@ export function Dashboard(): React.JSX.Element {
           <div className="mt-3">
             <Toggle
               checked={settings?.autopilot.enabled ?? false}
-              onChange={(enabled) => void updateSettings({ autopilot: { enabled } })}
-              label={settings?.autopilot.enabled ? `Runs every ${settings.autopilot.intervalHours} hours` : 'Runs only when you press Run now'}
-              hint={settings?.autopilot.enabled ? (nextRun ? `Next run ${relativeTime(nextRun)}. Last run ${relativeTime(lastRun?.startedAt)}.` : 'Next run at the next interval.') : `Last run ${relativeTime(lastRun?.startedAt)}.`}
+              onChange={(enabled) => {
+                if (enabled && autoSends) setConfirmAutopilot(true)
+                else void updateSettings({ autopilot: { enabled } })
+              }}
+              label={settings?.autopilot.enabled ? (settings.autopilot.intervalHours === 1 ? 'Runs every hour' : `Runs every ${settings.autopilot.intervalHours} hours`) : 'Runs only when you press Run now'}
+              hint={
+                settings?.autopilot.enabled
+                  ? nextRun
+                    ? `${new Date(nextRun).getTime() <= Date.now() ? 'The next run is due now' : `Next run ${relativeTime(nextRun)}`}. Last run ${relativeTime(lastRun?.startedAt)}.`
+                    : `Last run ${relativeTime(lastRun?.startedAt)}.`
+                  : `Last run ${relativeTime(lastRun?.startedAt)}.`
+              }
             />
           </div>
           {settings?.autopilot.autoSubmit && (
@@ -152,8 +168,8 @@ export function Dashboard(): React.JSX.Element {
       <div className="mb-6 grid grid-cols-4 gap-4">
         <Stat label="Applied this week" value={thisWeek} hint={`${sentApps.length} in total`} />
         <Stat label="Response rate" value={sentApps.length ? formatPercent(responded / sentApps.length) : '-'} hint={`${plural(responded, 'reply', 'replies')} to ${plural(sentApps.length, 'application')}`} />
-        <Stat label="Spent today" value={formatUsd(usage?.todayUsd)} hint={usage ? `Budget ${formatUsd(usage.dailyBudgetUsd)} a day` : undefined} tone={usage && usage.todayUsd >= usage.dailyBudgetUsd ? 'bad' : undefined} />
-        <Stat label="Spent this month" value={formatUsd(usage?.monthUsd)} hint={usage ? `Budget ${formatUsd(usage.monthlyBudgetUsd)} a month` : undefined} />
+        <Stat label="Spent today" value={formatUsd(usage?.todayUsd)} hint={usage ? (usage.dailyBudgetUsd > 0 ? `Budget ${formatUsd(usage.dailyBudgetUsd)} a day` : 'No daily limit') : undefined} tone={usage && usage.dailyBudgetUsd > 0 && usage.todayUsd >= usage.dailyBudgetUsd ? 'bad' : undefined} />
+        <Stat label="Spent this month" value={formatUsd(usage?.monthUsd)} hint={usage ? (usage.monthlyBudgetUsd > 0 ? `Budget ${formatUsd(usage.monthlyBudgetUsd)} a month` : 'No monthly limit') : undefined} />
       </div>
 
       <div className="grid grid-cols-5 gap-4">
@@ -204,6 +220,17 @@ export function Dashboard(): React.JSX.Element {
           )}
         </Card>
       </div>
+      {confirmAutopilot && settings && (
+        <ConfirmDialog
+          title="Turn on autopilot?"
+          confirmLabel="Turn on autopilot"
+          message={`Auto-submit is on and dry run is off, so the app will click Submit on applications by itself. It does that when the fit score is ${settings.thresholds.autoSubmitScore} or higher, and it sends up to ${plural(settings.autopilot.dailySubmitCap, 'application')} a day. If the last run was longer ago than ${settings.autopilot.intervalHours === 1 ? 'an hour' : `${settings.autopilot.intervalHours} hours`}, the first run starts in about a minute.`}
+          onConfirm={async () => {
+            await updateSettings({ autopilot: { enabled: true } })
+          }}
+          onClose={() => setConfirmAutopilot(false)}
+        />
+      )}
     </Page>
   )
 }

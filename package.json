@@ -5,6 +5,10 @@
   "description": "Local-first desktop app that finds jobs that fit you, writes your applications in your own voice with your own AI key, and tracks everything you applied to.",
   "main": "./out/main/index.js",
   "author": "Nuja1337",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
@@ -26,6 +30,7 @@
     },
     "files": [
       "out/**/*",
+      "!out/smoke/**",
       "package.json"
     ],
     "asarUnpack": [

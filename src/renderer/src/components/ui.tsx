@@ -297,13 +297,14 @@ function FieldControl({ id, children }: { id: string; children: ReactNode }): Re
   return <div ref={ref}>{children}</div>
 }
 
-export function Toggle({ checked, onChange, label, hint, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; hint?: ReactNode; disabled?: boolean }): React.JSX.Element {
+export function Toggle({ checked, onChange, label, hint, disabled, ariaLabel }: { checked: boolean; onChange: (v: boolean) => void; label?: string; hint?: ReactNode; disabled?: boolean; ariaLabel?: string }): React.JSX.Element {
   return (
     <label className={clsx('flex items-start gap-3', disabled ? 'opacity-60' : 'cursor-pointer')}>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => onChange(!checked)}
         className={clsx('relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors', checked ? 'bg-accent' : 'bg-line-strong')}
@@ -320,10 +321,10 @@ export function Toggle({ checked, onChange, label, hint, disabled }: { checked: 
   )
 }
 
-export function Checkbox({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode; disabled?: boolean }): React.JSX.Element {
+export function Checkbox({ checked, onChange, label, disabled, ariaLabel }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode; disabled?: boolean; ariaLabel?: string }): React.JSX.Element {
   return (
     <label className={clsx('flex items-center gap-2 text-sm text-fg', disabled ? 'opacity-60' : 'cursor-pointer')}>
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5" />
+      <input type="checkbox" checked={checked} disabled={disabled} aria-label={ariaLabel} onChange={(e) => onChange(e.target.checked)} className="h-3.5 w-3.5" />
       {label}
     </label>
   )
@@ -433,17 +434,66 @@ export function Segmented<T extends string | number>({ items, value, onChange }:
 // Modal
 // ---------------------------------------------------------------------------
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/** Open dialogs, newest last. Only the newest one answers Escape and Tab. */
+const openModals: object[] = []
+
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }): React.JSX.Element {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
   useEffect(() => {
+    const token = {}
+    openModals.push(token)
+    const opener = document.activeElement as HTMLElement | null
+    const dialog = dialogRef.current
+    // Move focus in unless a field inside already took it (autoFocus).
+    if (dialog && !dialog.contains(document.activeElement)) {
+      const first = dialog.querySelector<HTMLElement>(FOCUSABLE)
+      ;(first ?? dialog).focus()
+    }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
+      if (openModals[openModals.length - 1] !== token || !dialogRef.current) return
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeRef.current()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const items = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE))
+      if (items.length === 0) {
+        e.preventDefault()
+        dialogRef.current.focus()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement
+      if (!dialogRef.current.contains(active)) {
+        e.preventDefault()
+        first.focus()
+      } else if (e.shiftKey && (active === first || active === dialogRef.current)) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      const at = openModals.indexOf(token)
+      if (at >= 0) openModals.splice(at, 1)
+      if (opener && opener.isConnected) opener.focus()
+    }
+  }, [])
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'var(--overlay)' }} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" aria-label={title} className={clsx('animate-slide-in flex max-h-[85vh] w-full flex-col rounded-xl border border-line-strong bg-surface shadow-2xl', wide ? 'max-w-3xl' : 'max-w-lg')}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className={clsx('animate-slide-in flex outline-none max-h-[85vh] w-full flex-col rounded-xl border border-line-strong bg-surface shadow-2xl', wide ? 'max-w-3xl' : 'max-w-lg')}>
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold text-fg">{title}</h2>
           <IconButton label="Close" onClick={onClose}>

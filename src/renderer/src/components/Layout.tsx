@@ -56,7 +56,8 @@ function Sidebar(): React.JSX.Element {
 }
 
 function TopBar(): React.JSX.Element {
-  const { progress, running, runNow, cancelRun, usage } = useApp()
+  const { progress, running, starting, runNow, cancelRun, usage } = useApp()
+  const noLimit = !!usage && usage.dailyBudgetUsd <= 0
   const spendRatio = usage && usage.dailyBudgetUsd > 0 ? usage.todayUsd / usage.dailyBudgetUsd : 0
   return (
     <div className="flex h-12 shrink-0 items-center gap-6 border-b border-line bg-surface px-5">
@@ -82,14 +83,14 @@ function TopBar(): React.JSX.Element {
         </Badge>
       )}
       {usage && (
-        <div className="w-44" title={`${formatUsd(usage.todayUsd)} spent today of a ${formatUsd(usage.dailyBudgetUsd)} daily budget`}>
+        <div className="w-44" title={noLimit ? `${formatUsd(usage.todayUsd)} spent today. No daily limit is set.` : `${formatUsd(usage.todayUsd)} spent today of a ${formatUsd(usage.dailyBudgetUsd)} daily budget`}>
           <div className="mb-1 flex justify-between text-xs">
             <span className="text-muted">Today</span>
             <span className="tabular-nums text-fg">
-              {formatUsd(usage.todayUsd)} <span className="text-faint">of {formatUsd(usage.dailyBudgetUsd)}</span>
+              {formatUsd(usage.todayUsd)} <span className="text-faint">{noLimit ? 'No limit' : `of ${formatUsd(usage.dailyBudgetUsd)}`}</span>
             </span>
           </div>
-          <ProgressBar value={spendRatio} tone={spendRatio >= 1 ? 'bad' : spendRatio >= 0.8 ? 'warn' : 'accent'} />
+          {noLimit ? <div className="h-1.5 w-full rounded-full border border-dashed border-line-strong" aria-hidden="true" /> : <ProgressBar value={spendRatio} tone={spendRatio >= 1 ? 'bad' : spendRatio >= 0.8 ? 'warn' : 'accent'} />}
         </div>
       )}
       {running ? (
@@ -97,7 +98,7 @@ function TopBar(): React.JSX.Element {
           Cancel run
         </Button>
       ) : (
-        <Button variant="primary" onClick={() => void runNow()} icon={<Play size={13} />}>
+        <Button variant="primary" loading={starting} disabled={starting} onClick={() => void runNow()} icon={<Play size={13} />}>
           Run now
         </Button>
       )}

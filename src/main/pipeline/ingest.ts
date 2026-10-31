@@ -7,6 +7,8 @@ import { contentHash, normalizeCompany, normalizeLocation } from './dedupe'
 import { type FilterContext, applyFilters } from './filters'
 import { prescore } from './prescore'
 
+const RESTAGE_KEY = 'shortlist_score_applied'
+
 export function getMeta(db: Db, key: string): string | null {
   return db.get<{ value: string }>('SELECT value FROM meta WHERE key = :key', { key })?.value ?? null
 }
@@ -90,6 +92,8 @@ export interface IngestResult {
  * found through a watched board and through a pasted link gets the same key.
  * A new posting with the same content hash as another job becomes a duplicate of it, unless the
  * other job is from the same source and lists a different place (one role, several offices).
+ * When every match is closed, the posting was reposted under a new id. The new row stays live and
+ * takes over the score of the closed one, so it needs no new AI call.
  */
 export function ingestRaw(ctx: AppContext, input: RawJob): IngestResult {
   const raw = { ...input }
@@ -105,14 +109,57 @@ export function ingestRaw(ctx: AppContext, input: RawJob): IngestResult {
   if (!isNew) return { job, isNew, duplicate: false }
 
   const mine = normalizeLocation(raw.location)
-  const original = ctx.jobs.findByContentHash(contentHash(raw), job.id).find((other) => {
-    if (other.source !== raw.source) return true
-    const theirs = normalizeLocation(other.location)
-    return !mine || !theirs || mine === theirs
-  })
-  if (!original) return { job, isNew, duplicate: false }
-  ctx.jobs.markDuplicate(job.id, original.dupOf ?? original.id)
-  return { job: ctx.jobs.get(job.id)!, isNew, duplicate: true }
+  const originals = new Map<string, Job>()
+  for (const other of ctx.jobs.findByContentHash(contentHash(raw), job.id)) {
+    if (other.source === raw.source) {
+      const theirs = normalizeLocation(other.location)
+      if (mine && theirs && mine !== theirs) continue
+    }
+    const root = rootOf(ctx, other)
+    if (root && root.id !== job.id) originals.set(root.id, root)
+  }
+  if (originals.size === 0) return { job, isNew, duplicate: false }
+  const live = [...originals.values()].find((other) => other.stage !== 'closed')
+  if (live) {
+    ctx.jobs.markDuplicate(job.id, live.id)
+    return { job: ctx.jobs.get(job.id)!, isNew, duplicate: true }
+  }
+  ctx.jobs.adoptClosedOriginals(job.id, [...originals.keys()])
+  return { job: ctx.jobs.get(job.id)!, isNew, duplicate: false }
+}
+
+/** The job a duplicate points back to, or the job itself when it is an original. */
+function rootOf(ctx: AppContext, job: Job): Job | null {
+  let current: Job | null = job
+  for (let hops = 0; current?.dupOf && hops < 3; hops++) current = ctx.jobs.get(current.dupOf)
+  return current
+}
+
+/**
+ * Run after jobs were closed. A posting reposted under a new id is ingested before the old one is
+ * seen to be gone, so it was stored as a duplicate of a job that is now closed. The copy becomes
+ * the live job. Returns the ids that changed.
+ */
+export function reviveDuplicatesOfClosed(ctx: AppContext, closedIds: string[]): string[] {
+  return ctx.jobs.reviveDuplicatesOfClosed(closedIds)
+}
+
+/**
+ * Puts scored jobs on the right side of the shortlist line and refreshes their stored fit bucket.
+ * Call it when the shortlist score changes. Only jobs in scored or shortlisted move.
+ * Returns the ids that changed and tells the UI.
+ */
+export function restageForShortlist(ctx: AppContext): string[] {
+  const line = ctx.settings.get().thresholds.shortlistScore
+  const changed = ctx.jobs.restageForShortlistScore(line)
+  setMeta(ctx.db, RESTAGE_KEY, String(line))
+  if (changed.length) ctx.emit('jobs:changed', { jobIds: changed })
+  return changed
+}
+
+/** True when the shortlist score is not the one the stored stages and buckets were last set for. */
+export function shortlistNeedsRestage(ctx: AppContext): boolean {
+  return getMeta(ctx.db, RESTAGE_KEY) !== String(ctx.settings.get().thresholds.shortlistScore)
 }
 
 /**

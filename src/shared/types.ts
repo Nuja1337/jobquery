@@ -572,7 +572,10 @@ export interface ApplicationSummary {
   status: ApplicationStatus
   outcome: ApplicationOutcome
   submitMode: SubmitMode | null
+  /** Answers the person has to fill in or check (see answerNeedsUser in shared/answers.ts). */
   flaggedCount: number
+  /** AI answers below the confidence auto mode needs. Auto mode won't send while any are left. */
+  guessCount: number
   submittedAt: string | null
   outcomeAt: string | null
   createdAt: string
@@ -587,6 +590,11 @@ export interface Application extends ApplicationSummary {
   resumeDocId: string | null
   confirmation: string | null
   screenshotPath: string | null
+  /**
+   * When auto mode clicked the form's Submit button. Set even when no confirmation followed, so the
+   * app never clicks a second time and risks a duplicate application.
+   */
+  submitClickedAt: string | null
   error: string | null
   notes: string
 }

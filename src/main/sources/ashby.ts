@@ -49,10 +49,23 @@ function salaryOf(job: AshbyJob, description: string) {
   return findSalaryInText(description)
 }
 
+/** The primary location first, then the others. Repeats are dropped. */
+function joinLocations(places: Array<string | undefined>): string | null {
+  const seen = new Set<string>()
+  const list: string[] = []
+  for (const place of places) {
+    const name = place?.trim()
+    if (!name || seen.has(name.toLowerCase())) continue
+    seen.add(name.toLowerCase())
+    list.push(name)
+  }
+  return list.join('; ') || null
+}
+
 export function parseAshbyJob(job: AshbyJob, org: string, companyName?: string | null): RawJob {
   const description = (job.descriptionPlain ?? '').trim()
   const title = cleanTitle(job.title)
-  const location = job.location?.trim() || null
+  const location = joinLocations([job.location, ...(job.secondaryLocations ?? []).map((l) => l.location)])
   // The `isRemote` flag is true when any listed location is remote, so the workplace type comes first.
   const explicit = job.workplaceType && job.workplaceType !== 'Unspecified' ? job.workplaceType : job.isRemote ? 'remote' : null
   const salary = salaryOf(job, description)

@@ -202,7 +202,7 @@ describe('ApplicationsRepo', () => {
     ctx.jobs.saveFit(a.id, { score: 88, bucket: 'perfect', summary: '', matches: [], gaps: [], dealbreakers: [], seniorityFit: 'match', keywords: [] }, 1)
     const appA = ctx.applications.create(a.id)
     ctx.applications.create(b.id)
-    const answer = (needsUser: boolean) => ({ fieldKey: String(Math.random()), label: 'Q', type: 'text' as const, required: true, options: [], value: '', source: 'ai' as const, confidence: 0.5, needsUser, note: null, lint: null })
+    const answer = (needsUser: boolean) => ({ fieldKey: String(Math.random()), label: 'Q', type: 'text' as const, required: true, options: [], value: needsUser ? '' : 'An answer', source: 'ai' as const, confidence: 0.5, needsUser, note: null, lint: null })
     const updated = ctx.applications.update(appA.id, { answers: [answer(true), answer(false), answer(true)], coverLetter: 'Hi', formFields: [] })
     expect(updated.flaggedCount).toBe(2)
     expect(updated.coverLetter).toBe('Hi')

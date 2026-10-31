@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RawJob, SubmitResult } from '@shared/types'
 import type { DiscoveryTask } from '../sources'
 import { type TestEnv, makeProfile, makeRaw, makeTestEnv } from '../testing'
-import { Pipeline, ingestJob } from './orchestrator'
+import { Pipeline, ingestJob, restageForShortlist } from './orchestrator'
 
 const TS_DESCRIPTION = 'Build web apps in TypeScript and React with a small team.'
 
@@ -300,5 +300,140 @@ describe('ingestJob', () => {
     expect(job.company).toBe('Ramp Business Corporation')
     const again = ingestJob(env.ctx, makeRaw({ source: 'ashby', ats: 'ashby', atsToken: 'ramp', company: 'Ramp Business Corporation', externalId: 'abc' }))
     expect(again.id).toBe(job.id)
+  })
+})
+
+describe('Pipeline housekeeping', () => {
+  const DAY = 86_400_000
+  const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString()
+
+  it('lets a job back in once the company cooldown ends', async () => {
+    const env = await setup(() => [makeRaw({ externalId: 'next', title: 'Software Engineer', description: TS_DESCRIPTION })])
+    env.ctx.settings.update({ preferences: { companyCooldownDays: 90 } })
+    // The user applied to Acme 89 days ago.
+    const past = ingestJob(env.ctx, makeRaw({ externalId: 'past', title: 'Software Engineer', description: `${TS_DESCRIPTION} Past.` }))
+    const app = env.ctx.applications.create(past.id)
+    env.ctx.applications.update(app.id, { status: 'submitted', submittedAt: daysAgo(89) })
+
+    await env.pipeline.run({ triage: false })
+    expect(stage(env, 'next')).toMatchObject({ stage: 'filtered_out', filterReason: 'applied to this company 89 days ago' })
+
+    // No setting or profile changed, only the date moved on.
+    env.ctx.db.run('UPDATE applications SET submitted_at = :at WHERE id = :id', { id: app.id, at: daysAgo(91) })
+    await env.pipeline.run({ discover: false, triage: false })
+    expect(stage(env, 'next')?.stage).toBe('new')
+    expect(stage(env, 'next')?.filterReason).toBeNull()
+  })
+
+  it('closes search jobs that no search has returned for 30 days, but only after the source answers', async () => {
+    const env = await makeTestEnv()
+    env.ctx.profile.save(makeProfile({ skills: ['TypeScript'] }))
+    let listing: RawJob[] = []
+    const search: DiscoveryTask = { name: 'RemoteOK', searchSource: 'remoteok', run: async () => ({ jobs: listing }) }
+    const pipeline = new Pipeline(env.ctx, {}, () => [search])
+    const mk = (id: string) => makeRaw({ source: 'remoteok', externalId: id, title: 'Software Engineer', description: `${TS_DESCRIPTION} ${id}` })
+    listing = [mk('old'), mk('kept')]
+    await pipeline.run({ triage: false })
+    env.ctx.db.run("UPDATE jobs SET last_seen_at = :at WHERE canonical_key LIKE '%:old'", { at: daysAgo(31) })
+    env.ctx.db.run("UPDATE jobs SET last_seen_at = :at WHERE canonical_key LIKE '%:kept'", { at: daysAgo(31) })
+
+    // An empty answer is a bad read. Nothing closes.
+    listing = []
+    await pipeline.run({ triage: false })
+    expect(stage(env, 'old')?.stage).not.toBe('closed')
+
+    listing = [mk('kept')]
+    await pipeline.run({ triage: false })
+    expect(stage(env, 'old')?.stage).toBe('closed')
+    expect(stage(env, 'kept')?.stage).not.toBe('closed')
+  })
+
+  it('does not close a search job the user is working on', async () => {
+    const env = await makeTestEnv()
+    const search: DiscoveryTask = { name: 'RemoteOK', searchSource: 'remoteok', run: async () => ({ jobs: [makeRaw({ source: 'remoteok', externalId: 'other' })] }) }
+    const pipeline = new Pipeline(env.ctx, {}, () => [search])
+    const job = ingestJob(env.ctx, makeRaw({ source: 'remoteok', externalId: 'mine' }))
+    env.ctx.applications.create(job.id)
+    env.ctx.db.run('UPDATE jobs SET last_seen_at = :at WHERE id = :id', { id: job.id, at: daysAgo(60) })
+    await pipeline.run({ triage: false })
+    expect(env.ctx.jobs.get(job.id)?.stage).toBe('preparing')
+  })
+
+  it('does not auto-prepare a job no source has listed for more than 30 days', async () => {
+    const jobs = () => [
+      makeRaw({ externalId: 'fresh', title: 'Software Engineer', description: `${TS_DESCRIPTION} Fresh.` }),
+      makeRaw({ externalId: 'stale', title: 'Software Engineer', description: `${TS_DESCRIPTION} Stale.` })
+    ]
+    const env = await setup(jobs)
+    const prepared: string[] = []
+    env.pipeline.setHooks({ prepare: async (id) => void prepared.push(id) })
+    env.ctx.settings.update({ autopilot: { autoPrepare: true, autoSubmit: false } })
+    await env.pipeline.run({})
+    expect(stage(env, 'stale')?.stage).toBe('shortlisted')
+    // The board still lists it, but no source has seen it for a while, as when a watched company is dropped.
+    env.ctx.db.run("UPDATE jobs SET last_seen_at = :at WHERE canonical_key LIKE '%:stale'", { at: daysAgo(40) })
+    await env.pipeline.run({ discover: false, prepare: true })
+    expect(prepared).toEqual([stage(env, 'fresh')!.id])
+  })
+
+  it('restages scored jobs when the shortlist score changes', async () => {
+    const env = await setup(() => [makeRaw({ externalId: 'j', title: 'Software Engineer', description: TS_DESCRIPTION })], { score: () => 72 })
+    await env.pipeline.run({})
+    expect(stage(env, 'j')).toMatchObject({ stage: 'shortlisted', fitScore: 72, fitBucket: 'great' })
+    env.pushed.length = 0
+
+    env.ctx.settings.update({ thresholds: { shortlistScore: 75 } })
+    expect(restageForShortlist(env.ctx)).toEqual([stage(env, 'j')!.id])
+    expect(stage(env, 'j')).toMatchObject({ stage: 'scored', fitBucket: 'weak' })
+    expect(env.pushed.some((p) => p.channel === 'jobs:changed')).toBe(true)
+
+    // A run also notices a change that nobody announced.
+    env.ctx.settings.update({ thresholds: { shortlistScore: 60 } })
+    await env.pipeline.run({ discover: false, triage: false })
+    expect(stage(env, 'j')).toMatchObject({ stage: 'shortlisted', fitBucket: 'great' })
+    expect(env.llmCalls).toHaveLength(1)
+  })
+
+  it('shows a repost under a new id as the live job without another AI call', async () => {
+    let board: RawJob[] = []
+    const mk = (id: string) =>
+      makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'acme', externalId: id, title: 'Software Engineer', description: `${TS_DESCRIPTION} Same posting.` })
+    const env = await makeTestEnv()
+    env.ctx.profile.save(makeProfile({ skills: ['TypeScript', 'React'] }))
+    const company = env.ctx.companies.save({ name: 'Acme', ats: 'greenhouse', atsToken: 'acme', watch: true })
+    const task: DiscoveryTask = { name: 'Acme', board: { source: 'greenhouse', atsToken: 'acme', companyId: company.id }, run: async () => ({ jobs: board }) }
+    const pipeline = new Pipeline(env.ctx, {}, () => [task])
+
+    board = [mk('old')]
+    await pipeline.run({})
+    expect(stage(env, 'old')?.stage).toBe('shortlisted')
+    expect(env.llmCalls).toHaveLength(1)
+
+    // The next run lists the posting under a new id. The new id arrives before the old one is seen to be gone.
+    board = [mk('new')]
+    const second = await pipeline.run({})
+    expect(second.scored).toBe(0)
+    expect(env.llmCalls).toHaveLength(1)
+    expect(stage(env, 'old')?.stage).toBe('closed')
+    expect(stage(env, 'new')).toMatchObject({ stage: 'shortlisted', fitScore: 80, dupOf: null })
+  })
+
+  it('does not store a watched board again after its company is renamed', async () => {
+    const mk = (company: string) => makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'acme', externalId: 'r1', company, title: 'Software Engineer', description: TS_DESCRIPTION })
+    let name = 'Acme'
+    const env = await makeTestEnv()
+    env.ctx.profile.save(makeProfile({ skills: ['TypeScript', 'React'] }))
+    const company = env.ctx.companies.save({ name: 'Acme', ats: 'greenhouse', atsToken: 'acme', watch: true })
+    const task: DiscoveryTask = { name: 'Acme', board: { source: 'greenhouse', atsToken: 'acme', companyId: company.id }, run: async () => ({ jobs: [mk(name)] }) }
+    const pipeline = new Pipeline(env.ctx, {}, () => [task])
+    await pipeline.run({})
+    expect(env.llmCalls).toHaveLength(1)
+    env.ctx.companies.save({ id: company.id, name: 'Acme Robotics', ats: 'greenhouse', atsToken: 'acme', watch: true })
+    name = 'Acme Robotics'
+    const stats = await pipeline.run({})
+    expect(stats).toMatchObject({ newJobs: 0, scored: 0 })
+    expect(env.ctx.jobs.list({}).total).toBe(1)
+    expect(env.llmCalls).toHaveLength(1)
+    expect(stage(env, 'r1')?.company).toBe('Acme Robotics')
   })
 })

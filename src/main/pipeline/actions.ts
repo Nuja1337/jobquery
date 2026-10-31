@@ -30,7 +30,7 @@ export function restoreJob(ctx: AppContext, id: string): void {
   // Dismissing withdrew any unsent application. Bring it back so it can be reviewed and sent.
   const app = ctx.applications.getByJob(id)
   if (app && app.status === 'withdrawn' && !app.submittedAt) {
-    ctx.applications.update(app.id, { status: 'needs_attention', error: 'Restored after being dismissed. Check it before sending.' })
+    ctx.applications.update(app.id, { status: 'needs_attention', error: 'Restored after being dismissed. Check it before sending.' }, { reopen: true })
     ctx.emit('applications:changed', { applicationIds: [app.id] })
   }
   ctx.events.add('restored', `Restored ${job.title} at ${job.company}.`, id)

@@ -94,8 +94,10 @@ export function Applications(): React.JSX.Element {
               {items.map((a) => (
                 <tr key={a.id} className="cursor-pointer hover:bg-hover/50" onClick={() => setOpenId(a.id)}>
                   <td className={TD}>
-                    <p className="font-medium text-fg">{a.title}</p>
-                    <p className="text-xs text-muted">{a.company}</p>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); setOpenId(a.id) }} className="block w-full text-left">
+                      <span className="block font-medium text-fg">{a.title}</span>
+                      <span className="block text-xs text-muted">{a.company}</span>
+                    </button>
                   </td>
                   <td className={TD}>
                     <FitBadge bucket={a.fitBucket} score={a.fitScore} compact />
@@ -188,15 +190,18 @@ function ApplicationDialog({ id, onClose, onChanged }: { id: string; onClose: ()
   const [saving, setSaving] = useState(false)
   const app: Application | null = state.data
 
-  async function save(patch: Parameters<typeof api.updateApplication>[1]): Promise<void> {
+  /** Resolves true when the save went through, so callers keep what was typed when it didn't. */
+  async function save(patch: Parameters<typeof api.updateApplication>[1]): Promise<boolean> {
     setSaving(true)
     try {
       const next = await api.updateApplication(id, patch)
       state.setData(next)
       onChanged()
       toast.success('Saved.')
+      return true
     } catch (e) {
       toast.error(e)
+      return false
     } finally {
       setSaving(false)
     }
@@ -243,7 +248,7 @@ function ApplicationDialog({ id, onClose, onChanged }: { id: string; onClose: ()
             <Textarea rows={3} value={notes ?? app.notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>
           <div className="-mt-3 flex justify-end">
-            <Button size="sm" variant="primary" loading={saving} disabled={notes === null || notes === app.notes} onClick={() => void save({ notes: notes ?? '' }).then(() => setNotes(null))}>
+            <Button size="sm" variant="primary" loading={saving} disabled={notes === null || notes === app.notes} onClick={() => void save({ notes: notes ?? '' }).then((ok) => ok && setNotes(null))}>
               Save notes
             </Button>
           </div>

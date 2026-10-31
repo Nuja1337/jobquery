@@ -475,6 +475,7 @@ export function initialApplications(jobs: Job[]): Application[] {
       outcome: s.outcome,
       submitMode: s.mode,
       flaggedCount: answers.filter((a) => a.needsUser).length,
+      guessCount: 0,
       submittedAt: s.submittedDaysAgo != null ? iso(s.submittedDaysAgo * DAY) : null,
       outcomeAt: s.outcomeDaysAgo != null ? iso(s.outcomeDaysAgo * DAY) : null,
       createdAt: iso((s.submittedDaysAgo ?? 1) * DAY + 3 * HOUR),
@@ -486,6 +487,7 @@ export function initialApplications(jobs: Job[]): Application[] {
       resumeDocId: 'doc_resume1',
       confirmation: s.status === 'submitted' ? 'Thanks for applying. We will be in touch.' : null,
       screenshotPath: s.status === 'submitted' ? `C:\\Users\\Demo\\AppData\\Roaming\\JobPilot\\screenshots\\${s.id}.png` : null,
+      submitClickedAt: null,
       error: null,
       notes: s.notes ?? ''
     }

@@ -4,8 +4,28 @@ import { PROVIDER_DEFAULT_BASE_URL, PROVIDER_LABELS, PROVIDER_NEEDS_KEY } from '
 import type { ProviderInfo, ProviderKind } from '@shared/types'
 import type { ProviderTestResult } from '@shared/api'
 import { api } from '@renderer/lib/api'
+import { useApp } from '@renderer/lib/app'
 import { useToast } from '@renderer/lib/toast'
-import { Button, Field, Input, Select } from './ui'
+import { Button, Field, Input, Notice, Select } from './ui'
+
+export const KEY_STORAGE_NOTE = "Your key is encrypted with your operating system's key store when one is available, and stays on your computer."
+export const KEY_STORAGE_WARNING = 'This computer has no key store JobPilot can use, so your key is saved on disk without real encryption. Anyone with access to your user account could read it.'
+
+/** True once the app knows this computer has no real key store. */
+export function useKeyStorageWeak(): boolean {
+  const { appInfo } = useApp()
+  return !!appInfo && !appInfo.secureKeyStorage
+}
+
+/** Shown where keys are entered, only when keys would be saved without real encryption. */
+export function KeyStorageWarning(): React.JSX.Element | null {
+  const weak = useKeyStorageWeak()
+  return weak ? (
+    <Notice tone="warn" title="Your key will not be encrypted">
+      {KEY_STORAGE_WARNING}
+    </Notice>
+  ) : null
+}
 
 const KINDS = Object.keys(PROVIDER_LABELS) as ProviderKind[]
 
@@ -29,6 +49,7 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
   const needsUrl = kind === 'ollama' || kind === 'openai_compatible'
   const showUrl = needsUrl || kind === 'openrouter' || kind === 'gemini'
   const hasStoredKey = initial?.hasKey ?? false
+  const keyStorageWeak = useKeyStorageWeak()
   const missingKey = needsKey && !apiKey && !hasStoredKey
   const missingUrl = kind === 'openai_compatible' && !baseUrl.trim()
 
@@ -94,7 +115,7 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
       )}
       <Field
         label={needsKey ? 'API key' : 'API key (optional)'}
-        hint={hasStoredKey ? 'A key is saved. Type a new one only to replace it. Keys are stored encrypted on this computer and never shown again.' : 'Stored encrypted on this computer and never shown again.'}
+        hint={`${hasStoredKey ? 'A key is saved. Type a new one only to replace it. ' : ''}${keyStorageWeak ? '' : `${KEY_STORAGE_NOTE} `}It is never shown again.`}
       >
         <div className="flex items-center gap-2">
           <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={hasStoredKey ? 'Saved' : 'Paste your key'} autoComplete="new-password" spellCheck={false} />
@@ -105,6 +126,7 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
           )}
         </div>
       </Field>
+      <KeyStorageWarning />
       {result && (
         <p className={result.ok ? 'flex items-center gap-1.5 text-sm text-good' : 'flex items-center gap-1.5 text-sm text-bad'} role="status">
           {result.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}

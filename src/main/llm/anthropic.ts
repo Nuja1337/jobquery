@@ -51,19 +51,17 @@ export class AnthropicClient implements LlmClient {
   }
 
   async completeJson<T>(model: string, req: LlmRequest, schema: z.ZodType<T>, schemaName: string): Promise<LlmJsonResult<T>> {
+    // create() rather than parse(): parse() throws a plain error on a reply that isn't valid JSON
+    // (a refusal with partial text, or a cut-off), and the billed usage is lost with it.
+    let res: BetaMessage
     try {
-      const res = await this.client.beta.messages.parse({
+      res = await this.client.beta.messages.create({
         ...this.baseParams(model, req),
         output_config: {
           format: betaZodOutputFormat(schema),
           ...(req.effort && supportsEffort(model) ? { effort: req.effort } : {})
         }
       })
-      const result = toResult(res)
-      if (res.parsed_output == null) {
-        throw new LlmFormatError(`The model's ${schemaName} reply did not match the expected format.`, result.text, result.usage)
-      }
-      return { ...result, value: res.parsed_output as T }
     } catch (err) {
       // Older models don't support structured outputs. Ask for JSON in the prompt instead.
       if (err instanceof Anthropic.BadRequestError && /output_config|format|schema|structured/i.test(err.message)) {
@@ -71,6 +69,13 @@ export class AnthropicClient implements LlmClient {
       }
       throw err
     }
+    const result = toResult(res)
+    const parsed = parseWithSchema(result.text, schema)
+    if (!parsed.ok) {
+      const cut = result.truncated ? ' It was cut off at the length limit.' : ''
+      throw new LlmFormatError(`The model's ${schemaName} reply was not valid: ${parsed.error}.${cut}`, result.text, result.usage)
+    }
+    return { ...result, value: parsed.value }
   }
 
   private async completeJsonByPrompt<T>(model: string, req: LlmRequest, schema: z.ZodType<T>, schemaName: string): Promise<LlmJsonResult<T>> {
@@ -96,7 +101,11 @@ function toResult(res: BetaMessage): LlmTextResult {
     cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0
   }
   if (res.stop_reason === 'refusal') throw new LlmRefusalError(undefined, billed)
+  // With a server-side fallback, a model that declined partway leaves its partial text before a
+  // "fallback" block. Only the text after the last one is the answer.
+  const lastHop = res.content.findLastIndex((b) => (b.type as string) === 'fallback')
   const text = res.content
+    .slice(lastHop + 1)
     .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
     .map((b) => b.text)
     .join('')

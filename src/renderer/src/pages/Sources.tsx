@@ -193,10 +193,10 @@ export function Companies(): React.JSX.Element {
                 </td>
                 <td className={TD}>{c.ats === 'unknown' ? <Badge>Not recognised</Badge> : <Badge tone="info">{SOURCE_LABELS[c.ats as keyof typeof SOURCE_LABELS] ?? c.ats}</Badge>}</td>
                 <td className={TD}>
-                  <Toggle checked={c.watch} disabled={c.blocked} onChange={(v) => void patch(c, { watch: v })} />
+                  <Toggle ariaLabel={`Watch ${c.name}`} checked={c.watch} disabled={c.blocked} onChange={(v) => void patch(c, { watch: v })} />
                 </td>
                 <td className={TD}>
-                  <Toggle checked={c.blocked} onChange={(v) => void patch(c, { blocked: v })} />
+                  <Toggle ariaLabel={`Block ${c.name}`} checked={c.blocked} onChange={(v) => void patch(c, { blocked: v })} />
                 </td>
                 <td className={`${TD} text-right`}>
                   <IconButton label={`Remove ${c.name}`} onClick={() => setDeleting(c)}>
@@ -295,7 +295,7 @@ export function Searches(): React.JSX.Element {
                 <td className={`${TD} text-muted`}>{SOURCE_LABELS[s.source]}</td>
                 <td className={`${TD} text-muted`}>{relativeTime(s.lastRunAt)}</td>
                 <td className={TD}>
-                  <Toggle checked={s.enabled} onChange={(v) => void toggle(s, v)} />
+                  <Toggle ariaLabel={`Run ${s.label}`} checked={s.enabled} onChange={(v) => void toggle(s, v)} />
                 </td>
                 <td className={`${TD} text-right`}>
                   <IconButton label={`Edit ${s.label}`} onClick={() => setEditing(s)}>

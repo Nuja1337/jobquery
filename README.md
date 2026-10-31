@@ -10,9 +10,9 @@ You review each application and click Submit. If you trust it, auto-submit can d
 - **Scores the fit.** Free rules drop jobs that break your preferences (location, remote, pay, seniority, title words, visa, companies you blocked). A keyword check drops weak matches. Only what's left goes to the AI, which scores the fit and explains the matches, gaps and dealbreakers.
 - **Drafts the application.** It reads the form, fills the standard fields from your profile, and writes the cover letter and open-ended answers from your resume, notes and writing samples.
 - **Checks the writing.** Every draft runs through a style check that flags stock phrases and patterns people associate with AI writing. Drafts that fail get revised before you see them, and the score shows next to the text.
-- **Fills the form.** It opens the application in your own Chrome or Edge and fills it in. You press submit, or auto-submit does it.
+- **Fills the form.** It opens the application in your own Chrome or Edge, in a separate browser profile where you sign in to job sites once, and fills it in. You press submit, or auto-submit does it.
 - **Remembers everything.** Applied, dismissed and not-a-fit jobs are never scored again, so you don't pay twice to look at the same posting. You track replies, interviews and offers in the app.
-- **Shows what's working.** Reply rate by fit score and by source, what the AI cost per application, the skills that keep coming up as gaps, and how many tokens the free filters saved.
+- **Shows what's working.** It shows your reply rate by fit score and by source, what the AI cost per application, the skills that keep coming up as gaps, and how many tokens the free filters saved.
 
 ## Bring your own AI
 
@@ -27,15 +27,15 @@ Paste a key for any of these. Each step of the pipeline can use a different mode
 | Ollama | Local models, no key needed |
 | Any OpenAI-compatible API | Groq, Together, DeepSeek, Mistral, LM Studio and others |
 
-Your key is encrypted with your operating system's keychain and stays on your computer. Daily and monthly spending caps stop all AI calls when they're reached.
+Your key stays on your computer. It's encrypted with your operating system's key store when one is available, and the app warns you when there isn't one. Daily and monthly spending caps stop all AI calls when they're reached.
 
 ## Why it's a desktop app
 
-Filling a job application needs a real browser with your logins, on your own internet connection. A web service would have to run browsers in a data center, which job sites block, and it would have to hold everyone's API keys and personal details. Running on your computer avoids all of that and means there's no server to pay for. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full reasoning and the trade-offs.
+Filling a job application needs a real browser where you're signed in to the job sites, on your own internet connection. A web service would have to run browsers in a data center, which job sites block, and it would have to hold everyone's API keys and personal details. Running on your computer avoids all of that and means there's no server to pay for. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full reasoning and the trade-offs.
 
 ## Getting started
 
-You need [Node.js](https://nodejs.org) 22 or later and Chrome or Edge.
+You need [Node.js](https://nodejs.org) 22.12 or later and Chrome or Edge.
 
 ```bash
 git clone https://github.com/Nuja1337/jobpilot.git
@@ -67,20 +67,22 @@ Then open http://localhost:5173. Add `?onboarding=1` to see the first-run setup.
 ## How it keeps costs down
 
 - Free rules and a keyword check run before any AI call, and postings that fail them never reach the AI.
-- The same posting found on two sites is stored and scored once.
-- A job is scored once. It's only scored again if you ask, or if your profile changes in a way that affects fit.
+- The same posting found on two sites, or reposted under a new id, is stored and scored once. Renaming a company you watch doesn't add its jobs again.
+- A job is scored once. Editing your profile doesn't rescore the jobs you already have. New postings are scored against your current profile, and you can rescore any job from its page.
 - The parts of each prompt that don't change (instructions and your profile) come first, so providers that support prompt caching charge less for them.
 - Every AI answer is cached locally. Asking the same thing twice costs nothing.
 - Short form fields are answered from your profile and saved answers before the AI is asked, and the ones left over go in a single batched call.
+- Each job site is called at most as often as it allows. Remotive asks for no more than four calls a day, so all your Remotive searches share that limit.
 - Each call's tokens and cost are logged, and the Analytics page shows where the money went.
 
 ## Applying responsibly
 
 - Every fact in a draft comes from your profile, documents and notes. When an honest answer needs something the app doesn't know, the field is flagged for you instead of guessed.
-- Some employers ask you not to use AI on applications, or to say whether you did. JobPilot never answers those questions for you, and an application with one of them can't be auto-submitted. Read the employer's policy and respect it.
-- Legal agreements, terms, attestations, consent boxes, salary, start dates and legal history are left to you. Save your own answer for one and it's reused on later forms. Demographic questions default to "decline to answer".
-- Auto-submit is off by default. When on, it only submits applications above a fit score you choose, under a daily cap, and only when nothing is flagged, no answer is a low-confidence guess and every question was on the draft you could review. A dry-run mode fills forms, takes a screenshot and stops before the final click.
-- Nothing counts as submitted until a new confirmation message appears after the click and the form is gone, or you mark it yourself. A screenshot is saved for each submission.
+- Some employers ask you not to use AI on applications, or to say whether you did. JobPilot never uses AI to answer those questions. It leaves them to you, and auto-submit never sends an application that has one, even when you saved your own answer for it. Read the employer's policy and respect it.
+- Legal agreements, terms, attestations and consent boxes are handled the same way. Salary, start dates and legal history are only filled from facts you added to your profile. A saved answer of your own is reused on later forms. Demographic questions default to "decline to answer".
+- Auto-submit is off by default. When on, it only submits applications at or above a fit score you choose, under a daily cap, and only when nothing is flagged, no answer is a low-confidence guess and every answer was on the draft you could review. It clicks Submit at most once per application. If no confirmation follows, the application waits for you.
+- A dry-run setting makes every automatic submit, including the Submit button on the Review page, fill the form, take a screenshot and stop before the final click.
+- Nothing counts as submitted until the page changes after the click and shows a new confirmation message or moves to a thank-you page, or until you mark it yourself. A screenshot is saved for each submission the app sees.
 - Jobs come from public APIs meant for listing jobs. JobPilot doesn't scrape LinkedIn, Indeed or Glassdoor. RemoteOK and Remotive ask for a link back to their listings, and the app links each of their jobs to its page there.
 
 ## Your data

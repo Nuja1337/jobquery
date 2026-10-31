@@ -1,6 +1,7 @@
 // In-memory implementation of the Api for demo mode. Used only when window.bridge is missing,
 // which happens when the renderer is opened in a normal browser through the Vite dev server.
 
+import { answerNeedsUser, isGuess } from '@shared/answers'
 import type { Api, AppInfo, DeepPartial, ProviderTestResult, PushChannel, PushEvents, Bridge } from '@shared/api'
 import type {
   AnswerBankEntry,
@@ -94,7 +95,7 @@ function toJobSummary(j: Job): JobSummary {
 }
 
 function toAppSummary(a: Application): ApplicationSummary {
-  const { coverLetter: _a, coverLetterLint: _b, answers: _c, formFields: _d, resumeDocId: _e, confirmation: _f, screenshotPath: _g, error: _h, notes: _i, ...rest } = a
+  const { coverLetter: _a, coverLetterLint: _b, answers: _c, formFields: _d, resumeDocId: _e, confirmation: _f, screenshotPath: _g, submitClickedAt: _j, error: _h, notes: _i, ...rest } = a
   return rest
 }
 
@@ -140,7 +141,8 @@ export function createMockBridge(): Bridge {
     return a
   }
   function touchApp(a: Application): void {
-    a.flaggedCount = a.answers.filter((x) => x.needsUser).length
+    a.flaggedCount = a.answers.filter(answerNeedsUser).length
+    a.guessCount = a.answers.filter(isGuess).length
     a.updatedAt = iso(0)
     if (a.status === 'ready' && a.flaggedCount > 0) a.status = 'needs_attention'
     if (a.status === 'needs_attention' && a.flaggedCount === 0) a.status = 'ready'
@@ -185,7 +187,7 @@ export function createMockBridge(): Bridge {
 
   const api: Api = {
     async getAppInfo(): Promise<AppInfo> {
-      return { version: '0.1.0 (demo)', dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\JobPilot', platform: 'win32' }
+      return { version: '0.1.0 (demo)', dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\JobPilot', platform: 'win32', secureKeyStorage: true }
     },
     async openExternal(url) {
       window.open(url, '_blank', 'noopener')
@@ -438,11 +440,11 @@ export function createMockBridge(): Bridge {
       const answers = makeAnswers('flagged', j.company)
       const app: Application = {
         id: uid('app'), jobId, company: j.company, title: j.title, fitScore: j.fitScore, fitBucket: j.fitBucket, status: 'needs_attention', outcome: 'none', submitMode: null,
-        flaggedCount: 1, submittedAt: null, outcomeAt: null, createdAt: iso(0), updatedAt: iso(0),
+        flaggedCount: 1, guessCount: 0, submittedAt: null, outcomeAt: null, createdAt: iso(0), updatedAt: iso(0),
         coverLetter: `Hello ${j.company} team,\n\nI read the posting for the ${j.title} role and the work looks close to what I have been doing for the last three years. At Fieldstone Analytics I rebuilt our dashboard in React and TypeScript, which cut load time from six seconds to under two.\n\nI would be glad to talk about how I could help.\n\nBest,\nAlex`,
         coverLetterLint: { score: 93, issues: [], stats: { words: 62, sentences: 4, avgSentenceWords: 15.5, sentenceLengthStdDev: 5, paragraphs: 3 } },
         answers, formFields: answers.map((a) => ({ key: a.fieldKey, label: a.label, type: a.type, required: a.required, options: a.options, placeholder: null, maxLength: null, fileHint: null })),
-        resumeDocId: 'doc_resume1', confirmation: null, screenshotPath: null, error: null, notes: ''
+        resumeDocId: 'doc_resume1', confirmation: null, screenshotPath: null, submitClickedAt: null, error: null, notes: ''
       }
       applications.unshift(app)
       j.stage = 'ready'
@@ -593,6 +595,9 @@ export function createMockBridge(): Bridge {
     },
     async cancelPipeline() {
       cancelled = true
+    },
+    async getNextRunAt() {
+      return settings.autopilot.enabled ? new Date(Date.now() + settings.autopilot.intervalHours * 3_600_000).toISOString() : null
     },
     async getPipelineStatus() {
       return progress

@@ -102,7 +102,7 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
     expect(byKey.resume).toMatchObject({ type: 'file', fileHint: 'resume' })
     expect(byKey.question_1.label).toBe('LinkedIn Profile')
     expect(byKey.question_2).toMatchObject({ type: 'select', options: ['Yes', 'No'] })
-    expect(byKey.question_3).toMatchObject({ type: 'radio', options: ['Yes', 'No'], required: false })
+    expect(byKey.question_3).toMatchObject({ type: 'radio', options: ['Yes', 'No'], required: true, hasValue: false })
     expect(byKey.question_3.label).toMatch(/visa sponsorship/)
     expect(byKey.question_4).toMatchObject({ type: 'textarea', maxLength: 1500 })
     expect(byKey.gender).toMatchObject({ type: 'combobox', label: 'Gender' })

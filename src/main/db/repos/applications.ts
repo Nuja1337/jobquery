@@ -1,3 +1,4 @@
+import { answerNeedsUser, isGuess } from '@shared/answers'
 import type {
   Application,
   ApplicationOutcome,
@@ -27,6 +28,7 @@ interface ApplicationRow {
   resume_doc_id: string | null
   submit_mode: SubmitMode | null
   submitted_at: string | null
+  submit_clicked_at: string | null
   confirmation: string | null
   screenshot_path: string | null
   error: string | null
@@ -45,6 +47,7 @@ export interface ApplicationUpdate extends ApplicationPatch {
   formFields?: FormField[]
   submitMode?: SubmitMode | null
   submittedAt?: string | null
+  submitClickedAt?: string | null
   confirmation?: string | null
   screenshotPath?: string | null
   error?: string | null
@@ -68,7 +71,7 @@ const JOB_STAGE_FOR_STATUS: Record<ApplicationStatus, JobStage> = {
 }
 
 function flagged(answers: PreparedAnswer[]): number {
-  return answers.filter((a) => a.needsUser).length
+  return answers.filter(answerNeedsUser).length
 }
 
 function toSummary(row: ApplicationRow): ApplicationSummary {
@@ -83,6 +86,7 @@ function toSummary(row: ApplicationRow): ApplicationSummary {
     outcome: row.outcome,
     submitMode: row.submit_mode,
     flaggedCount: flagged(parseJson<PreparedAnswer[]>(row.answers, [])),
+    guessCount: parseJson<PreparedAnswer[]>(row.answers, []).filter(isGuess).length,
     submittedAt: row.submitted_at,
     outcomeAt: row.outcome_at,
     createdAt: row.created_at,
@@ -100,6 +104,7 @@ function toApplication(row: ApplicationRow): Application {
     resumeDocId: row.resume_doc_id,
     confirmation: row.confirmation,
     screenshotPath: row.screenshot_path,
+    submitClickedAt: row.submit_clicked_at,
     error: row.error,
     notes: row.notes
   }
@@ -165,10 +170,16 @@ export class ApplicationsRepo {
   /**
    * Applies a patch. Changing the status keeps the job's stage in step, setting an outcome stamps
    * outcomeAt, and moving to `submitted` stamps submittedAt unless the caller passes one.
+   *
+   * A withdrawn application stays withdrawn unless `reopen` is set (restoring a dismissed job) or it
+   * was submitted after all. Background work that finishes after a dismissal can't bring it back.
    */
-  update(id: string, patch: ApplicationUpdate): Application {
+  update(id: string, patch: ApplicationUpdate, options: { reopen?: boolean } = {}): Application {
     const current = this.db.get<ApplicationRow>(`${SELECT_APP} WHERE a.id = :id`, { id })
     if (!current) throw new Error('That application no longer exists.')
+    if (current.status === 'withdrawn' && patch.status !== undefined && patch.status !== 'submitted' && !options.reopen) {
+      patch = { ...patch, status: undefined }
+    }
     const sets: string[] = []
     const params: Record<string, string | number | null> = { id, at: now() }
     const set = (column: string, key: string, value: string | number | null) => {
@@ -196,6 +207,7 @@ export class ApplicationsRepo {
       }
     }
     if (patch.submittedAt !== undefined) set('submitted_at', 'submittedAt', patch.submittedAt)
+    if (patch.submitClickedAt !== undefined) set('submit_clicked_at', 'submitClickedAt', patch.submitClickedAt)
     this.db.transaction(() => {
       this.db.run(`UPDATE applications SET ${sets.length ? `${sets.join(', ')}, ` : ''}updated_at = :at WHERE id = :id`, params)
       if (patch.status !== undefined) this.syncJobStage(current.job_id, patch.status)
@@ -207,16 +219,24 @@ export class ApplicationsRepo {
     this.db.run('DELETE FROM applications WHERE id = :id', { id })
   }
 
-  /** Applications waiting to be sent, best fit first. Jobs the user dismissed or that closed are left out. */
+  /**
+   * Applications waiting to be sent, best fit first. Jobs the user dismissed or that closed are left
+   * out, and so is anything auto mode already clicked Submit on.
+   */
   listReady(): ApplicationSummary[] {
     return this.db
-      .all<ApplicationRow>(`${SELECT_APP} WHERE a.status = 'ready' AND j.stage = 'ready' ORDER BY j.fit_score DESC, a.updated_at`)
+      .all<ApplicationRow>(
+        `${SELECT_APP} WHERE a.status = 'ready' AND j.stage = 'ready' AND a.submit_clicked_at IS NULL ORDER BY j.fit_score DESC, a.updated_at`
+      )
       .map(toSummary)
   }
 
-  /** Number of applications submitted since the given ISO time. */
+  /** Applications submitted since the given ISO time, counting Submit clicks that saw no confirmation. */
   countSubmittedSince(sinceIso: string): number {
-    return this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM applications WHERE submitted_at >= :since', { since: sinceIso })?.n ?? 0
+    return (
+      this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM applications WHERE submitted_at >= :since OR submit_clicked_at >= :since', { since: sinceIso })
+        ?.n ?? 0
+    )
   }
 
   countByStatus(): Record<string, number> {
@@ -238,8 +258,9 @@ export class ApplicationsRepo {
     )
   }
 
+  /** A dismissed job stays dismissed unless the application turns out to have been submitted. */
   private syncJobStage(jobId: string, status: ApplicationStatus): void {
-    this.db.run('UPDATE jobs SET stage = :stage, updated_at = :at WHERE id = :id', {
+    this.db.run("UPDATE jobs SET stage = :stage, updated_at = :at WHERE id = :id AND (stage != 'dismissed' OR :stage = 'applied')", {
       id: jobId,
       stage: JOB_STAGE_FOR_STATUS[status],
       at: now()

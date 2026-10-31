@@ -96,7 +96,7 @@ function Row({ draft, isNew, timesUsed, onSave, onDelete, onCancel }: { draft: D
             Cancel
           </Button>
         )}
-        {timesUsed != null && <Badge>{timesUsed === 0 ? 'Not used yet' : `Used ${timesUsed} times`}</Badge>}
+        {timesUsed != null && <Badge>{timesUsed === 0 ? 'Not used yet' : `Used ${timesUsed} ${timesUsed === 1 ? 'time' : 'times'}`}</Badge>}
         {onDelete && (
           <Button size="sm" variant="ghost" className="ml-auto" icon={<Trash2 size={13} />} onClick={onDelete}>
             Delete

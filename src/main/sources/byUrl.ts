@@ -24,6 +24,19 @@ function arrayOf(v: unknown): unknown[] {
   return Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]
 }
 
+/**
+ * Reads one JSON-LD block as it is. Decoding entities first would turn a `&quot;` inside a string
+ * into a bare quote and break valid JSON, so it only happens when the plain parse fails (a block
+ * that was escaped as a whole).
+ */
+function parseJsonLd(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return JSON.parse(decodeEntities(text))
+  }
+}
+
 /** Finds JobPosting objects in every JSON-LD block of a page. Handles arrays and @graph. */
 export function findJobPostings(html: string): Json[] {
   const found: Json[] = []
@@ -37,8 +50,9 @@ export function findJobPostings(html: string): Json[] {
     if (obj['@graph']) visit(obj['@graph'])
   }
   for (const block of blocks) {
+    const text = block[1].trim()
     try {
-      visit(JSON.parse(decodeEntities(block[1].trim())))
+      visit(parseJsonLd(text))
     } catch {
       // A broken block shouldn't hide a good one.
     }

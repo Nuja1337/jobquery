@@ -16,7 +16,7 @@ import { BudgetExceededError } from './llm/errors'
 import type { AppPaths } from './paths'
 import { dismissJob, restoreJob, scoreJobNow } from './pipeline/actions'
 import { dismissSuggestion, suggestPreferences } from './pipeline/learn'
-import { ingestJob, Pipeline } from './pipeline/orchestrator'
+import { ingestJob, Pipeline, restageForShortlist } from './pipeline/orchestrator'
 import { buildVoice, extractProfileFromText } from './profile/extract'
 import { copyIntoAppData, extractTextFromFile, fetchUrlText } from './profile/ingest'
 import { Scheduler } from './scheduler'
@@ -64,7 +64,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     if (!full) continue
     if (full.status === 'draft' && full.answers.length === 0 && !full.coverLetter) {
       ctx.applications.delete(full.id)
-      ctx.jobs.setStage(full.jobId, 'shortlisted')
+      ctx.jobs.moveStage(full.jobId, 'shortlisted', ['preparing'])
     } else {
       ctx.applications.update(full.id, {
         status: 'needs_attention',
@@ -117,11 +117,49 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     deps.emit('jobs:changed', { jobIds: [app.jobId] })
   }
 
+  /** Items of `incoming` whose key isn't in `stored` yet, appended to `stored`. */
+  function addNew<T>(stored: T[], incoming: T[], key: (item: T) => string): T[] {
+    const have = new Set(stored.map(key))
+    return [...stored, ...incoming.filter((item) => !have.has(key(item)))]
+  }
+
+  /** Answers can't change once sent, or while the form is open in the browser. */
+  function assertEditable(app: Application): void {
+    if (app.status === 'submitted') throw new Error('This application was already submitted.')
+    if (app.status === 'withdrawn') throw new Error('This application was withdrawn. Restore the job first.')
+    if (inFlight.has(app.id) || app.status === 'submitting') throw new Error('This application is open in the browser. Finish it there first.')
+  }
+
+  /** Points unsent applications at the current primary resume, so Review shows the file that gets uploaded. */
+  function refreshResumeAnswers(): void {
+    const resume = ctx.documents.primaryResume()?.filePath ?? null
+    const open = []
+    for (let offset = 0; ; offset += 500) {
+      const page = ctx.applications.list({ statuses: ['draft', 'ready', 'needs_attention', 'failed'], limit: 500, offset }).items
+      open.push(...page)
+      if (page.length < 500) break
+    }
+    for (const summary of open) {
+      const app = ctx.applications.get(summary.id)
+      if (!app) continue
+      const resumeKeys = new Set(app.formFields.filter((f) => f.type === 'file' && f.fileHint === 'resume').map((f) => f.key))
+      let touched = false
+      const answers = app.answers.map((a) => {
+        if (!resumeKeys.has(a.fieldKey) || a.value === (resume ?? '')) return a
+        touched = true
+        return { ...a, value: resume ?? '', confidence: resume ? 1 : 0, needsUser: !resume && a.required, note: resume ? null : 'Upload a resume in Profile first.' }
+      })
+      if (touched) changed(ctx.applications.update(app.id, { answers }))
+    }
+  }
+
   /** Drafts the application for a job: form, answers and cover letter. */
   async function prepare(jobId: string): Promise<Application> {
     const j = job(jobId)
     const existing = ctx.applications.getByJob(jobId)
     if (existing?.status === 'submitted') throw new Error('This application was already submitted.')
+    if (j.stage === 'dismissed' || existing?.status === 'withdrawn') throw new Error('This job was dismissed. Restore it before preparing an application.')
+    if (existing && inFlight.has(existing.id)) throw new Error('This application is open in the browser. Finish it there first.')
     const app = existing ?? ctx.applications.create(jobId)
     const previousStage = j.stage
     ctx.applications.update(app.id, { status: 'draft', error: null })
@@ -131,8 +169,11 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       const notes: string[] = []
       if (draft.formSource === 'none') notes.push("The form couldn't be read ahead of time. It will be read and filled when you open it.")
       if (draft.coverLetterNeedsInput) notes.push(`Cover letter needs your input: ${draft.coverLetterNeedsInput}`)
+      // The user may have dismissed the job or marked it submitted while the draft was written.
+      // Keep the draft, but only mark it ready if nothing else changed its status meanwhile.
+      const stillDrafting = ctx.applications.get(app.id)?.status === 'draft'
       const updated = ctx.applications.update(app.id, {
-        status: flagged ? 'needs_attention' : 'ready',
+        status: stillDrafting ? (flagged ? 'needs_attention' : 'ready') : undefined,
         coverLetter: draft.coverLetter ?? undefined,
         coverLetterLint: draft.coverLetterLint,
         answers: draft.answers,
@@ -148,10 +189,12 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       changed(updated)
       return updated
     } catch (err) {
-      if (!existing) {
+      const status = ctx.applications.get(app.id)?.status
+      if (!existing && (status === 'draft' || status === 'withdrawn')) {
+        // Nothing was written, so drop the empty application. A job dismissed meanwhile stays dismissed.
         ctx.applications.delete(app.id)
-        ctx.jobs.setStage(jobId, previousStage === 'preparing' ? 'shortlisted' : previousStage)
-      } else {
+        ctx.jobs.moveStage(jobId, previousStage === 'preparing' ? 'shortlisted' : previousStage, ['preparing'])
+      } else if (existing && status === 'draft') {
         ctx.applications.update(app.id, { status: existing.status === 'draft' ? 'needs_attention' : existing.status, error: (err as Error).message })
       }
       if (!(err instanceof BudgetExceededError)) ctx.events.add('error', `Couldn't prepare ${j.title} at ${j.company}. ${(err as Error).message}`, jobId)
@@ -165,6 +208,16 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     const app = application(applicationId)
     if (app.status === 'submitted') return { ok: true, status: 'submitted', message: 'Already submitted.', screenshotPath: app.screenshotPath }
     if (app.status === 'withdrawn') return { ok: false, status: 'withdrawn', message: 'This application was withdrawn.', screenshotPath: null }
+    if (mode === 'auto' && app.submitClickedAt) {
+      // A click with no confirmation may still have gone through. A second click could send it twice.
+      const when = new Date(app.submitClickedAt).toLocaleString()
+      return {
+        ok: false,
+        status: app.status,
+        message: `The app already clicked Submit on this application (${when}) and saw no confirmation, so it won't click again. Check your email or the company's site. If it went through, mark it as submitted. If not, open it and send it yourself.`,
+        screenshotPath: null
+      }
+    }
     if (inFlight.has(app.id)) {
       return { ok: false, status: app.status, message: 'This application is already open in the browser. Finish it there.', screenshotPath: null }
     }
@@ -186,7 +239,28 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     let result
     try {
       result = await runSubmission(
-        { browser, settings, answerDeps: answerDeps(), renderCoverLetter: (text) => renderLetter(text, j.company), screenshotsDir: deps.paths.screenshotsDir },
+        {
+          browser,
+          settings,
+          answerDeps: answerDeps(),
+          renderCoverLetter: (text) => renderLetter(text, j.company),
+          screenshotsDir: deps.paths.screenshotsDir,
+          recordSubmitClick: (at) => {
+            if (at === null) {
+              ctx.applications.update(app.id, { submitClickedAt: null })
+              return true
+            }
+            // Last check before the click. The fill can take a minute, and the user may have
+            // dismissed the job or edited the application meanwhile.
+            const now = ctx.applications.get(app.id)
+            const stage = now ? ctx.jobs.get(now.jobId)?.stage : null
+            if (!now || now.status !== 'submitting' || stage === 'dismissed' || stage === 'closed') return false
+            ctx.applications.update(app.id, { submitClickedAt: at })
+            // Write it to disk now, so a crash right after the click can't lose it.
+            ctx.db.flush()
+            return true
+          }
+        },
         j,
         app,
         mode
@@ -200,14 +274,19 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       return { ok: false, status: 'needs_attention', message, screenshotPath: null }
     }
 
+    // Answers edited in Review while the browser was open stay. Only answers for fields first seen
+    // on the live form are added.
+    const stored = ctx.applications.get(app.id) ?? app
     const updated = ctx.applications.update(app.id, {
       status: result.status,
-      answers: result.answers,
-      formFields: result.formFields,
+      answers: addNew(stored.answers, result.answers, (a) => a.fieldKey),
+      formFields: addNew(stored.formFields, result.formFields, (f) => f.key),
       screenshotPath: result.screenshotPath ?? undefined,
       confirmation: result.confirmation ?? undefined,
       error: result.ok ? null : result.message
     })
+    // The watcher keeps adding to the same list as later pages appear.
+    const savedAnswerCount = result.answers.length
     if (result.status === 'submitted') {
       ctx.events.add('submitted', `Submitted the application to ${j.company} for ${j.title}${by === 'autopilot' ? ' automatically' : ''}.`, j.id)
     } else if (result.status === 'needs_attention') {
@@ -218,9 +297,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     // Keep watching the browser in the background and record the submission when it happens.
     if (!result.completion) inFlight.delete(app.id)
     result.completion?.finally(() => inFlight.delete(app.id)).catch(() => {})
-    result.completion?.then(({ confirmed, screenshotPath }) => {
+    result.completion?.then(({ confirmed, screenshotPath, answers, formFields }) => {
       const current = ctx.applications.get(app.id)
       if (!current || current.status === 'submitted') return
+      // Keep the answers written for pages that appeared after the first one.
+      if (answers.length > savedAnswerCount) {
+        ctx.applications.update(app.id, { answers: addNew(current.answers, answers, (a) => a.fieldKey), formFields: addNew(current.formFields, formFields, (f) => f.key) })
+      }
       if (confirmed) {
         const done = ctx.applications.update(app.id, { status: 'submitted', screenshotPath: screenshotPath ?? undefined, confirmation: 'Confirmation page seen', error: null })
         ctx.events.add('submitted', `Submitted the application to ${j.company} for ${j.title}.`, j.id)
@@ -253,7 +336,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
   const api: Api = {
     // App
     async getAppInfo() {
-      return { version: deps.appVersion, dataDir: deps.paths.dataDir, platform: process.platform }
+      return { version: deps.appVersion, dataDir: deps.paths.dataDir, platform: process.platform, secureKeyStorage: deps.vault.secure }
     },
     async openExternal(url) {
       if (!/^https?:\/\//i.test(url)) throw new Error('Only web links can be opened.')
@@ -288,7 +371,10 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       return ctx.settings.get()
     },
     async updateSettings(patch) {
+      const before = ctx.settings.get().thresholds.shortlistScore
       const next = ctx.settings.update(patch)
+      // Jobs already scored move across the new shortlist line and get the matching fit label.
+      if (next.thresholds.shortlistScore !== before) restageForShortlist(ctx)
       scheduler.reschedule()
       return next
     },
@@ -361,6 +447,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         throw new Error('Pick a file, paste a link or paste some text.')
       }
       if (doc.kind === 'resume' && !ctx.documents.primaryResume()) ctx.documents.setPrimary(doc.id)
+      if (doc.kind === 'resume') refreshResumeAnswers()
       return ctx.documents.get(doc.id) ?? doc
     },
     async listDocuments(kind) {
@@ -373,9 +460,11 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       const doc = ctx.documents.get(id)
       ctx.documents.delete(id)
       if (doc?.filePath && insideDataDir(doc.filePath)) fs.rmSync(doc.filePath, { force: true })
+      if (doc?.kind === 'resume') refreshResumeAnswers()
     },
     async setPrimaryResume(id) {
       ctx.documents.setPrimary(id)
+      refreshResumeAnswers()
     },
     async extractProfileFromResume(documentId) {
       const text = ctx.documents.getText(documentId)
@@ -427,7 +516,6 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async addJobByUrl(url) {
       const added = ingestJob(ctx, await fetchJobByUrl(url))
-      ctx.events.add('discovered', `Added ${added.title} at ${added.company} from a link.`, added.id)
       deps.emit('jobs:changed', { jobIds: [added.id] })
       return added
     },
@@ -477,6 +565,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async regenerateAnswer(applicationId, fieldKey, guidance) {
       const app = application(applicationId)
+      assertEditable(app)
       const j = job(app.jobId)
       const current = app.answers.find((a) => a.fieldKey === fieldKey)
       const field = app.formFields.find((f) => f.key === fieldKey) ??
@@ -487,19 +576,27 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         guidance: guidance ? new Map([[fieldKey, guidance]]) : undefined
       })
       const fresh = res.answers[0]
-      const answers = app.answers.some((a) => a.fieldKey === fieldKey) ? app.answers.map((a) => (a.fieldKey === fieldKey ? fresh : a)) : [...app.answers, fresh]
+      // Read it again: the user may have edited other answers while the AI was writing this one.
+      const latest = application(applicationId)
+      assertEditable(latest)
+      const answers = latest.answers.some((a) => a.fieldKey === fieldKey) ? latest.answers.map((a) => (a.fieldKey === fieldKey ? fresh : a)) : [...latest.answers, fresh]
       const flagged = answers.some((a) => a.needsUser && a.required)
-      changed(ctx.applications.update(app.id, { answers, status: app.status === 'ready' || app.status === 'needs_attention' ? (flagged ? 'needs_attention' : 'ready') : app.status }))
+      const status = latest.status === 'ready' || latest.status === 'needs_attention' ? (flagged ? 'needs_attention' : 'ready') : latest.status
+      changed(ctx.applications.update(app.id, { answers, status }))
       return fresh
     },
     async regenerateCoverLetter(applicationId, guidance) {
       const app = application(applicationId)
+      assertEditable(app)
       const j = job(app.jobId)
       const deps2 = answerDeps()
       const written = await writeCoverLetter(ctx.llm, { profile: deps2.profile, samples: deps2.samples, settings: deps2.settings }, j, { guidance, regenerate: true })
       if (written.needsInput) throw new Error(`The cover letter needs your input: ${written.needsInput}`)
+      // Read it again so edits made while the letter was being written are kept.
+      const latest = application(applicationId)
+      assertEditable(latest)
       // A cover letter pasted into a form field follows the new letter too.
-      const answers = app.answers.map((a) => (isCoverLetterField({ key: a.fieldKey, label: a.label, type: a.type, required: a.required, options: [], placeholder: null, maxLength: null, fileHint: null }) && (a.type === 'textarea' || a.type === 'text') ? { ...a, value: written.text, needsUser: false } : a))
+      const answers = latest.answers.map((a) => (isCoverLetterField({ key: a.fieldKey, label: a.label, type: a.type, required: a.required, options: [], placeholder: null, maxLength: null, fileHint: null }) && (a.type === 'textarea' || a.type === 'text') ? { ...a, value: written.text, needsUser: false } : a))
       const updated = ctx.applications.update(app.id, { coverLetter: written.text, coverLetterLint: written.lint, answers })
       changed(updated)
       return updated
@@ -529,6 +626,9 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async cancelPipeline() {
       pipeline.cancel()
+    },
+    async getNextRunAt() {
+      return scheduler.nextRunAt()
     },
     async getPipelineStatus() {
       return pipeline.status()

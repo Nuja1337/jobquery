@@ -110,7 +110,7 @@ export function ProfileEditor({ value: p, onChange }: Props): React.JSX.Element 
           </Button>
         }
       >
-        {p.experience.length === 0 && <p className="text-sm text-muted">No work history yet. Add a job, or read it from your resume.</p>}
+        {p.experience.length === 0 && <p className="text-sm text-muted">No work history yet. Add a job.</p>}
         {p.experience.map((x, i) => (
           <ExperienceRow key={i} value={x} onChange={(v) => set('experience', replaceAt(p.experience, i, v))} onRemove={() => set('experience', p.experience.filter((_, j) => j !== i))} />
         ))}

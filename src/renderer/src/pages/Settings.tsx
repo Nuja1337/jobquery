@@ -13,7 +13,7 @@ import { useToast } from '@renderer/lib/toast'
 import { applyTheme, getStoredTheme, setOnboardingSkipped, type Theme } from '@renderer/lib/theme'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 import { ModelPicker } from '@renderer/components/ModelPicker'
-import { ProviderForm } from '@renderer/components/ProviderForm'
+import { KEY_STORAGE_NOTE, KeyStorageWarning, ProviderForm, useKeyStorageWeak } from '@renderer/components/ProviderForm'
 import { Badge, Button, Card, CardHeader, Checkbox, Chip, ErrorBlock, Field, IconButton, Input, Loading, Modal, NumberInput, Page, PageHeader, Segmented, Select, TD, TH, TagInput, Textarea, Toggle } from '@renderer/components/ui'
 
 const SECTIONS = [
@@ -110,7 +110,16 @@ export function SettingsPage(): React.JSX.Element {
         </nav>
 
         <div className="min-w-0 space-y-5">
-          <ProvidersCard providers={providers.data} error={providers.error} reload={providers.reload} />
+          <ProvidersCard
+            providers={providers.data}
+            error={providers.error}
+            reload={providers.reload}
+            onDeleted={async () => {
+              // Main may have cleared routing that used the deleted provider. Take its copy so saving doesn't write the old one back.
+              const fresh = await updateSettings({})
+              if (fresh) setDraft((cur) => (cur ? { ...cur, routing: structuredClone(fresh.routing) } : cur))
+            }}
+          />
 
           <Card id="settings-models">
             <CardHeader title="Models" hint="Each stage can use a different provider and model, so cheap work runs on cheap models." />
@@ -124,7 +133,7 @@ export function SettingsPage(): React.JSX.Element {
                       providers={providers.data as ProviderInfo[]}
                       value={draft.routing[s.id]}
                       onChange={(ref) => set('routing', { [s.id]: ref })}
-                      suggested={suggestedFor(providers.data as ProviderInfo[], draft.routing[s.id]?.providerId, s.id)}
+                      suggested={(kind) => SUGGESTED_MODELS[kind]?.[s.id]}
                     />
                   </Field>
                 ))
@@ -135,17 +144,24 @@ export function SettingsPage(): React.JSX.Element {
           <PricesCard
             prices={settings.prices}
             onSave={async (model, price) => { await updateSettings({ prices: { [model]: price } }) }}
-            onReset={async (model) => { await api.removePriceOverride(model); await updateSettings({}) }}
+            onReset={async (model) => {
+              try {
+                await api.removePriceOverride(model)
+                await updateSettings({})
+              } catch (e) {
+                toast.error(e)
+              }
+            }}
           />
 
           <Card id="settings-budget">
-            <CardHeader title="Budgets" hint="JobPilot stops spending when a budget runs out." />
+            <CardHeader title="Budgets" hint="JobPilot stops spending when a budget runs out. A budget of 0 means no limit." />
             <div className="grid grid-cols-2 gap-4 p-4">
-              <Field label="Daily budget (US dollars)">
-                <NumberInput value={draft.budget.dailyUsd} min={0} step={0.1} onChange={(v) => set('budget', { dailyUsd: v ?? 0 })} />
+              <Field label="Daily budget (US dollars)" hint={draft.budget.dailyUsd === 0 ? 'No limit. Nothing stops spending until you set a budget.' : 'Enter 0 for no limit.'}>
+                <BudgetInput value={draft.budget.dailyUsd} step={0.1} onChange={(v) => set('budget', { dailyUsd: v })} />
               </Field>
-              <Field label="Monthly budget (US dollars)">
-                <NumberInput value={draft.budget.monthlyUsd} min={0} step={1} onChange={(v) => set('budget', { monthlyUsd: v ?? 0 })} />
+              <Field label="Monthly budget (US dollars)" hint={draft.budget.monthlyUsd === 0 ? 'No limit. Nothing stops spending until you set a budget.' : 'Enter 0 for no limit.'}>
+                <BudgetInput value={draft.budget.monthlyUsd} step={1} onChange={(v) => set('budget', { monthlyUsd: v })} />
               </Field>
               <Field label="Jobs scored per run" hint="The most jobs sent to the AI in one run.">
                 <NumberInput value={draft.budget.maxTriagePerRun} min={0} onChange={(v) => set('budget', { maxTriagePerRun: v ?? 0 })} />
@@ -288,20 +304,44 @@ export function SettingsPage(): React.JSX.Element {
   )
 }
 
-function suggestedFor(providers: ProviderInfo[], providerId: string | undefined, stage: LlmStage): string | undefined {
-  const kind = providers.find((p) => p.id === providerId)?.kind
-  return kind ? SUGGESTED_MODELS[kind]?.[stage] : undefined
+/**
+ * A dollar amount that is never empty. Clearing the field and leaving it puts the old value back,
+ * because the main process reads 0 as "no limit" and an empty field must not turn the cap off.
+ */
+function BudgetInput({ value, step, onChange }: { value: number; step: number; onChange: (v: number) => void }): React.JSX.Element {
+  const [text, setText] = useState(String(value))
+  useEffect(() => {
+    // Follow outside changes such as Discard, but don't fight what is being typed.
+    setText((cur) => (cur.trim() !== '' && Number(cur) === value ? cur : String(value)))
+  }, [value])
+  return (
+    <Input
+      type="number"
+      min={0}
+      step={step}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value)
+        const n = Number(e.target.value)
+        if (e.target.value.trim() !== '' && Number.isFinite(n) && n >= 0) onChange(n)
+      }}
+      onBlur={() => {
+        if (text.trim() === '' || !Number.isFinite(Number(text)) || Number(text) < 0) setText(String(value))
+      }}
+    />
+  )
 }
 
 // ---------------------------------------------------------------------------
 // Providers
 // ---------------------------------------------------------------------------
 
-function ProvidersCard({ providers, error, reload }: { providers: ProviderInfo[] | null; error: string | null; reload: () => void }): React.JSX.Element {
+function ProvidersCard({ providers, error, reload, onDeleted }: { providers: ProviderInfo[] | null; error: string | null; reload: () => void; onDeleted: () => Promise<void> }): React.JSX.Element {
   const toast = useToast()
   const [editing, setEditing] = useState<ProviderInfo | 'new' | null>(null)
   const [deleting, setDeleting] = useState<ProviderInfo | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
+  const keyStorageWeak = useKeyStorageWeak()
 
   async function test(p: ProviderInfo): Promise<void> {
     setTesting(p.id)
@@ -320,13 +360,18 @@ function ProvidersCard({ providers, error, reload }: { providers: ProviderInfo[]
     <Card id="settings-providers">
       <CardHeader
         title="AI providers"
-        hint="Bring your own key. Keys are stored encrypted on this computer and are never shown again."
+        hint={keyStorageWeak ? 'Bring your own key. Keys are never shown again.' : `Bring your own key. ${KEY_STORAGE_NOTE} Keys are never shown again.`}
         actions={
           <Button size="sm" icon={<Plus size={13} />} onClick={() => setEditing('new')}>
             Add provider
           </Button>
         }
       />
+      {keyStorageWeak && (
+        <div className="border-b border-line p-4">
+          <KeyStorageWarning />
+        </div>
+      )}
       {error ? (
         <div className="p-4">
           <ErrorBlock message={error} onRetry={reload} />
@@ -389,6 +434,7 @@ function ProvidersCard({ providers, error, reload }: { providers: ProviderInfo[]
             try {
               await api.deleteProvider(deleting.id)
               reload()
+              await onDeleted()
             } catch (e) {
               toast.error(e)
               throw e
@@ -406,11 +452,20 @@ function ProvidersCard({ providers, error, reload }: { providers: ProviderInfo[]
 
 function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; onSave: (model: string, price: ModelPrice) => Promise<void>; onReset: (model: string) => Promise<void> }): React.JSX.Element {
   const [newModel, setNewModel] = useState('')
+  const [newIn, setNewIn] = useState('')
+  const [newOut, setNewOut] = useState('')
+  const [isFree, setIsFree] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const inVal = newIn.trim() === '' ? null : Number(newIn)
+  const outVal = newOut.trim() === '' ? null : Number(newOut)
+  const pricesOk = inVal !== null && outVal !== null && Number.isFinite(inVal) && Number.isFinite(outVal) && inVal >= 0 && outVal >= 0
+  const allZero = pricesOk && inVal === 0 && outVal === 0
+  const canAdd = !!newModel.trim() && pricesOk && (!allZero || isFree) && !adding
   const models = useMemo(() => [...new Set([...Object.keys(BUILTIN_PRICES), ...Object.keys(prices)])].sort(), [prices])
 
   return (
     <Card id="settings-prices">
-      <CardHeader title="Prices" hint="US dollars per million tokens. Used for the spend numbers and budgets. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Ollama models are free." />
+      <CardHeader title="Prices" hint="Prices are in US dollars per million tokens, and the spend numbers and budgets use them. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Ollama models are free." />
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr>
@@ -428,18 +483,32 @@ function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; o
         </tbody>
       </table>
       <form
-        className="flex items-center gap-2 border-t border-line p-4"
+        className="space-y-2 border-t border-line p-4"
         onSubmit={(e) => {
           e.preventDefault()
           const id = newModel.trim()
-          if (!id) return
-          void onSave(id, { inputPerMTok: 0, outputPerMTok: 0 }).then(() => setNewModel(''))
+          if (!canAdd || inVal === null || outVal === null) return
+          setAdding(true)
+          void onSave(id, { inputPerMTok: inVal, outputPerMTok: outVal })
+            .then(() => {
+              setNewModel('')
+              setNewIn('')
+              setNewOut('')
+              setIsFree(false)
+            })
+            .finally(() => setAdding(false))
         }}
       >
-        <Input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder="Add a model, for example llama3.1:8b" className="max-w-sm" aria-label="Model to add" />
-        <Button type="submit" icon={<Plus size={13} />} disabled={!newModel.trim()}>
-          Add model
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder="Add a model, for example llama3.1:8b" className="max-w-sm" aria-label="Model to add" />
+          <Input type="number" min={0} step={0.01} value={newIn} onChange={(e) => setNewIn(e.target.value)} placeholder="Input price" className="w-28" aria-label="Input price per million tokens" />
+          <Input type="number" min={0} step={0.01} value={newOut} onChange={(e) => setNewOut(e.target.value)} placeholder="Output price" className="w-28" aria-label="Output price per million tokens" />
+          <Button type="submit" icon={<Plus size={13} />} disabled={!canAdd} loading={adding}>
+            Add model
+          </Button>
+        </div>
+        <p className="text-xs text-faint">Enter what the model costs per million tokens. Without prices, its calls would not count toward your budgets.</p>
+        {allZero && <Checkbox label="This model is free, so both prices are 0" checked={isFree} onChange={setIsFree} />}
       </form>
     </Card>
   )
@@ -477,8 +546,11 @@ function PriceRow({ model, price, custom, builtin, onSave, onReset }: { model: s
               loading={busy}
               onClick={async () => {
                 setBusy(true)
-                await onSave(model, { ...p, inputPerMTok: p.inputPerMTok ?? 0, outputPerMTok: p.outputPerMTok ?? 0 })
-                setBusy(false)
+                try {
+                  await onSave(model, { ...p, inputPerMTok: p.inputPerMTok ?? 0, outputPerMTok: p.outputPerMTok ?? 0 })
+                } finally {
+                  setBusy(false)
+                }
               }}
             >
               Save

@@ -39,7 +39,8 @@ export class Scheduler {
     if (!this.started) return
     const { autopilot } = this.ctx.settings.get()
     if (!autopilot.enabled) return
-    const interval = Math.max(autopilot.intervalHours, 0.25) * HOUR_MS
+    const hours = Number.isFinite(autopilot.intervalHours) ? autopilot.intervalHours : 6
+    const interval = Math.max(hours, 0.25) * HOUR_MS
     const last = this.ctx.runs.list(1)[0]
     const lastStart = last ? Date.parse(last.startedAt) : NaN
     const due = Number.isFinite(lastStart) ? lastStart + interval : Date.now() + DUE_DELAY_MS

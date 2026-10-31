@@ -27,16 +27,22 @@ export function normalizeText(text: string): string {
     .trim()
 }
 
-/** The same posting from the same source always produces the same key. */
-export function canonicalKey(raw: Pick<RawJob, 'source' | 'company' | 'externalId'>): string {
+/**
+ * The same posting from the same source always produces the same key.
+ * A posting on an ATS board is keyed by the board token, not the company name, so renaming a
+ * watched company or pasting a link to the same posting gives the same key.
+ * Aggregator postings have no board token and keep the company name in the key.
+ */
+export function canonicalKey(raw: Pick<RawJob, 'source' | 'company' | 'externalId'> & Partial<Pick<RawJob, 'ats' | 'atsToken'>>): string {
+  const token = raw.atsToken?.trim()
+  if (raw.ats && raw.ats !== 'unknown' && token) return `${raw.source}:${token.toLowerCase()}:${raw.externalId}`
   return `${raw.source}:${normalizeCompany(raw.company)}:${raw.externalId}`
 }
 
-/** Fingerprint of company, title and the start of the description. Identical postings on two boards match. */
+/** Fingerprint of company, title and the whole description. Identical postings on two boards match. */
 export function contentHash(raw: Pick<RawJob, 'company' | 'title' | 'description'>): string {
-  const body = normalizeText(raw.description).slice(0, 600)
   return createHash('sha1')
-    .update(`${normalizeCompany(raw.company)}\n${normalizeText(raw.title)}\n${body}`)
+    .update(`${normalizeCompany(raw.company)}\n${normalizeText(raw.title)}\n${normalizeText(raw.description)}`)
     .digest('hex')
 }
 

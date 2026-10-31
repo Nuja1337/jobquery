@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { BookmarkPlus, RefreshCw, TriangleAlert } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { AnswerKind, PreparedAnswer } from '@shared/types'
+import { AUTO_SUBMIT_MIN_CONFIDENCE, answerNeedsUser, isGuess } from '@shared/answers'
 import { api } from '@renderer/lib/api'
 import { useToast } from '@renderer/lib/toast'
 import { basename, parseMulti, stringifyMulti } from '@renderer/lib/format'
@@ -9,33 +10,29 @@ import { AnswerSourceBadge } from './badges'
 import { LintScore } from './LintPanel'
 import { Badge, Button, Checkbox, Field, Input, Modal, Select, Textarea } from './ui'
 
-/** True when the answer still needs the person, either flagged by the AI or required and empty. */
-export function answerIsMissing(a: PreparedAnswer): boolean {
-  if (a.needsUser) return true
-  if (!a.required) return false
-  if (a.type === 'checkbox') return a.value !== 'true'
-  if (a.type === 'multiselect' || a.type === 'checkboxes') return parseMulti(a.value).length === 0
-  return !a.value.trim()
-}
-
 interface Props {
   answer: PreparedAnswer
   minLint: number
   /** Character limit the form states, if any. */
   maxLength?: number | null
+  /** Locks the field while a submit or a regenerate is running, so a late save can't overwrite the result. */
+  readOnly?: boolean
+  /** False when the application is going out or finished, and the main process refuses to rewrite answers. */
+  canRegenerate?: boolean
   onChange: (next: PreparedAnswer) => void
   onRegenerate: (guidance: string | null) => Promise<void>
 }
 
-export function AnswerField({ answer, minLint, maxLength, onChange, onRegenerate }: Props): React.JSX.Element {
+export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerate: mayRegenerate = true, onChange, onRegenerate }: Props): React.JSX.Element {
   const toast = useToast()
   const [guidanceOpen, setGuidanceOpen] = useState(false)
   const [guidance, setGuidance] = useState('')
   const [busy, setBusy] = useState(false)
   const [bankOpen, setBankOpen] = useState(false)
   const [lint, setLint] = useState(answer.lint)
-  const missing = answerIsMissing(answer)
-  const flagged = answer.needsUser || missing
+  const flagged = answerNeedsUser(answer)
+  const guess = isGuess(answer)
+  const locked = !!readOnly || busy
   const isLong = answer.type === 'textarea'
   const lastLinted = useRef(answer.value)
 
@@ -125,7 +122,7 @@ export function AnswerField({ answer, minLint, maxLength, onChange, onRegenerate
       break
     }
     case 'checkbox':
-      control = <Checkbox label="Yes" checked={answer.value === 'true'} onChange={(on) => setValue(on ? 'true' : 'false')} />
+      control = <Checkbox label="Yes" ariaLabel={answer.label} checked={answer.value === 'true'} onChange={(on) => setValue(on ? 'true' : 'false')} />
       break
     case 'file':
       control = (
@@ -152,11 +149,11 @@ export function AnswerField({ answer, minLint, maxLength, onChange, onRegenerate
       control = <Input id={id} type={answer.type === 'date' ? 'date' : answer.type === 'number' ? 'number' : answer.type} value={answer.value} onChange={(e) => setValue(e.target.value)} />
   }
 
-  const canRegenerate = answer.type !== 'file'
+  const canRegenerate = answer.type !== 'file' && mayRegenerate
   const canBank = (answer.type === 'text' || answer.type === 'textarea') && !!answer.value.trim()
 
   return (
-    <div className={clsx('rounded-lg border p-3.5', flagged ? 'border-warn/60 bg-warn-soft' : 'border-line bg-surface')} data-flagged={flagged || undefined} data-answer={answer.fieldKey}>
+    <div className={clsx('rounded-lg border p-3.5', flagged ? 'border-warn/60 bg-warn-soft' : guess ? 'border-warn/40 bg-surface' : 'border-line bg-surface')} data-flagged={flagged || guess || undefined} data-answer={answer.fieldKey}>
       <div className="mb-2 flex items-start justify-between gap-3">
         <label htmlFor={id} className="text-sm font-medium text-fg">
           {answer.label}
@@ -168,16 +165,23 @@ export function AnswerField({ answer, minLint, maxLength, onChange, onRegenerate
               <TriangleAlert size={11} /> {answer.required ? 'Needs your answer' : 'Check this'}
             </Badge>
           )}
+          {!flagged && guess && (
+            <Badge tone="warn" title={`Below ${Math.round(AUTO_SUBMIT_MIN_CONFIDENCE * 100)}% sure. Auto mode will not click Submit while this stays a guess.`}>
+              <TriangleAlert size={11} /> Check this, it&apos;s a guess
+            </Badge>
+          )}
           <AnswerSourceBadge source={answer.source} />
           {answer.source !== 'user' && answer.source !== 'file' && (
-            <Badge tone={answer.confidence >= 0.8 ? 'good' : answer.confidence >= 0.5 ? 'neutral' : 'warn'} title="How sure JobPilot is about this answer">
+            <Badge tone={guess ? 'warn' : answer.confidence >= 0.8 ? 'good' : 'neutral'} title="How sure JobPilot is about this answer">
               {Math.round(answer.confidence * 100)}%
             </Badge>
           )}
         </div>
       </div>
 
-      {control}
+      <fieldset disabled={locked} className="m-0 min-w-0 border-0 p-0">
+        {control}
+      </fieldset>
 
       {answer.note && <p className="mt-2 text-xs text-muted">{answer.note}</p>}
       {isLong && lint && (
@@ -190,12 +194,12 @@ export function AnswerField({ answer, minLint, maxLength, onChange, onRegenerate
       {(canRegenerate || canBank) && (
         <div className="mt-2.5 flex items-center gap-2">
           {canRegenerate && (
-            <Button size="sm" variant="ghost" icon={<RefreshCw size={12} />} onClick={() => setGuidanceOpen(!guidanceOpen)}>
+            <Button size="sm" variant="ghost" icon={<RefreshCw size={12} />} disabled={locked} onClick={() => setGuidanceOpen(!guidanceOpen)}>
               Regenerate
             </Button>
           )}
           {canBank && (
-            <Button size="sm" variant="ghost" icon={<BookmarkPlus size={12} />} onClick={() => setBankOpen(true)}>
+            <Button size="sm" variant="ghost" icon={<BookmarkPlus size={12} />} disabled={!!readOnly} onClick={() => setBankOpen(true)}>
               Save answer to bank
             </Button>
           )}

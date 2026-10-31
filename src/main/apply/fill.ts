@@ -104,6 +104,7 @@ async function fillOne(frame: Frame, field: ExtractedField, answer: PreparedAnsw
     case 'multiselect': {
       const wanted = parseList(value)
       const labels = wanted.map((w) => pickOption(field.options, w)).filter((x): x is string => Boolean(x))
+      if (labels.length < wanted.length) throw new Error(`Some of ${value} aren't among the options`)
       await loc.selectOption(labels.map((label) => ({ label })))
       return
     }
@@ -116,11 +117,14 @@ async function fillOne(frame: Frame, field: ExtractedField, answer: PreparedAnsw
     }
     case 'checkboxes': {
       const wanted = parseList(value)
+      const missing: string[] = []
       for (const w of wanted) {
         const picked = pickOption(field.options, w)
         const i = picked ? field.options.indexOf(picked) : -1
         if (i !== -1) await checkInput(frame, field.optionIds[i])
+        else missing.push(w)
       }
+      if (missing.length) throw new Error(`"${missing.join('", "')}" isn't among the options`)
       return
     }
     case 'checkbox': {
@@ -132,9 +136,21 @@ async function fillOne(frame: Frame, field: ExtractedField, answer: PreparedAnsw
       await loc.click()
       await loc.fill(value.slice(0, 40))
       await frame.waitForTimeout(450)
-      const option = frame.locator('[role="option"]', { hasText: value }).first()
-      if (await option.isVisible().catch(() => false)) await option.click()
-      else await loc.press('Enter')
+      // Pick the suggestion that matches the answer, compared whole word by word. Pressing Enter
+      // would take whatever suggestion is first, which can be the wrong one.
+      const options = frame.locator('[role="option"]:visible')
+      const texts = (await options.allInnerTexts().catch(() => [] as string[])).map((t) => t.replace(/\s+/g, ' ').trim())
+      if (texts.length === 0) {
+        // A free-text box with no suggestion list keeps what was typed.
+        await loc.press('Tab').catch(() => {})
+        return
+      }
+      const picked = texts.includes(value) ? value : pickOption(texts.filter(Boolean), value)
+      if (!picked) {
+        await loc.press('Escape').catch(() => {})
+        throw new Error(`"${value}" is not one of the options`)
+      }
+      await options.nth(texts.indexOf(picked)).click()
       return
     }
     default: {

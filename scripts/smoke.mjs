@@ -3,17 +3,23 @@
 //
 //   npm run build && npm run smoke
 //
+// To check a packaged build instead, point SMOKE_EXE at it:
+//
+//   npx electron-builder --win --dir
+//   SMOKE_EXE=release/win-unpacked/JobPilot.exe npm run smoke
+//
 // It doesn't call any AI provider, so it needs no API key and costs nothing.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { _electron as electron } from 'playwright-core'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..')
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-smoke-'))
 const shotsDir = path.join(root, 'out', 'smoke')
 fs.mkdirSync(shotsDir, { recursive: true })
@@ -24,9 +30,10 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`)
 }
 
+const packagedExe = process.env.SMOKE_EXE ? path.resolve(root, process.env.SMOKE_EXE) : null
 const app = await electron.launch({
-  executablePath: electronPath,
-  args: [root],
+  executablePath: packagedExe ?? electronPath,
+  args: packagedExe ? [] : [root],
   env: { ...process.env, JOBPILOT_DATA_DIR: dataDir }
 })
 

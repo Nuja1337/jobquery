@@ -10,11 +10,12 @@ export function priceFor(model: string, overrides: Record<string, ModelPrice>): 
   const bare = model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model
   if (overrides[bare]) return overrides[bare]
   if (BUILTIN_PRICES[bare]) return BUILTIN_PRICES[bare]
-  // Dated snapshots ("gpt-5-mini-2025-08-07") price like their base model.
-  const base = Object.keys(BUILTIN_PRICES)
-    .filter((id) => bare.startsWith(`${id}-`))
-    .sort((a, b) => b.length - a.length)[0]
-  return base ? BUILTIN_PRICES[base] : null
+  // Dated snapshots ("gpt-5-mini-2025-08-07", "claude-haiku-5-5-20260301") price like their base
+  // model. Any other suffix is a different model ("gpt-5-pro" costs far more than "gpt-5"), so it
+  // gets the cautious unknown-model price instead of a guess.
+  const undated = bare.replace(/-(\d{4}-\d{2}-\d{2}|\d{8}|latest)$/, '')
+  if (undated !== bare) return overrides[undated] ?? BUILTIN_PRICES[undated] ?? null
+  return null
 }
 
 /**

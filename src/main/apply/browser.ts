@@ -12,6 +12,9 @@ import { EXTRACT_FIELDS_SCRIPT, type ExtractedField } from './extractScript'
 export class BrowserManager {
   private visible: BrowserContext | null = null
   private headless: Browser | null = null
+  // Two callers asking at once share one launch instead of starting two browsers.
+  private visibleLaunch: Promise<BrowserContext> | null = null
+  private headlessLaunch: Promise<Browser> | null = null
 
   constructor(private readonly profileDir: string) {}
 
@@ -24,25 +27,57 @@ export class BrowserManager {
 
   async visibleContext(settings: BrowserSettings): Promise<BrowserContext> {
     if (this.visible) return this.visible
+    this.visibleLaunch ??= this.launchVisible(settings).finally(() => {
+      this.visibleLaunch = null
+    })
+    return this.visibleLaunch
+  }
+
+  private async launchVisible(settings: BrowserSettings): Promise<BrowserContext> {
     let lastError: unknown = null
     for (const channel of this.launchOrder(settings.channel)) {
       try {
-        this.visible = await chromium.launchPersistentContext(this.profileDir, {
+        const context = await chromium.launchPersistentContext(this.profileDir, {
           channel,
           headless: false,
           slowMo: settings.slowMoMs,
           viewport: null,
           args: ['--start-maximized']
         })
-        this.visible.on('close', () => {
-          this.visible = null
+        context.on('close', () => {
+          if (this.visible === context) this.visible = null
         })
-        return this.visible
+        this.visible = context
+        return context
       } catch (err) {
         lastError = err
       }
     }
     throw new Error(`Could not open a browser. Install Chrome or Edge, or pick another browser in Settings. (${(lastError as Error)?.message ?? 'unknown error'})`)
+  }
+
+  /** The background browser, started on first use and again if it crashed or was closed. */
+  private async headlessBrowser(settings: BrowserSettings): Promise<Browser> {
+    if (this.headless?.isConnected()) return this.headless
+    this.headlessLaunch ??= (async () => {
+      let lastError: unknown = null
+      for (const channel of this.launchOrder(settings.channel)) {
+        try {
+          const browser = await chromium.launch({ channel, headless: true })
+          browser.on('disconnected', () => {
+            if (this.headless === browser) this.headless = null
+          })
+          this.headless = browser
+          return browser
+        } catch (err) {
+          lastError = err
+        }
+      }
+      throw new Error(`Could not start a background browser. (${(lastError as Error)?.message ?? 'unknown error'})`)
+    })().finally(() => {
+      this.headlessLaunch = null
+    })
+    return this.headlessLaunch
   }
 
   async newVisiblePage(settings: BrowserSettings): Promise<Page> {
@@ -52,19 +87,8 @@ export class BrowserManager {
   }
 
   async headlessPage(settings: BrowserSettings): Promise<Page> {
-    if (!this.headless) {
-      let lastError: unknown = null
-      for (const channel of this.launchOrder(settings.channel)) {
-        try {
-          this.headless = await chromium.launch({ channel, headless: true })
-          break
-        } catch (err) {
-          lastError = err
-        }
-      }
-      if (!this.headless) throw new Error(`Could not start a background browser. (${(lastError as Error)?.message ?? 'unknown error'})`)
-    }
-    const ctx = await this.headless.newContext({
+    const browser = await this.headlessBrowser(settings)
+    const ctx = await browser.newContext({
       viewport: { width: 1280, height: 900 },
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
@@ -75,6 +99,8 @@ export class BrowserManager {
   }
 
   async close(): Promise<void> {
+    // A launch still starting would leave a browser running after quit, so wait for it first.
+    await Promise.allSettled([this.visibleLaunch, this.headlessLaunch])
     await Promise.allSettled([this.visible?.close(), this.headless?.close()])
     this.visible = null
     this.headless = null
@@ -88,7 +114,9 @@ export interface FormSnapshot {
 
 /**
  * Finds the frame holding the application form (some company sites embed the ATS in an
- * iframe) and lists its fields. Clicks an "Apply" button first when the form is behind one.
+ * iframe) and lists its fields. With `clickApply`, it first clicks an "Apply" button when the
+ * form is behind one. Links are fine, but a button inside a form is never clicked, because on
+ * some sites the final submit button of the application itself is labelled "Apply".
  */
 export async function readForm(page: Page, options: { clickApply?: boolean } = {}): Promise<FormSnapshot> {
   await page.waitForLoadState('domcontentloaded')
@@ -96,12 +124,20 @@ export async function readForm(page: Page, options: { clickApply?: boolean } = {
 
   let best = await bestFrame(page)
   if (best.fields.filter((f) => f.type !== 'checkbox').length < 3 && options.clickApply !== false) {
-    const apply = page.getByRole('button', { name: /^(apply|apply now|apply for this job|i'm interested)$/i }).or(page.getByRole('link', { name: /^(apply|apply now|apply for this job)$/i }))
-    if (await apply.first().isVisible().catch(() => false)) {
-      await apply.first().click()
+    const apply = page
+      .getByRole('button', { name: /^(apply|apply now|apply for this job|i'm interested)$/i })
+      .or(page.getByRole('link', { name: /^(apply|apply now|apply for this job)$/i }))
+    for (const candidate of await apply.all()) {
+      if (!(await candidate.isVisible().catch(() => false))) continue
+      const submitsAForm = await candidate
+        .evaluate((el) => el.tagName !== 'A' && Boolean((el as HTMLButtonElement).form || el.closest('form')))
+        .catch(() => true)
+      if (submitsAForm) continue
+      await candidate.click()
       await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {})
       await page.waitForTimeout(800)
       best = await bestFrame(page)
+      break
     }
   }
   return best

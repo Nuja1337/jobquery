@@ -4,7 +4,7 @@ import type { JobPreferences } from '@shared/types'
 import { makeProfile, makeRaw, makeTestEnv } from '../testing'
 import { canonicalKey, contentHash, normalizeCompany } from './dedupe'
 import { type FilterContext, type FilterJob, applyFilters, groupReason, titleSeniority, titleWords } from './filters'
-import { ingestRaw } from './ingest'
+import { ingestRaw, reviveDuplicatesOfClosed } from './ingest'
 import { prescore } from './prescore'
 
 const NOW = Date.parse('2026-10-30T12:00:00Z')
@@ -97,6 +97,34 @@ describe('applyFilters', () => {
     expect(reasonOf(job({ remote: 'remote', location: 'Austin, TX' }), p)).toBeNull()
     expect(reasonOf(job({ remote: 'hybrid', location: 'Multiple locations' }), p)).toBeNull()
     expect(reasonOf(job({ remote: 'onsite', location: null }), p)).toBeNull()
+  })
+
+  it('does not let the word fallback match a different country or state', () => {
+    const cases: Array<[string, string]> = [
+      ['United Kingdom', 'Austin, United States'],
+      ['United Kingdom', 'Dubai, United Arab Emirates'],
+      ['United States', 'London, United Kingdom'],
+      ['South Africa', 'Seoul, South Korea'],
+      ['North Carolina', 'Fargo, North Dakota']
+    ]
+    for (const [wanted, location] of cases) {
+      expect(reasonOf(job({ remote: 'onsite', location }), prefs({ locations: [wanted] })), `${wanted} vs ${location}`).toBe("location doesn't match")
+    }
+  })
+
+  it('still matches the same country, state and area written other ways', () => {
+    const cases: Array<[string, string]> = [
+      ['United Kingdom', 'London, UK'],
+      ['United States', 'Austin, TX'],
+      ['North Carolina', 'Raleigh, NC'],
+      ['North Carolina', 'Charlotte, North Carolina'],
+      ['South Africa', 'Cape Town, South Africa'],
+      ['San Francisco Bay Area', 'San Francisco, CA'],
+      ['Greater London', 'London, England']
+    ]
+    for (const [wanted, location] of cases) {
+      expect(reasonOf(job({ remote: 'onsite', location }), prefs({ locations: [wanted] })), `${wanted} vs ${location}`).toBeNull()
+    }
   })
 
   it('drops old postings', () => {
@@ -197,9 +225,86 @@ describe('dedupe', () => {
     expect(contentHash(a)).not.toBe(contentHash({ ...a, description: 'Something else entirely.' }))
   })
 
-  it('only the first 600 characters of the description count', () => {
-    const base = 'word '.repeat(150)
-    expect(contentHash(makeRaw({ description: `${base} ending one` }))).toBe(contentHash(makeRaw({ description: `${base} ending two` })))
+  it('hashes the whole description, so postings that differ late do not merge', () => {
+    const base = 'word '.repeat(300)
+    expect(contentHash(makeRaw({ description: `${base} ending one` }))).not.toBe(contentHash(makeRaw({ description: `${base} ending two` })))
+    expect(contentHash(makeRaw({ description: `${base} ending one` }))).toBe(contentHash(makeRaw({ description: `${base}  Ending ONE` })))
+  })
+
+  it('keys board postings by the board token, not the company name', () => {
+    const board = makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'Acme', externalId: '7', company: 'Acme' })
+    expect(canonicalKey(board)).toBe('greenhouse:acme:7')
+    expect(canonicalKey({ ...board, company: 'Acme Robotics' })).toBe(canonicalKey(board))
+    // Aggregator postings have no token and keep the company name.
+    expect(canonicalKey(makeRaw({ source: 'remoteok', externalId: '7', company: 'Acme Inc' }))).toBe('remoteok:acme:7')
+    expect(canonicalKey(makeRaw({ source: 'remoteok', externalId: '7', company: 'Acme Robotics' }))).toBe('remoteok:acme robotics:7')
+  })
+
+  it('does not store a watched board again when the company is renamed', async () => {
+    const { ctx } = await makeTestEnv()
+    const company = ctx.companies.save({ name: 'Acme', ats: 'greenhouse', atsToken: 'acme', watch: true })
+    const raw = makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'acme', externalId: '1', company: 'Acme' })
+    const first = ingestRaw(ctx, raw).job
+    ctx.companies.save({ id: company.id, name: 'Acme Robotics', ats: 'greenhouse', atsToken: 'acme', watch: true })
+    const again = ingestRaw(ctx, { ...raw, company: 'Acme Robotics' })
+    expect(again.isNew).toBe(false)
+    expect(again.job.id).toBe(first.id)
+    expect(again.job.company).toBe('Acme Robotics')
+    expect(ctx.jobs.list({}).total).toBe(1)
+  })
+
+  it('gives a pasted board link the same key as the watched board copy', async () => {
+    const { ctx } = await makeTestEnv()
+    ctx.companies.save({ name: 'Acme Robotics', ats: 'lever', atsToken: 'acme', watch: true })
+    const watched = ingestRaw(ctx, makeRaw({ source: 'lever', ats: 'lever', atsToken: 'acme', externalId: 'abc-1', company: 'Acme Robotics' })).job
+    const pasted = ingestRaw(ctx, makeRaw({ source: 'lever', ats: 'lever', atsToken: 'acme', externalId: 'abc-1', company: 'Acme' }))
+    expect(pasted.isNew).toBe(false)
+    expect(pasted.job.id).toBe(watched.id)
+  })
+
+  it('keeps a reposted posting live when the original is closed, and reuses its score', async () => {
+    const { ctx } = await makeTestEnv()
+    const old = ingestRaw(ctx, makeRaw({ source: 'greenhouse', externalId: 'old', title: 'Backend Engineer', description: 'Same text.' })).job
+    ctx.jobs.saveFit(old.id, { score: 88, bucket: 'perfect', summary: 'Strong.', matches: [], gaps: [], dealbreakers: [], seniorityFit: 'match', keywords: [] }, 4, 'shortlisted')
+    ctx.db.run("UPDATE jobs SET stage = 'closed' WHERE id = :id", { id: old.id })
+    const repost = ingestRaw(ctx, makeRaw({ source: 'greenhouse', externalId: 'new', title: 'Backend Engineer', description: 'Same text.' }))
+    expect(repost).toMatchObject({ isNew: true, duplicate: false })
+    expect(repost.job.stage).toBe('new')
+    expect(repost.job.fit?.score).toBe(88)
+    expect(ctx.jobs.scoredProfileVersion(repost.job.id)).toBe(4)
+    expect(ctx.jobs.get(old.id)).toMatchObject({ stage: 'closed', dupOf: repost.job.id })
+  })
+
+  it('makes a duplicate live when its original closes later in the same run', async () => {
+    const { ctx } = await makeTestEnv()
+    const old = ingestRaw(ctx, makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'acme', externalId: 'old', title: 'Backend Engineer', description: 'Same text.' })).job
+    ctx.jobs.saveFit(old.id, { score: 80, bucket: 'great', summary: 'Good.', matches: [], gaps: [], dealbreakers: [], seniorityFit: 'match', keywords: [] }, 2, 'shortlisted')
+    const repost = ingestRaw(ctx, makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'acme', externalId: 'new', title: 'Backend Engineer', description: 'Same text.' }))
+    expect(repost.duplicate).toBe(true)
+    const closed = ctx.jobs.markClosedMissing('greenhouse', 'acme', ['new'])
+    expect(closed).toEqual([old.id])
+    expect(reviveDuplicatesOfClosed(ctx, closed)).toEqual([repost.job.id])
+    expect(ctx.jobs.get(repost.job.id)).toMatchObject({ stage: 'new', dupOf: null })
+    expect(ctx.jobs.get(repost.job.id)?.fit?.score).toBe(80)
+    expect(ctx.jobs.scoredProfileVersion(repost.job.id)).toBe(2)
+    expect(ctx.jobs.get(old.id)).toMatchObject({ stage: 'closed', dupOf: repost.job.id })
+  })
+
+  it('still marks a repost as a duplicate while the original is live', async () => {
+    const { ctx } = await makeTestEnv()
+    const live = ingestRaw(ctx, makeRaw({ source: 'greenhouse', externalId: 'a', description: 'Same text.' })).job
+    const repost = ingestRaw(ctx, makeRaw({ source: 'greenhouse', externalId: 'b', description: 'Same text.' }))
+    expect(repost.job).toMatchObject({ stage: 'duplicate', dupOf: live.id })
+  })
+
+  it('does not merge postings that differ only after the first 600 characters', async () => {
+    const { ctx } = await makeTestEnv()
+    const base = 'Shared opening about the company and the team. '.repeat(30)
+    const a = ingestRaw(ctx, makeRaw({ source: 'greenhouse', externalId: '8154295', title: 'Software Engineer', description: `${base} Payments team.` }))
+    const b = ingestRaw(ctx, makeRaw({ source: 'greenhouse', externalId: '8190042', title: 'Software Engineer', description: `${base} Risk team.` }))
+    expect(a.duplicate).toBe(false)
+    expect(b.duplicate).toBe(false)
+    expect(b.job.stage).toBe('new')
   })
 
   it('marks a posting seen on another board as a duplicate of the first', async () => {

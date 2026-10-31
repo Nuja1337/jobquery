@@ -18,6 +18,7 @@ export interface WorkableJob {
   country?: string
   city?: string
   state?: string
+  locations?: Array<{ country?: string; city?: string; region?: string; hidden?: boolean }>
   description?: string
 }
 
@@ -26,9 +27,23 @@ export interface WorkableBoard {
   jobs?: WorkableJob[]
 }
 
+/** Every listed place, the primary one first. Falls back to the single city, state and country. */
+function locationOf(job: WorkableJob): string | null {
+  const place = (p: { city?: string; region?: string; state?: string; country?: string }) =>
+    [p.city, p.region ?? p.state, p.country].filter(Boolean).join(', ')
+  const seen = new Set<string>()
+  const list: string[] = []
+  for (const text of [place(job), ...(job.locations ?? []).filter((l) => !l.hidden).map(place)]) {
+    if (!text || seen.has(text.toLowerCase())) continue
+    seen.add(text.toLowerCase())
+    list.push(text)
+  }
+  return list.join('; ') || null
+}
+
 export function parseWorkableJob(job: WorkableJob, slug: string, companyName: string): RawJob {
   const description = htmlToPlain(job.description ?? '')
-  const location = [job.city, job.state, job.country].filter(Boolean).join(', ') || null
+  const location = locationOf(job)
   const title = cleanTitle(job.title)
   const salary = findSalaryInText(description)
   const url = job.url || `https://apply.workable.com/j/${job.shortcode}`
