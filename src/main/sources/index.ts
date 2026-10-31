@@ -1,4 +1,4 @@
-import type { AtsKind, RawJob, SourceKind } from '@shared/types'
+import type { AtsKind, RawJob, SavedSearch, SourceKind } from '@shared/types'
 import type { AppContext } from '../context'
 import { fetchAdzuna } from './adzuna'
 import { fetchArbeitnow } from './arbeitnow'
@@ -28,6 +28,15 @@ export type TaskProvider = (ctx: AppContext) => DiscoveryTask[]
 
 async function plain(jobs: Promise<RawJob[]>) {
   return { jobs: await jobs }
+}
+
+/** Remotive asks for at most about four calls a day. HN threads change once a month. */
+const MIN_HOURS_BETWEEN_CALLS: Partial<Record<SavedSearch['source'], number>> = {
+  remotive: 6,
+  hn_whoishiring: 6,
+  remoteok: 1,
+  arbeitnow: 1,
+  adzuna: 1
 }
 
 /** The tasks for one run: every watched company with a readable ATS board, then every enabled saved search. */
@@ -61,6 +70,9 @@ export const defaultTasks: TaskProvider = (ctx) => {
     }
   }
   for (const search of ctx.searches.listEnabled()) {
+    // Respect each source's request limits even when the user presses Run now often.
+    const minHours = MIN_HOURS_BETWEEN_CALLS[search.source] ?? 1
+    if (search.lastRunAt && Date.now() - Date.parse(search.lastRunAt) < minHours * 3_600_000) continue
     const label = search.label || search.source
     const p = search.params
     const base = { name: label, searchId: search.id }

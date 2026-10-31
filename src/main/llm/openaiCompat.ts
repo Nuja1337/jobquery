@@ -73,7 +73,7 @@ export class OpenAiCompatClient implements LlmClient {
         this.jsonModeByModel.set(model, mode)
         const parsed = parseWithSchema(result.text, schema)
         if (parsed.ok) return { ...result, value: parsed.value }
-        throw new LlmFormatError(`The model's ${schemaName} reply was not valid: ${parsed.error}`, result.text)
+        throw new LlmFormatError(`The model's ${schemaName} reply was not valid: ${parsed.error}`, result.text, result.usage)
       } catch (err) {
         lastError = err
         // A 400 usually means this server doesn't support the response_format we sent. Try the next mode.
@@ -98,17 +98,18 @@ function safeName(name: string): string {
 function toResult(res: OpenAI.Chat.Completions.ChatCompletion, requestedModel: string): LlmTextResult {
   const choice = res.choices[0]
   if (!choice) throw new Error('The provider returned no answer.')
-  if (choice.message.refusal) throw new LlmRefusalError(choice.message.refusal)
   const usage = res.usage
   const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0
+  const billed = {
+    inputTokens: Math.max(0, (usage?.prompt_tokens ?? 0) - cached),
+    outputTokens: usage?.completion_tokens ?? 0,
+    cacheReadTokens: cached,
+    cacheWriteTokens: 0
+  }
+  if (choice.message.refusal) throw new LlmRefusalError(choice.message.refusal, billed)
   return {
     text: choice.message.content ?? '',
-    usage: {
-      inputTokens: Math.max(0, (usage?.prompt_tokens ?? 0) - cached),
-      outputTokens: usage?.completion_tokens ?? 0,
-      cacheReadTokens: cached,
-      cacheWriteTokens: 0
-    },
+    usage: billed,
     model: res.model || requestedModel,
     truncated: choice.finish_reason === 'length'
   }

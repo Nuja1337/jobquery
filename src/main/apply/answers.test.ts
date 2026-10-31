@@ -81,4 +81,12 @@ describe('answerFields on a real Greenhouse form', () => {
     expect(why.value).toContain('Ledgerly')
     expect(why.lint?.score).toBeGreaterThan(70)
   })
+
+  it('keeps AI-policy and legal questions flagged when the user clicks Regenerate', async () => {
+    const fields = greenhouseFields(fixture as never).filter((f) => /AI Policy|Arbitrate/.test(f.label))
+    const job = { id: 'j1', company: 'Anthropic', title: 'Engineer', location: null, description: '', fit: null, source: 'greenhouse' as const }
+    const { answers, costUsd } = await answerFields(await deps(), job, fields, null, { regenerateKeys: new Set(fields.map((f) => f.key)) })
+    expect(answers.every((a) => a.needsUser && a.value === '')).toBe(true)
+    expect(costUsd).toBe(0)
+  })
 })

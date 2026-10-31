@@ -1,4 +1,5 @@
 import type { AnswerSource, FormField, Profile, Settings, SourceKind } from '@shared/types'
+import { countryOf } from '../util/geo'
 import { jaccard, normalizeQuestion } from '../util/text'
 
 // Answers that come straight from the profile or settings, with no model call.
@@ -51,34 +52,6 @@ function answer(field: FormField, wanted: string, source: AnswerSource, confiden
   return { value: wanted, source, confidence, needsUser: false, note }
 }
 
-const COUNTRY_ALIASES: Record<string, RegExp> = {
-  'United States': /\b(united states|u\.?s\.?a?\.?|america)\b/i,
-  'United Kingdom': /\b(united kingdom|u\.?k\.?|britain|england|scotland|wales)\b/i,
-  Canada: /\bcanad/i,
-  Australia: /\baustralia/i,
-  Germany: /\b(germany|deutschland)\b/i,
-  'European Union': /\b(european union|e\.?u\.?)\b/i,
-  India: /\bindia\b/i,
-  Ireland: /\bireland\b/i,
-  Netherlands: /\b(netherlands|holland)\b/i,
-  France: /\bfrance\b/i,
-  Spain: /\bspain\b/i,
-  Israel: /\bisrael\b/i,
-  Singapore: /\bsingapore\b/i,
-  'New Zealand': /\bnew zealand\b/i
-}
-
-function countryIn(text: string): string | null {
-  for (const [country, re] of Object.entries(COUNTRY_ALIASES)) if (re.test(text)) return country
-  return null
-}
-
-function sameCountry(a: string, b: string): boolean {
-  const ca = countryIn(a) ?? a
-  const cb = countryIn(b) ?? b
-  return ca.toLowerCase() === cb.toLowerCase()
-}
-
 const STOP_WORDS = new Set(['what', 'are', 'your', 'you', 'do', 'does', 'is', 'the', 'a', 'an', 'of', 'to', 'for', 'in', 'on', 'have', 'any', 'this', 'role', 'position', 'would', 'be', 'if', 'my', 'i'])
 
 function contentWords(text: string): Set<string> {
@@ -126,6 +99,28 @@ const HEARD_ABOUT: Partial<Record<SourceKind, string>> = {
   manual: 'Company website'
 }
 
+const AI_TERMS = /\b(ai|a\.i\.|genai|gen ai|generative ai|artificial intelligence|llms?|large language models?|chatgpt|gpt-?\d*|copilot|claude|gemini|machine[- ]generated)\b/i
+const APPLICATION_TERMS = /\b(polic(y|ies)|disclos\w*|application|this form|cover letter|resume|cv|submission|your (answers|responses)|(prepar|complet|writ|draft|fill)\w* (this|your|the)\b)/i
+const LEGAL_TERMS = /arbitrat|non-?compete|non-?solicit|legal agreement|terms of (the )?agreement|terms of (service|use)|terms (and|&) conditions|\bwaive|\bwaiver\b|\bcertify\b|\battest|\bi declare\b|under penalty|true,? (complete|accurate) and|true and (complete|correct|accurate)|\bi (agree|consent|acknowledge|confirm|understand)\b|privacy (policy|notice)|data (processing|retention|protection)|\bgdpr\b/i
+
+/**
+ * Questions only the person can answer: how they used AI on the application, legal agreements,
+ * attestations and consent. Returns a note for the user, or null. Checked before anything else,
+ * including regenerate, and the AI is never asked. A saved answer of the user's own still applies.
+ */
+export function mustAskUser(field: Pick<FormField, 'label' | 'type'>): string | null {
+  const label = field.label
+  if (AI_TERMS.test(label) && (APPLICATION_TERMS.test(label) || field.type === 'checkbox')) {
+    return 'This employer asks about AI use in applications. Read their policy and answer this yourself.'
+  }
+  if (LEGAL_TERMS.test(label)) {
+    return field.type === 'checkbox'
+      ? 'This box agrees to or confirms something on your behalf. Read it and tick it yourself.'
+      : 'This is a legal agreement or attestation. Read it and answer it yourself.'
+  }
+  return null
+}
+
 export interface MapContext {
   profile: Profile
   settings: Settings
@@ -149,13 +144,8 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
 
   if (field.type === 'file') return null
 
-  // Questions only the person can answer. These also block auto-submit, since they're flagged.
-  if (/\bai\b[^.?]{0,60}\b(policy|use|used|usage|assist|assistance|generated|tools?|disclos)|artificial intelligence|use of ai|chatgpt|large language model/i.test(field.label)) {
-    return { value: '', source: 'settings', confidence: 0, needsUser: true, note: 'This employer asks about AI use in applications. Read their policy and answer this yourself.' }
-  }
-  if (/arbitrat|non-?compete|non-?solicit|legal agreement|terms of (the )?agreement|waive/i.test(field.label)) {
-    return { value: '', source: 'settings', confidence: 0, needsUser: true, note: 'This is a legal agreement. Read it and decide yourself.' }
-  }
+  const ask = mustAskUser(field)
+  if (ask) return { value: '', source: 'settings', confidence: 0, needsUser: true, note: ask }
 
   // Identity and contact.
   if (/preferred (first )?name/.test(both)) return answer(field, first, 'profile', 0.9)
@@ -192,15 +182,13 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
   if (/authori[sz]ed to work|legally (authori[sz]ed|eligible|permitted)|right to work|eligible to work|work permit/.test(label)) {
     const countries = profile.workAuthorization.authorizedCountries
     if (countries.length === 0) return null
-    const asked = countryIn(label) ?? (ctx.jobLocation ? countryIn(ctx.jobLocation) : null)
-    if (asked) {
-      const yes = countries.some((c) => sameCountry(c, asked))
-      return answer(field, yes ? 'Yes' : 'No', 'profile', 0.9)
+    // Lowercase "us" in "work for us" isn't the country. "US" in capitals is.
+    const asked = countryOf(field.label.replace(/\bus\b/g, '')) ?? (ctx.jobLocation ? countryOf(ctx.jobLocation) : null)
+    if (!asked) {
+      return { value: '', source: 'profile', confidence: 0, needsUser: true, note: "Couldn't tell which country this asks about. Answer it yourself." }
     }
-    if (countries.length === 1) {
-      return answer(field, 'Yes', 'profile', 0.6, `Assumed the question is about ${countries[0]}. Check this one.`)
-    }
-    return null
+    const yes = countries.some((c) => countryOf(c) === asked || c.trim().toLowerCase() === asked.toLowerCase())
+    return answer(field, yes ? 'Yes' : 'No', 'profile', 0.9)
   }
 
   // Voluntary self-identification. Defaults to declining.
@@ -229,11 +217,6 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
       return picked ? answer(field, picked, 'settings', 0.8) : null
     }
     return answer(field, wanted, 'settings', 0.8)
-  }
-
-  // Consent boxes that must be ticked to submit.
-  if (field.type === 'checkbox' && /\b(i agree|i acknowledge|i consent|i confirm|i have read|privacy (policy|notice))\b/.test(label)) {
-    return answer(field, 'true', 'settings', 0.85, 'Consent box ticked so the form can be submitted.')
   }
 
   // Facts the user gave in their profile, such as salary expectations or notice period.

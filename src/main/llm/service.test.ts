@@ -101,6 +101,9 @@ describe('LlmService', () => {
     // Saving without apiKey keeps the stored key.
     providers.save({ id: saved.id, kind: 'openai', label: 'Renamed' })
     expect(providers.getApiKey(saved.id)).toBe('sk-secret')
+    // Pointing the provider somewhere else without a new key drops the old one.
+    providers.save({ id: saved.id, kind: 'openai_compatible', label: 'Elsewhere', baseUrl: 'https://example.invalid/v1' })
+    expect(providers.getApiKey(saved.id)).toBeNull()
   })
 })
 

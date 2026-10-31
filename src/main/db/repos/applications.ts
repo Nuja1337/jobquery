@@ -207,10 +207,10 @@ export class ApplicationsRepo {
     this.db.run('DELETE FROM applications WHERE id = :id', { id })
   }
 
-  /** Applications waiting to be sent, best fit first. */
+  /** Applications waiting to be sent, best fit first. Jobs the user dismissed or that closed are left out. */
   listReady(): ApplicationSummary[] {
     return this.db
-      .all<ApplicationRow>(`${SELECT_APP} WHERE a.status = 'ready' ORDER BY j.fit_score DESC, a.updated_at`)
+      .all<ApplicationRow>(`${SELECT_APP} WHERE a.status = 'ready' AND j.stage = 'ready' ORDER BY j.fit_score DESC, a.updated_at`)
       .map(toSummary)
   }
 

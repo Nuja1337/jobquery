@@ -263,6 +263,12 @@ export class Pipeline {
     let done = 0
     for (const job of jobs) {
       if (signal.aborted) break
+      // The user may have prepared, dismissed or applied while this run was going.
+      const fresh = ctx.jobs.get(job.id)
+      if (!fresh || fresh.stage !== 'shortlisted' || ctx.applications.getByJob(job.id)) {
+        done += 1
+        continue
+      }
       try {
         await this.hooks.prepare(job.id)
         stats.prepared += 1
@@ -299,6 +305,25 @@ export class Pipeline {
     let done = 0
     for (const app of ready) {
       if (signal.aborted) break
+      // Check again right before sending. The user may have edited, withdrawn or dismissed it,
+      // turned auto-submit off, or the daily cap may have been reached by a manual submit.
+      const now = ctx.settings.get()
+      const current = ctx.applications.get(app.id)
+      const job = current ? ctx.jobs.get(current.jobId) : null
+      const sentToday = ctx.applications.countSubmittedSince(startOfToday())
+      if (
+        !now.autopilot.autoSubmit ||
+        sentToday >= now.autopilot.dailySubmitCap ||
+        !current ||
+        !job ||
+        current.status !== 'ready' ||
+        job.stage !== 'ready' ||
+        current.flaggedCount > 0 ||
+        (job.fit?.score ?? 0) < now.thresholds.autoSubmitScore
+      ) {
+        done += 1
+        continue
+      }
       try {
         const result = await this.hooks.submit(app.id)
         if (result.ok && result.status === 'submitted') stats.submitted += 1

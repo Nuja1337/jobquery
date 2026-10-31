@@ -47,3 +47,37 @@ describe('Db', () => {
     expect(db.get("SELECT * FROM settings WHERE key = 't'")).toBeUndefined()
   })
 })
+
+describe('Db saving', () => {
+  it('schedules a save after a transaction commits', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const file = path.join(dir, 'tx.sqlite')
+    const db = await Db.open(file, { saveDelayMs: 20 })
+    db.flush()
+    db.transaction(() => db.run("INSERT INTO settings (key, value) VALUES ('tx', '1')"))
+    await new Promise((r) => setTimeout(r, 120))
+    const reopened = await Db.open(file)
+    expect(reopened.get<{ value: string }>("SELECT value FROM settings WHERE key = 'tx'")?.value).toBe('1')
+    db.close()
+    reopened.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('saves during a stream of writes instead of waiting for a pause', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const file = path.join(dir, 'busy.sqlite')
+    const db = await Db.open(file, { saveDelayMs: 400 })
+    db.flush()
+    const started = Date.now()
+    // Write every 100ms for 3.6 seconds, so a pause long enough for the normal save never comes.
+    while (Date.now() - started < 3600) {
+      db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (:k, :v)', { k: 'busy', v: String(Date.now()) })
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    const reopened = await Db.open(file)
+    expect(reopened.get("SELECT value FROM settings WHERE key = 'busy'")).toBeDefined()
+    db.close()
+    reopened.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }, 10_000)
+})

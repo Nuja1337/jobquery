@@ -33,6 +33,8 @@ export interface IpcDeps {
   vault: KeyVault
   emit: <C extends PushChannel>(channel: C, payload: PushEvents[C]) => void
   appVersion: string
+  /** Only frames showing the app's own page may call the API. */
+  isTrustedSender: (url: string) => boolean
 }
 
 const SAMPLE_KINDS: DocumentKind[] = ['cover_letter_sample', 'writing_sample']
@@ -49,12 +51,32 @@ const OUTCOME_LABEL: Record<ApplicationOutcome, string> = {
 }
 
 /** Builds every service and returns the Api implementation. Separate from Electron so it can be tested. */
-export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ api: Api; ctx: AppContext; shutdown: Shutdown }> {
+export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedSender'>): Promise<{ api: Api; ctx: AppContext; shutdown: Shutdown }> {
   const ctx = await createContext({ dbFile: deps.paths.dbFile, paths: deps.paths, vault: deps.vault, emit: deps.emit })
   const browser = new BrowserManager(deps.paths.browserProfileDir)
   const pipeline = new Pipeline(ctx)
   const scheduler = new Scheduler(ctx, pipeline)
   ctx.llm.pruneCache()
+
+  // Applications caught mid-step when the app last closed. A browser session doesn't survive a restart.
+  for (const stale of ctx.applications.list({ statuses: ['submitting', 'draft'], limit: 1000 }).items) {
+    const full = ctx.applications.get(stale.id)
+    if (!full) continue
+    if (full.status === 'draft' && full.answers.length === 0 && !full.coverLetter) {
+      ctx.applications.delete(full.id)
+      ctx.jobs.setStage(full.jobId, 'shortlisted')
+    } else {
+      ctx.applications.update(full.id, {
+        status: 'needs_attention',
+        error: full.status === 'submitting'
+          ? 'The app closed while this was open in the browser. If you submitted it, click "I submitted it myself". Otherwise open it again.'
+          : 'Preparing was interrupted. Check the answers or prepare it again.'
+      })
+    }
+  }
+
+  /** Applications open in the browser right now. A second submit would open a second tab. */
+  const inFlight = new Set<string>()
 
   const job = (id: string): Job => {
     const j = ctx.jobs.get(id)
@@ -130,7 +152,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
         ctx.applications.delete(app.id)
         ctx.jobs.setStage(jobId, previousStage === 'preparing' ? 'shortlisted' : previousStage)
       } else {
-        ctx.applications.update(app.id, { status: existing.status === 'draft' ? 'ready' : existing.status, error: (err as Error).message })
+        ctx.applications.update(app.id, { status: existing.status === 'draft' ? 'needs_attention' : existing.status, error: (err as Error).message })
       }
       if (!(err instanceof BudgetExceededError)) ctx.events.add('error', `Couldn't prepare ${j.title} at ${j.company}. ${(err as Error).message}`, jobId)
       deps.emit('jobs:changed', { jobIds: [jobId] })
@@ -139,9 +161,23 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
   }
 
   /** Fills (and in auto mode submits) an application in the visible browser. */
-  async function submit(applicationId: string, mode: 'assist' | 'auto'): Promise<SubmitResult> {
+  async function submit(applicationId: string, mode: 'assist' | 'auto', by: 'user' | 'autopilot'): Promise<SubmitResult> {
     const app = application(applicationId)
     if (app.status === 'submitted') return { ok: true, status: 'submitted', message: 'Already submitted.', screenshotPath: app.screenshotPath }
+    if (app.status === 'withdrawn') return { ok: false, status: 'withdrawn', message: 'This application was withdrawn.', screenshotPath: null }
+    if (inFlight.has(app.id)) {
+      return { ok: false, status: app.status, message: 'This application is already open in the browser. Finish it there.', screenshotPath: null }
+    }
+    inFlight.add(app.id)
+    try {
+      return await submitNow(app, mode, by)
+    } catch (err) {
+      inFlight.delete(app.id)
+      throw err
+    }
+  }
+
+  async function submitNow(app: Application, mode: 'assist' | 'auto', by: 'user' | 'autopilot'): Promise<SubmitResult> {
     const j = job(app.jobId)
     const settings = ctx.settings.get()
     ctx.applications.update(app.id, { status: 'submitting', submitMode: mode, error: null })
@@ -160,6 +196,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
       const updated = ctx.applications.update(app.id, { status: 'needs_attention', error: message })
       ctx.events.add('submit_failed', `${j.title} at ${j.company}: ${message}`, j.id)
       changed(updated)
+      inFlight.delete(app.id)
       return { ok: false, status: 'needs_attention', message, screenshotPath: null }
     }
 
@@ -172,13 +209,15 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
       error: result.ok ? null : result.message
     })
     if (result.status === 'submitted') {
-      ctx.events.add('submitted', `Submitted the application to ${j.company} for ${j.title}${mode === 'auto' ? ' automatically' : ''}.`, j.id)
+      ctx.events.add('submitted', `Submitted the application to ${j.company} for ${j.title}${by === 'autopilot' ? ' automatically' : ''}.`, j.id)
     } else if (result.status === 'needs_attention') {
       ctx.events.add('submit_failed', `${j.title} at ${j.company}: ${result.message}`, j.id)
     }
     changed(updated)
 
     // Keep watching the browser in the background and record the submission when it happens.
+    if (!result.completion) inFlight.delete(app.id)
+    result.completion?.finally(() => inFlight.delete(app.id)).catch(() => {})
     result.completion?.then(({ confirmed, screenshotPath }) => {
       const current = ctx.applications.get(app.id)
       if (!current || current.status === 'submitted') return
@@ -202,13 +241,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
     prepare: async (jobId) => {
       await prepare(jobId)
     },
-    submit: (applicationId) => submit(applicationId, 'auto')
+    submit: (applicationId) => submit(applicationId, 'auto', 'autopilot')
   })
   scheduler.start()
 
   const insideDataDir = (p: string) => {
     const rel = path.relative(deps.paths.dataDir, path.resolve(p))
-    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+    return !rel.startsWith('..') && !path.isAbsolute(rel)
   }
 
   const api: Api = {
@@ -232,8 +271,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
       const res = win ? await dialog.showSaveDialog(win, { defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }] }) : { canceled: false, filePath: defaultPath }
       if (res.canceled || !res.filePath) return null
       const tables = ['settings', 'profile', 'documents', 'answer_bank', 'companies', 'searches', 'jobs', 'applications', 'events', 'runs', 'llm_calls']
-      const data: Record<string, unknown> = { exportedAt: new Date().toISOString(), version: deps.appVersion, note: 'API keys are not included.' }
+      const data: Record<string, unknown> = { exportedAt: new Date().toISOString(), version: deps.appVersion, note: 'AI provider keys and job source keys are not included.' }
       for (const t of tables) data[t] = ctx.db.all(`SELECT * FROM ${t}`)
+      // Saved searches can hold job board credentials (Adzuna's app_id and app_key).
+      data.searches = ctx.searches.list().map((s) => ({
+        ...s,
+        params: Object.fromEntries(Object.entries(s.params).map(([k, v]) => [k, /key|secret|token|password|app_id/i.test(k) ? '[removed]' : v]))
+      }))
       data.providers = ctx.providers.list()
       fs.writeFileSync(res.filePath, JSON.stringify(data, null, 2))
       return res.filePath
@@ -464,7 +508,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
       return lintText(text, { extraBanned: ctx.settings.get().writing.bannedPhrases })
     },
     async submitApplication(applicationId, mode) {
-      return submit(applicationId, mode)
+      return submit(applicationId, mode, 'user')
     },
     async markSubmitted(applicationId) {
       const app = application(applicationId)
@@ -514,7 +558,9 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
   const shutdown: Shutdown = async () => {
     scheduler.stop()
     pipeline.cancel()
-    await browser.close().catch(() => {})
+    // Save first, so nothing is lost if closing the browser hangs.
+    ctx.db.flush()
+    await Promise.race([browser.close().catch(() => {}), new Promise((r) => setTimeout(r, 3000))])
     ctx.close()
   }
 
@@ -523,7 +569,11 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain'>): Promise<{ 
 
 export async function registerIpc(deps: IpcDeps): Promise<Shutdown> {
   const { api, shutdown } = await createServices(deps)
-  deps.ipcMain.handle('api', async (_event, method: string, args: unknown[]) => {
+  deps.ipcMain.handle('api', async (event, method: string, args: unknown[]) => {
+    const sender = event.senderFrame?.url ?? ''
+    if (!deps.isTrustedSender(sender)) {
+      return { ok: false, error: 'Calls are only accepted from the JobPilot window.', name: 'Forbidden' }
+    }
     if (!Object.prototype.hasOwnProperty.call(api, method)) {
       return { ok: false, error: `Unknown method ${method}.`, name: 'UnknownMethod' }
     }

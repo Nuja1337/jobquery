@@ -410,7 +410,7 @@ function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; o
 
   return (
     <Card id="settings-prices">
-      <CardHeader title="Prices" hint="US dollars per million tokens. Used for the spend numbers. Your numbers override the built-in ones." />
+      <CardHeader title="Prices" hint="US dollars per million tokens. Used for the spend numbers and budgets. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Ollama models are free." />
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr>

@@ -40,9 +40,13 @@ export class ProvidersRepo {
   save(input: ProviderInput): ProviderInfo {
     const id = input.id ?? newId()
     const existing = this.db.get<ProviderRow>('SELECT * FROM providers WHERE id = :id', { id })
+    // A stored key only stays with the provider it was entered for. If the kind or address
+    // changes without a new key, the old key is dropped so it can't be sent somewhere else.
+    const newBaseUrl = input.baseUrl?.trim() || null
+    const sameTarget = existing !== undefined && existing.kind === input.kind && (existing.base_url ?? null) === newBaseUrl
     const keyEnc = input.apiKey !== undefined
       ? input.apiKey.trim() === '' ? null : this.vault.encrypt(input.apiKey.trim())
-      : existing?.api_key_enc ?? null
+      : sameTarget ? existing.api_key_enc : null
     this.db.run(
       `INSERT INTO providers (id, kind, label, base_url, api_key_enc, created_at)
        VALUES (:id, :kind, :label, :baseUrl, :keyEnc, :createdAt)
@@ -51,7 +55,7 @@ export class ProvidersRepo {
         id,
         kind: input.kind,
         label: input.label.trim() || input.kind,
-        baseUrl: input.baseUrl?.trim() || null,
+        baseUrl: newBaseUrl,
         keyEnc,
         createdAt: existing?.created_at ?? now()
       }

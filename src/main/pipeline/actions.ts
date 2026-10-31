@@ -12,6 +12,12 @@ function changed(ctx: AppContext, id: string): void {
 export function dismissJob(ctx: AppContext, id: string, reason: string | null, tags: string[]): void {
   const job = ctx.jobs.get(id)
   if (!job) throw new Error('That job no longer exists.')
+  // An unsent application for a dismissed job must never be submitted later.
+  const app = ctx.applications.getByJob(id)
+  if (app && app.status !== 'submitted' && app.status !== 'withdrawn') {
+    ctx.applications.update(app.id, { status: 'withdrawn' })
+    ctx.emit('applications:changed', { applicationIds: [app.id] })
+  }
   ctx.jobs.dismiss(id, reason?.trim() || null, tags)
   ctx.events.add('dismissed', `Dismissed ${job.title} at ${job.company}${tags.length ? ` (${tags.join(', ')})` : ''}.`, id, { tags, reason })
   changed(ctx, id)

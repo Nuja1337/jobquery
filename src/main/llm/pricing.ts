@@ -17,6 +17,12 @@ export function priceFor(model: string, overrides: Record<string, ModelPrice>): 
   return base ? BUILTIN_PRICES[base] : null
 }
 
+/**
+ * Used for models with no known price, so spending caps still work. Cautious on purpose:
+ * it's above what most cheap models cost. Local models (Ollama) are always free.
+ */
+export const UNKNOWN_MODEL_PRICE: ModelPrice = { inputPerMTok: 3, outputPerMTok: 15, cachedInputPerMTok: 0.3 }
+
 /** Cost of one call in USD. Unknown models and local models cost 0 (tokens are still counted). */
 export function costOf(usage: LlmUsage, price: ModelPrice | null): number {
   if (!price) return 0

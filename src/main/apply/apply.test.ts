@@ -6,9 +6,9 @@ import { chromium, type Browser, type Page } from 'playwright-core'
 import { DEFAULT_SETTINGS, EMPTY_PROFILE } from '@shared/defaults'
 import type { PreparedAnswer, Profile } from '@shared/types'
 import { readForm } from './browser'
-import { isCoverLetterField, isLongAnswer, mapKnownField, pickOption } from './fieldMap'
+import { isCoverLetterField, isLongAnswer, mapKnownField, mustAskUser, pickOption } from './fieldMap'
 import { fillForm, matchAnswers, readComboboxOptions, toFormField } from './fill'
-import { clickSubmit, waitForOutcome } from './submit'
+import { captureBaseline, clickSubmit, waitForOutcome, waitForUserToFinish } from './submit'
 
 // A form shaped like the ones Greenhouse, Lever and Ashby render: labels tied by "for", a label
 // wrapping its input, a fieldset of radios, a hidden file input, a custom combobox, a consent box.
@@ -120,7 +120,7 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
       const field = toFormField(f)
       const mapped = mapKnownField(field, { profile: PROFILE, settings: DEFAULT_SETTINGS, jobSource: 'greenhouse', jobLocation: 'New York, NY', company: 'Acme' })
       const value = isLongAnswer(field) ? 'I have shipped two payment systems and Acme is building a third.' : mapped?.value ?? ''
-      return { fieldKey: f.key, label: f.label, type: field.type, required: f.required, options: f.options, value, source: mapped?.source ?? 'ai', confidence: 1, needsUser: false, note: null, lint: null }
+      return { fieldKey: f.key, label: f.label, type: field.type, required: f.required, options: f.options, value, source: mapped?.source ?? 'ai', confidence: 1, needsUser: mapped?.needsUser ?? false, note: null, lint: null }
     })
     const byKey = Object.fromEntries(answers.map((a) => [a.fieldKey, a]))
     expect(byKey.first_name.value).toBe('Sam')
@@ -129,7 +129,9 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
     expect(byKey.question_2.value).toBe('Yes')
     expect(byKey.question_3.value).toBe('No')
     expect(byKey.gender.value).toBe('Decline to self-identify')
-    expect(byKey.consent.value).toBe('true')
+    // Consent boxes are left for the person. Here the user ticks it in the review screen.
+    expect(byKey.consent.needsUser).toBe(true)
+    Object.assign(byKey.consent, { value: 'true', needsUser: false, source: 'user' })
 
     const { matched, unmatched } = matchAnswers(fields, answers)
     expect(unmatched).toHaveLength(0)
@@ -145,8 +147,9 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
     }))
     expect(values).toEqual({ first: 'Sam', auth: 'Yes', sponsorNo: true, gender: 'Decline to self-identify', files: 1 })
 
+    const baseline = await captureBaseline(p)
     expect(await clickSubmit(frame)).toBe(true)
-    const outcome = await waitForOutcome(p, frame, 8000)
+    const outcome = await waitForOutcome(p, frame, baseline, 8000)
     expect(outcome.kind).toBe('confirmed')
     await p.close()
   })
@@ -154,11 +157,24 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
   it('reports validation errors instead of claiming success', async () => {
     const p = await load()
     const { frame } = await readForm(p, { clickApply: false })
+    const baseline = await captureBaseline(p)
     expect(await clickSubmit(frame)).toBe(true)
-    const outcome = await waitForOutcome(p, frame, 8000)
+    const outcome = await waitForOutcome(p, frame, baseline, 8000)
     expect(outcome.kind).toBe('invalid')
     await p.close()
   })
+
+  it('ignores thank-you text that was on the page before the click', async () => {
+    page = await browser.newPage()
+    await page.setContent(FORM_HTML.replace('<body>', '<body><div>Thank you for applying to Acme. Thanks for submitting your application early.</div>'))
+    const { frame } = await readForm(page, { clickApply: false })
+    const baseline = await captureBaseline(page)
+    expect(await waitForUserToFinish(page, baseline, 2500)).toBe(false)
+    expect(await clickSubmit(frame)).toBe(true)
+    const outcome = await waitForOutcome(page, frame, baseline, 6000)
+    expect(outcome.kind).toBe('invalid')
+    await page.close()
+  }, 20_000)
 })
 
 describe('field mapping', () => {
@@ -188,5 +204,51 @@ describe('field mapping', () => {
     expect(isLongAnswer({ ...base, label: 'Why do you want to join?', type: 'text' })).toBe(true)
     expect(isLongAnswer({ ...base, label: 'City', type: 'text' })).toBe(false)
     expect(isCoverLetterField({ ...base, label: 'Cover Letter', type: 'textarea' })).toBe(true)
+  })
+})
+
+describe('questions only the person can answer', () => {
+  const f = (label: string, type: 'text' | 'textarea' | 'checkbox' | 'select' = 'text') => ({ label, type })
+
+  it('flags questions about AI use on the application', () => {
+    for (const label of [
+      'Did you use AI in preparing your application?',
+      'Did you use generative AI to write your responses?',
+      'Have you used an LLM to complete this application?',
+      'AI Policy for Application',
+      'Please disclose any use of ChatGPT or similar tools'
+    ]) {
+      expect(mustAskUser(f(label)), label).not.toBeNull()
+    }
+  })
+
+  it('leaves ordinary AI skills questions to the writer', () => {
+    for (const label of ['How would you apply AI to our product?', 'Describe your experience building with LLMs', 'Why do you want to work on Claude?']) {
+      expect(mustAskUser(f(label, 'textarea')), label).toBeNull()
+    }
+  })
+
+  it('flags legal terms, attestations and consent boxes', () => {
+    expect(mustAskUser(f('I agree to the Terms of Service', 'checkbox'))).not.toBeNull()
+    expect(mustAskUser(f('I have read and accept the Terms and Conditions', 'checkbox'))).not.toBeNull()
+    expect(mustAskUser(f('I certify that the information above is true and complete', 'checkbox'))).not.toBeNull()
+    expect(mustAskUser(f('Agreement to Arbitrate', 'select'))).not.toBeNull()
+    expect(mustAskUser(f('First name'))).toBeNull()
+  })
+})
+
+describe('work authorization', () => {
+  const field = (label: string) => ({ key: 'q', label, type: 'select' as const, required: true, options: ['Yes', 'No'], placeholder: null, maxLength: null, fileHint: null })
+  const ctx = (jobLocation: string | null) => ({ profile: PROFILE, settings: DEFAULT_SETTINGS, jobSource: 'lever' as const, jobLocation, company: 'Acme' })
+
+  it('answers from the country the question or job names', () => {
+    expect(mapKnownField(field('Are you legally authorized to work in the United States?'), ctx(null))?.value).toBe('Yes')
+    expect(mapKnownField(field('Are you legally authorized to work in the country of this job?'), ctx('São Paulo, Brazil'))?.value).toBe('No')
+    expect(mapKnownField(field('Are you authorized to work for us?'), ctx('Austin, TX'))?.value).toBe('Yes')
+  })
+
+  it('asks the user when the country is unclear', () => {
+    const mapped = mapKnownField(field('Are you authorized to work for us?'), ctx(null))
+    expect(mapped?.needsUser).toBe(true)
   })
 })

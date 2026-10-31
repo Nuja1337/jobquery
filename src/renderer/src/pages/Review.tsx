@@ -222,13 +222,19 @@ function ReviewDetail({ id, onLeave }: { id: string; onLeave: (id: string) => vo
     schedule({ answers: list })
   }
 
+  /** Takes the main process's copy, so later edits don't send back an older list. */
+  function adopt(next: Application): void {
+    setApp(next)
+    answersRef.current = next.answers
+    setAnswers(next.answers)
+  }
+
   async function regenerateAnswer(fieldKey: string, guidance: string | null): Promise<void> {
     await flush()
     const fresh = await api.regenerateAnswer(id, fieldKey, guidance)
-    const list = answersRef.current.map((a) => (a.fieldKey === fieldKey ? fresh : a))
-    answersRef.current = list
-    setAnswers(list)
-    toast.success('Wrote a new answer.')
+    const reloaded = await api.getApplication(id)
+    if (reloaded) adopt(reloaded)
+    toast.success(fresh.needsUser ? 'This one needs your answer.' : 'Wrote a new answer.')
   }
 
   async function regenerateLetter(): Promise<void> {
@@ -236,6 +242,7 @@ function ReviewDetail({ id, onLeave }: { id: string; onLeave: (id: string) => vo
     try {
       await flush()
       const next = await api.regenerateCoverLetter(id, letterGuidance.trim() || null)
+      adopt(next)
       setLetter(next.coverLetter ?? '')
       lastLinted.current = next.coverLetter ?? ''
       setLint(next.coverLetterLint)
@@ -254,6 +261,9 @@ function ReviewDetail({ id, onLeave }: { id: string; onLeave: (id: string) => vo
     try {
       await flush()
       const result = await api.submitApplication(id, mode)
+      // Filling can add answers for fields first seen on the live form.
+      const reloaded = await api.getApplication(id)
+      if (reloaded) adopt(reloaded)
       if (!result.ok) throw new Error(result.message)
       toast.success(result.message)
       if (result.status === 'submitted') onLeave(id)

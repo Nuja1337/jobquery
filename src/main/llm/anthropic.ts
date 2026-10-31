@@ -61,7 +61,7 @@ export class AnthropicClient implements LlmClient {
       })
       const result = toResult(res)
       if (res.parsed_output == null) {
-        throw new LlmFormatError(`The model's ${schemaName} reply did not match the expected format.`, result.text)
+        throw new LlmFormatError(`The model's ${schemaName} reply did not match the expected format.`, result.text, result.usage)
       }
       return { ...result, value: res.parsed_output as T }
     } catch (err) {
@@ -78,7 +78,7 @@ export class AnthropicClient implements LlmClient {
     const first = await this.complete(model, { ...req, prompt })
     const parsed = parseWithSchema(first.text, schema)
     if (parsed.ok) return { ...first, value: parsed.value }
-    throw new LlmFormatError(`The model's ${schemaName} reply was not valid: ${parsed.error}`, first.text)
+    throw new LlmFormatError(`The model's ${schemaName} reply was not valid: ${parsed.error}`, first.text, first.usage)
   }
 
   async listModels(): Promise<string[]> {
@@ -89,16 +89,16 @@ export class AnthropicClient implements LlmClient {
 }
 
 function toResult(res: BetaMessage): LlmTextResult {
-  if (res.stop_reason === 'refusal') throw new LlmRefusalError()
-  const text = res.content
-    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-  const usage: LlmUsage = {
+  const billed: LlmUsage = {
     inputTokens: res.usage.input_tokens,
     outputTokens: res.usage.output_tokens,
     cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
     cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0
   }
-  return { text, usage, model: res.model, truncated: res.stop_reason === 'max_tokens' }
+  if (res.stop_reason === 'refusal') throw new LlmRefusalError(undefined, billed)
+  const text = res.content
+    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+  return { text, usage: billed, model: res.model, truncated: res.stop_reason === 'max_tokens' }
 }

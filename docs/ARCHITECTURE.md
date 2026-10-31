@@ -70,15 +70,17 @@ For each field the app tries, in order:
 3. One batched call to the cheap model for the remaining short and multiple-choice fields.
 4. The writing model with the style check for open-ended questions.
 
-Some questions are always left to the user and block auto-submit: questions about the employer's AI policy, legal agreements such as arbitration, salary, start date and legal history unless the user saved an answer for them.
+Some questions are always left to the user and block auto-submit: questions about how the applicant used AI, legal agreements, terms, attestations and consent boxes, salary, start date and legal history. A check runs before every other step, including Regenerate, and only the user's own saved answer can fill one of these.
 
 Greenhouse publishes each job's questions in its public API, so those applications are drafted without opening a browser. Other forms are read with a background browser while preparing, and read again live when filling. Answers are matched to the live form by field key, then by label.
 
 ## Submitting
 
 - **Fill and let me submit** opens the visible browser, fills everything and leaves the final click to the user. The app watches for the confirmation page and records the submission.
-- **Submit** fills and clicks submit, then waits for a confirmation. A captcha, a validation error or no confirmation turns the application into "needs attention" with the browser left open.
-- **Auto-submit** (off by default) only submits applications at or above its fit score, with no flagged answers, under the daily cap. A dry-run mode fills forms and stops before the click.
+- **Submit** fills and clicks submit, then waits for a confirmation. It only clicks when nothing is flagged, no AI answer is below the confidence line and every question was on the reviewed draft. A captcha, a validation error or no confirmation turns the application into "needs attention" with the browser left open.
+- **Auto-submit** (off by default) applies the same rules to applications at or above its fit score, under the daily cap, and re-checks each application right before sending it. A dry-run mode fills forms and stops before the click.
+
+A confirmation only counts when its message wasn't on the page before the click and the form is gone or the page changed, so a job description that ends in "thanks for applying" can't pass for one.
 
 A screenshot is saved after each submission.
 

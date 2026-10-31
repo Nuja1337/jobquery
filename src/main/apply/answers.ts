@@ -5,7 +5,7 @@ import type { LlmService } from '../llm/service'
 import { writeAnswer, type WritingInputs } from '../writing/generate'
 import { renderProfile, type JobForWriting, type WritingSample } from '../writing/prompts'
 import { trimDescription } from '../util/text'
-import { isCoverLetterField, isLongAnswer, mapKnownField, pickOption } from './fieldMap'
+import { isCoverLetterField, isLongAnswer, mapKnownField, mustAskUser, pickOption } from './fieldMap'
 
 export interface SavedAnswer {
   id: string
@@ -48,6 +48,7 @@ const FORM_SYSTEM = `You fill in short fields on a job application for one candi
 - For a field with options, the value must be one of the options, copied exactly. For fields that allow several options, join the chosen options with " | ".
 - Yes/no questions about skills, tools or experience: answer from the profile. If the profile doesn't say, set needsUser to true and value to "".
 - Never answer salary, start date, legal history, age, demographic or health questions unless the candidate's facts state the answer. Otherwise needsUser true.
+- Never answer questions about whether or how the candidate used AI, and never agree to, certify or consent to anything for them. Set needsUser true.
 - confidence is 0 to 1: how sure you are that the answer is correct and true for this candidate.
 - note: empty, or a few words on what the candidate should check.
 - Return one entry per field, using the field's key.`
@@ -112,6 +113,21 @@ export async function answerFields(
 
     if (isCoverLetterField(field) && (field.type === 'textarea' || field.type === 'text')) {
       results.set(field.key, blank(field, { value: coverLetter ?? '', source: 'ai', confidence: coverLetter ? 0.9 : 0, needsUser: !coverLetter && field.required }))
+      continue
+    }
+
+    // AI-use, legal and consent questions: only the user's own saved answer may fill them.
+    // This runs before regenerate on purpose, so a click on Regenerate can't hand them to the AI.
+    const ask = mustAskUser(field)
+    if (ask) {
+      const own = deps.findSavedAnswer(field.label)
+      const value = own?.kind === 'fact' ? (isLongAnswer(field) ? own.answer : field.type === 'checkbox' ? (/^(yes|true|1|checked|agree)/i.test(own.answer) ? 'true' : 'false') : fromChoiceText(field, own.answer)) : null
+      if (own && value) {
+        deps.markAnswerUsed(own.id)
+        results.set(field.key, blank(field, { value, source: 'answer_bank', confidence: 0.9, note: 'From your saved answers.' }))
+      } else {
+        results.set(field.key, blank(field, { source: 'settings', needsUser: true, note: ask }))
+      }
       continue
     }
 

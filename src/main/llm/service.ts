@@ -9,7 +9,7 @@ import type { SettingsRepo } from '../db/repos/settings'
 import { AnthropicClient } from './anthropic'
 import { BudgetExceededError, NoModelConfiguredError } from './errors'
 import { OpenAiCompatClient } from './openaiCompat'
-import { costOf, priceFor, totalTokens } from './pricing'
+import { costOf, priceFor, totalTokens, UNKNOWN_MODEL_PRICE } from './pricing'
 import { type Effort, type LlmClient, type LlmUsage, ZERO_USAGE } from './types'
 
 export interface LlmCallOptions {
@@ -160,7 +160,7 @@ export class LlmService {
         maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS[opts.stage],
         effort: opts.effort
       })
-      const cost = costOf(result.usage, priceFor(result.model, this.settings.get().prices))
+      const cost = costOf(result.usage, this.price(provider.kind, result.model))
       this.record(opts, provider.kind, result.model, result.usage, cost, Date.now() - started, false, null)
       if (useCache && !result.truncated) {
         this.db.run('INSERT OR REPLACE INTO llm_cache (key, task, value, created_at) VALUES (:key, :task, :value, :at)', {
@@ -179,9 +179,16 @@ export class LlmService {
         truncated: result.truncated
       }
     } catch (err) {
-      this.record(opts, provider.kind, ref.model, ZERO_USAGE, 0, Date.now() - started, false, (err as Error).message)
+      // A refused or malformed reply was still billed. Count it so the caps see it.
+      const billed = (err as { usage?: LlmUsage }).usage ?? ZERO_USAGE
+      this.record(opts, provider.kind, ref.model, billed, costOf(billed, this.price(provider.kind, ref.model)), Date.now() - started, false, (err as Error).message)
       throw err
     }
+  }
+
+  private price(kind: string, model: string) {
+    if (kind === 'ollama') return null
+    return priceFor(model, this.settings.get().prices) ?? UNKNOWN_MODEL_PRICE
   }
 
   private record(

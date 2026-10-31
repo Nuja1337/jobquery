@@ -43,6 +43,7 @@ Truth
 - If a fact would help but isn't there, write around it. If the question can't be answered honestly without it, reply with exactly one line: NEEDS_INPUT: <what is missing, in a few words>
 - Don't claim feelings or motives the notes don't support. "I want this because..." needs a reason from the profile, the notes or the posting.
 - Follow the candidate's notes about what to stress and what never to mention.
+- If the question asks whether or how the candidate used AI, or asks them to agree to, certify or consent to something, reply with NEEDS_INPUT. Only the candidate can answer those.
 
 How it should read
 - Plain sentences, the way this person would explain it to a friend who works in the same field.

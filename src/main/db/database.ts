@@ -3,6 +3,8 @@ import path from 'node:path'
 import initSqlJs, { type Database, type SqlValue } from 'sql.js'
 import { MIGRATIONS } from './schema'
 
+const MAX_SAVE_DELAY_MS = 3000
+
 export type Params = Record<string, SqlValue | boolean | undefined> | Array<SqlValue | boolean | undefined>
 
 /**
@@ -16,6 +18,9 @@ export type Params = Record<string, SqlValue | boolean | undefined> | Array<SqlV
 export class Db {
   private saveTimer: NodeJS.Timeout | null = null
   private dirty = false
+  /** When the oldest unsaved change happened. Saves can't be put off past MAX_SAVE_DELAY_MS. */
+  private dirtySince: number | null = null
+  private lastSaveError: Error | null = null
   private inTransaction = false
 
   private constructor(
@@ -91,24 +96,46 @@ export class Db {
     if (this.inTransaction) return fn()
     this.inTransaction = true
     this.db.exec('BEGIN')
+    let result: T
     try {
-      const result = fn()
+      result = fn()
       this.db.exec('COMMIT')
-      this.markDirty()
-      return result
     } catch (err) {
       this.db.exec('ROLLBACK')
-      throw err
-    } finally {
       this.inTransaction = false
+      throw err
     }
+    // Clear the flag before scheduling the save, or markDirty would skip it.
+    this.inTransaction = false
+    this.markDirty()
+    return result
   }
 
   private markDirty(): void {
     this.dirty = true
+    this.dirtySince ??= Date.now()
     if (!this.filePath || this.inTransaction) return
     if (this.saveTimer) clearTimeout(this.saveTimer)
-    this.saveTimer = setTimeout(() => this.flush(), this.saveDelayMs)
+    // Wait for a quiet moment, but never longer than MAX_SAVE_DELAY_MS during a busy run.
+    const waited = Date.now() - this.dirtySince
+    const delay = waited >= MAX_SAVE_DELAY_MS ? 0 : Math.min(this.saveDelayMs, MAX_SAVE_DELAY_MS - waited)
+    this.saveTimer = setTimeout(() => this.flushFromTimer(), delay)
+  }
+
+  /** Timer saves must not throw. A failed save (a locked file on Windows, say) is retried. */
+  private flushFromTimer(): void {
+    try {
+      this.flush()
+      this.lastSaveError = null
+    } catch (err) {
+      this.lastSaveError = err as Error
+      this.saveTimer = setTimeout(() => this.flushFromTimer(), 1000)
+    }
+  }
+
+  /** The last error from a background save, if the most recent one failed. */
+  get saveError(): Error | null {
+    return this.lastSaveError
   }
 
   /** Writes the database to disk now. Safe to call often. */
@@ -123,8 +150,15 @@ export class Db {
     // Write to a temp file first so a crash mid-write never corrupts the real file.
     const tmp = `${this.filePath}.tmp`
     fs.writeFileSync(tmp, data)
-    fs.renameSync(tmp, this.filePath)
+    try {
+      fs.renameSync(tmp, this.filePath)
+    } catch {
+      // Windows can refuse a rename while another program (an antivirus scan) holds the file.
+      fs.copyFileSync(tmp, this.filePath)
+      fs.rmSync(tmp, { force: true })
+    }
     this.dirty = false
+    this.dirtySince = null
   }
 
   close(): void {
