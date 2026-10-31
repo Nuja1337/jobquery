@@ -1,4 +1,4 @@
-import type { FitBucket, LlmStage, ModelPrice, Profile, ProviderKind, Settings } from './types'
+import type { FitBucket, LlmStage, ModelPrice, Profile, ProviderBilling, ProviderKind, Settings } from './types'
 
 export const DEFAULT_SETTINGS: Settings = {
   routing: { triage: null, writing: null, extraction: null },
@@ -99,6 +99,198 @@ export const PROVIDER_DEFAULT_BASE_URL: Record<ProviderKind, string | null> = {
   openrouter: 'https://openrouter.ai/api/v1',
   ollama: 'http://localhost:11434/v1',
   openai_compatible: null
+}
+
+/**
+ * Ready-made setups shown when adding a provider, grouped as free and paid. Free-tier limits
+ * change often, so the numbers are cautious starting points the user can edit. Checked October 2026.
+ */
+export interface ProviderPreset {
+  id: string
+  /** Shown on the button and used as the provider's label. */
+  label: string
+  kind: ProviderKind
+  baseUrl: string | null
+  billing: ProviderBilling
+  needsKey: boolean
+  /** Where to create a key, or null when none is needed. */
+  keyUrl: string | null
+  requestsPerMinute: number | null
+  requestsPerDay: number | null
+  /** Starting models per stage, or null to pick from the provider's list. */
+  models: Record<LlmStage, string> | null
+  /** One or two plain sentences for the user: cost, limits, privacy. */
+  note: string
+  /** True when the provider may use what's sent to it to train or improve its models. */
+  trainsOnData: boolean
+}
+
+export const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'gemini-free',
+    label: 'Google Gemini (free tier)',
+    kind: 'gemini',
+    baseUrl: null,
+    billing: 'free',
+    needsKey: true,
+    keyUrl: 'https://aistudio.google.com/apikey',
+    requestsPerMinute: 10,
+    requestsPerDay: 250,
+    models: { triage: 'gemini-2.5-flash-lite', writing: 'gemini-2.5-flash', extraction: 'gemini-2.5-flash' },
+    note: "You don't need a card. Google may use what you send on the free tier to improve its products, and people may read it, including your resume and answers.",
+    trainsOnData: true
+  },
+  {
+    id: 'groq-free',
+    label: 'Groq (free tier)',
+    kind: 'openai_compatible',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    billing: 'free',
+    needsKey: true,
+    keyUrl: 'https://console.groq.com/keys',
+    requestsPerMinute: 30,
+    requestsPerDay: 1000,
+    models: null,
+    note: "You don't need a card. It runs fast open models, with a daily limit for each model.",
+    trainsOnData: false
+  },
+  {
+    id: 'openrouter-free',
+    label: 'OpenRouter (free models)',
+    kind: 'openrouter',
+    baseUrl: null,
+    billing: 'free',
+    needsKey: true,
+    keyUrl: 'https://openrouter.ai/keys',
+    requestsPerMinute: 20,
+    requestsPerDay: 50,
+    models: null,
+    note: 'Pick models whose names end in ":free". Until you have bought credits, you get about 50 requests a day across all free models.',
+    trainsOnData: true
+  },
+  {
+    id: 'mistral-free',
+    label: 'Mistral (free plan)',
+    kind: 'openai_compatible',
+    baseUrl: 'https://api.mistral.ai/v1',
+    billing: 'free',
+    needsKey: true,
+    keyUrl: 'https://console.mistral.ai/api-keys',
+    requestsPerMinute: 20,
+    requestsPerDay: null,
+    models: { triage: 'mistral-small-latest', writing: 'mistral-medium-latest', extraction: 'mistral-small-latest' },
+    note: "You don't need a card, but Mistral may ask for a phone number. It may use requests on the free plan to train its models.",
+    trainsOnData: true
+  },
+  {
+    id: 'ollama',
+    label: 'Ollama (on this computer)',
+    kind: 'ollama',
+    baseUrl: null,
+    billing: 'free',
+    needsKey: false,
+    keyUrl: 'https://ollama.com/download',
+    requestsPerMinute: null,
+    requestsPerDay: null,
+    models: null,
+    note: "It's free and private, and nothing leaves your computer. It needs a fairly strong computer, and the writing is weaker than the big paid models.",
+    trainsOnData: false
+  },
+  {
+    id: 'lmstudio',
+    label: 'LM Studio (on this computer)',
+    kind: 'openai_compatible',
+    baseUrl: 'http://localhost:1234/v1',
+    billing: 'free',
+    needsKey: false,
+    keyUrl: 'https://lmstudio.ai',
+    requestsPerMinute: null,
+    requestsPerDay: null,
+    models: null,
+    note: "It's free and private. Start the local server in LM Studio first.",
+    trainsOnData: false
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic (Claude)',
+    kind: 'anthropic',
+    baseUrl: null,
+    billing: 'paid',
+    needsKey: true,
+    keyUrl: 'https://platform.claude.com/settings/keys',
+    requestsPerMinute: null,
+    requestsPerDay: null,
+    models: { triage: 'claude-haiku-5-5', writing: 'claude-sonnet-5-5', extraction: 'claude-haiku-5-5' },
+    note: "You pay for each call. A Claude Pro or Max subscription doesn't include API use.",
+    trainsOnData: false
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    kind: 'openai',
+    baseUrl: null,
+    billing: 'paid',
+    needsKey: true,
+    keyUrl: 'https://platform.openai.com/api-keys',
+    requestsPerMinute: null,
+    requestsPerDay: null,
+    models: { triage: 'gpt-5-mini', writing: 'gpt-5', extraction: 'gpt-5-mini' },
+    note: "You pay for each call. A ChatGPT Plus or Pro subscription doesn't include API use.",
+    trainsOnData: false
+  },
+  {
+    id: 'gemini-paid',
+    label: 'Google Gemini (paid)',
+    kind: 'gemini',
+    baseUrl: null,
+    billing: 'paid',
+    needsKey: true,
+    keyUrl: 'https://aistudio.google.com/apikey',
+    requestsPerMinute: null,
+    requestsPerDay: null,
+    models: { triage: 'gemini-2.5-flash', writing: 'gemini-2.5-pro', extraction: 'gemini-2.5-flash' },
+    note: "You pay for each call once billing is turned on for the key. Google doesn't use paid-tier data to improve its products.",
+    trainsOnData: false
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter (paid models)',
+    kind: 'openrouter',
+    baseUrl: null,
+    billing: 'paid',
+    needsKey: true,
+    keyUrl: 'https://openrouter.ai/keys',
+    requestsPerMinute: null,
+    requestsPerDay: null,
+    models: null,
+    note: 'You pay for each call from credits you buy, and one key reaches hundreds of models.',
+    trainsOnData: false
+  },
+  {
+    id: 'custom',
+    label: 'Other OpenAI-compatible API',
+    kind: 'openai_compatible',
+    baseUrl: null,
+    billing: 'paid',
+    needsKey: true,
+    keyUrl: null,
+    requestsPerMinute: null,
+    requestsPerDay: null,
+    models: null,
+    note: "Use this for Together, DeepSeek, Fireworks and others. Set the address, and mark it free if you won't be charged.",
+    trainsOnData: false
+  }
+]
+
+/** True for addresses on this computer, such as Ollama or LM Studio. Those calls are always free. */
+export function isLocalUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  try {
+    const host = new URL(url).hostname
+    return host === 'localhost' || host === '0.0.0.0' || host === '::1' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host)
+  } catch {
+    return false
+  }
 }
 
 export const PROVIDER_NEEDS_KEY: Record<ProviderKind, boolean> = {

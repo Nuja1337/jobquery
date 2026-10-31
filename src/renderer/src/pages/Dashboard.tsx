@@ -8,7 +8,7 @@ import { useApp } from '@renderer/lib/app'
 import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { formatPercent, formatUsd, plural, relativeTime } from '@renderer/lib/format'
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Loading, Page, PageHeader, Stat, Toggle, type Tone } from '@renderer/components/ui'
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Loading, Notice, Page, PageHeader, Stat, Toggle, type Tone } from '@renderer/components/ui'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 
 const WEEK = 7 * 24 * 3600 * 1000
@@ -22,6 +22,7 @@ const EVENT_TONE: Partial<Record<EventType, Tone>> = {
   submit_failed: 'bad',
   error: 'bad',
   budget_stop: 'warn',
+  rate_limit_stop: 'warn',
   outcome: 'accent'
 }
 const EVENT_LABEL: Record<EventType, string> = {
@@ -38,6 +39,7 @@ const EVENT_LABEL: Record<EventType, string> = {
   run_started: 'Run',
   run_finished: 'Run',
   budget_stop: 'Budget',
+  rate_limit_stop: 'Limit',
   error: 'Error'
 }
 
@@ -165,10 +167,18 @@ export function Dashboard(): React.JSX.Element {
         </Card>
       </div>
 
+      {lastRun?.stats.stoppedForRateLimit && (
+        <div className="mb-4">
+          <Notice tone="warn" title="An AI provider's limit was reached">
+            The last run paused AI work when the limit was reached. The rest continues on the next run.
+          </Notice>
+        </div>
+      )}
+
       <div className="mb-6 grid grid-cols-4 gap-4">
         <Stat label="Applied this week" value={thisWeek} hint={`${sentApps.length} in total`} />
         <Stat label="Response rate" value={sentApps.length ? formatPercent(responded / sentApps.length) : '-'} hint={`${plural(responded, 'reply', 'replies')} to ${plural(sentApps.length, 'application')}`} />
-        <Stat label="Spent today" value={formatUsd(usage?.todayUsd)} hint={usage ? (usage.dailyBudgetUsd > 0 ? `Budget ${formatUsd(usage.dailyBudgetUsd)} a day` : 'No daily limit') : undefined} tone={usage && usage.dailyBudgetUsd > 0 && usage.todayUsd >= usage.dailyBudgetUsd ? 'bad' : undefined} />
+        <Stat label="Spent today" value={formatUsd(usage?.todayUsd)} hint={usage ? `${usage.dailyBudgetUsd > 0 ? `Budget ${formatUsd(usage.dailyBudgetUsd)} a day` : 'No daily limit'}${usage.freeCallsToday > 0 ? `. ${plural(usage.freeCallsToday, 'free call')} today` : ''}` : undefined} tone={usage && usage.dailyBudgetUsd > 0 && usage.todayUsd >= usage.dailyBudgetUsd ? 'bad' : undefined} />
         <Stat label="Spent this month" value={formatUsd(usage?.monthUsd)} hint={usage ? (usage.monthlyBudgetUsd > 0 ? `Budget ${formatUsd(usage.monthlyBudgetUsd)} a month` : 'No monthly limit') : undefined} />
       </div>
 

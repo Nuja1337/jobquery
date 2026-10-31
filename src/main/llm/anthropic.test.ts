@@ -1,7 +1,8 @@
+import Anthropic from '@anthropic-ai/sdk'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { AnthropicClient } from './anthropic'
-import { LlmFormatError, LlmRefusalError } from './errors'
+import { LlmFormatError, LlmRefusalError, RateLimitedError } from './errors'
 import { priceFor } from './pricing'
 import type { LlmRequest } from './types'
 
@@ -50,6 +51,50 @@ describe('AnthropicClient.completeJson', () => {
     })
     const res = await client.completeJson('claude-fable-5-1', req, schema, 'fit')
     expect(res.value).toEqual({ score: 72 })
+  })
+})
+
+describe('AnthropicClient rate limits', () => {
+  /** A client whose API call fails with the given error. */
+  function clientFailing(error: Error): AnthropicClient {
+    const client = new AnthropicClient('sk-ant-test')
+    const sdk = (client as unknown as { client: { beta: { messages: { create: unknown } } } }).client
+    sdk.beta.messages.create = async () => {
+      throw error
+    }
+    return client
+  }
+
+  it('turns an HTTP 429 into RateLimitedError with the retry-after delay', async () => {
+    const client = clientFailing(new Anthropic.RateLimitError(429, { type: 'error' }, 'rate limited', new Headers({ 'retry-after': '7' })))
+    const err = await client.complete('claude-sonnet-5-5', req).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(RateLimitedError)
+    expect((err as RateLimitedError).retryAfterMs).toBe(7000)
+    const json = await client.completeJson('claude-sonnet-5-5', req, schema, 'fit').catch((e: unknown) => e)
+    expect(json).toBeInstanceOf(RateLimitedError)
+  })
+
+  it('maps a plain APIError with status 429 and leaves the delay empty without a header', async () => {
+    const client = clientFailing(new Anthropic.APIError(429, undefined, 'slow down', new Headers()))
+    const err = await client.complete('claude-sonnet-5-5', req).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(RateLimitedError)
+    expect((err as RateLimitedError).retryAfterMs).toBeNull()
+  })
+
+  it('prefers retry-after-ms and reads a date', async () => {
+    const ms = clientFailing(new Anthropic.RateLimitError(429, undefined, 'x', new Headers({ 'retry-after-ms': '1500', 'retry-after': '9' })))
+    expect(((await ms.complete('m', req).catch((e: unknown) => e)) as RateLimitedError).retryAfterMs).toBe(1500)
+    const date = new Date(Date.now() + 30_000).toUTCString()
+    const dated = clientFailing(new Anthropic.RateLimitError(429, undefined, 'x', new Headers({ 'retry-after': date })))
+    const wait = ((await dated.complete('m', req).catch((e: unknown) => e)) as RateLimitedError).retryAfterMs!
+    expect(wait).toBeGreaterThan(20_000)
+    expect(wait).toBeLessThanOrEqual(30_000)
+  })
+
+  it('leaves other errors alone', async () => {
+    const boom = new Anthropic.InternalServerError(500, undefined, 'down', new Headers())
+    const err = await clientFailing(boom).complete('m', req).catch((e: unknown) => e)
+    expect(err).toBe(boom)
   })
 })
 

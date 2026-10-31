@@ -246,3 +246,58 @@ describe('EventsRepo and RunsRepo', () => {
     expect(ctx.runs.list(5)[0]).toMatchObject({ finishedAt: expect.any(String), stats: { scored: 4, costUsd: 0.12 }, error: null })
   })
 })
+
+describe('ProvidersRepo billing and limits', () => {
+  it('defaults Ollama to free and everything else to paid', async () => {
+    const { ctx } = await makeTestEnv({ provider: false })
+    const save = async (input: Parameters<typeof ctx.providers.save>[0]) => (await ctx.providers.save(input)).billing
+    expect(await save({ kind: 'ollama', label: 'Ollama' })).toBe('free')
+    // A local address can be a proxy to a paid API, so only an explicit choice makes it free.
+    expect(await save({ kind: 'openai_compatible', label: 'LM Studio', baseUrl: 'http://localhost:1234/v1' })).toBe('paid')
+    expect(await save({ kind: 'openai_compatible', label: 'LM Studio', baseUrl: 'http://localhost:1234/v1', billing: 'free' })).toBe('free')
+    expect(await save({ kind: 'openai', label: 'OpenAI', apiKey: 'k' })).toBe('paid')
+    expect(await save({ kind: 'gemini', label: 'Gemini', apiKey: 'k' })).toBe('paid')
+    expect(await save({ kind: 'openai_compatible', label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1' })).toBe('paid')
+    expect(await save({ kind: 'gemini', label: 'Gemini free', apiKey: 'k', billing: 'free' })).toBe('free')
+  })
+
+  it('keeps the stored billing and limits when an update leaves them out', async () => {
+    const { ctx } = await makeTestEnv({ provider: false })
+    const p = await ctx.providers.save({ kind: 'gemini', label: 'Gemini', apiKey: 'k', billing: 'free', requestsPerMinute: 10, requestsPerDay: 250 })
+    expect(p).toMatchObject({ billing: 'free', requestsPerMinute: 10, requestsPerDay: 250 })
+    const renamed = await ctx.providers.save({ id: p.id, kind: 'gemini', label: 'Renamed' })
+    expect(renamed).toMatchObject({ label: 'Renamed', billing: 'free', requestsPerMinute: 10, requestsPerDay: 250 })
+    const changed = await ctx.providers.save({ id: p.id, kind: 'gemini', label: 'Renamed', billing: 'paid', requestsPerMinute: null, requestsPerDay: 100 })
+    expect(changed).toMatchObject({ billing: 'paid', requestsPerMinute: null, requestsPerDay: 100 })
+    expect(ctx.providers.list().find((x) => x.id === p.id)).toMatchObject({ billing: 'paid', requestsPerDay: 100 })
+  })
+
+  it('stores limits only as positive whole numbers', async () => {
+    const { ctx } = await makeTestEnv({ provider: false })
+    const limits = async (requestsPerMinute: number | null, requestsPerDay: number | null) => {
+      const p = await ctx.providers.save({ kind: 'gemini', label: 'G', requestsPerMinute, requestsPerDay })
+      return [p.requestsPerMinute, p.requestsPerDay]
+    }
+    expect(await limits(0, -5)).toEqual([null, null])
+    expect(await limits(Number.NaN, Number.POSITIVE_INFINITY)).toEqual([null, null])
+    expect(await limits(7.9, 250)).toEqual([7, 250])
+    expect(await limits(0.5, null)).toEqual([null, null])
+  })
+
+  it('still drops the stored key when the address changes without a new key', async () => {
+    const { ctx } = await makeTestEnv({ provider: false })
+    const p = await ctx.providers.save({ kind: 'openai_compatible', label: 'A', baseUrl: 'https://a.example/v1', apiKey: 'secret', billing: 'free' })
+    const moved = await ctx.providers.save({ id: p.id, kind: 'openai_compatible', label: 'A', baseUrl: 'https://b.example/v1' })
+    expect(await ctx.providers.getApiKey(p.id)).toBeNull()
+    expect(moved.billing).toBe('free')
+  })
+})
+
+describe('RunsRepo stored stats', () => {
+  it('reads old runs that have no stoppedForRateLimit as false', async () => {
+    const { ctx } = await makeTestEnv()
+    const run = ctx.runs.start('manual')
+    ctx.db.run('UPDATE runs SET stats = :stats WHERE id = :id', { id: run.id, stats: JSON.stringify({ discovered: 4, stoppedForBudget: true }) })
+    expect(ctx.runs.get(run.id)!.stats).toMatchObject({ discovered: 4, stoppedForBudget: true, stoppedForRateLimit: false })
+  })
+})

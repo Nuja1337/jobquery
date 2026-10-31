@@ -160,6 +160,77 @@ describe('last_seen_at and stale search jobs', () => {
   })
 })
 
+describe('closing search jobs after a break', () => {
+  type Ctx = Awaited<ReturnType<typeof makeTestEnv>>['ctx']
+  const daysAgo = (days: number) => new Date(Date.now() - days * DAY).toISOString()
+
+  async function setup() {
+    const { ctx } = await makeTestEnv()
+    const search = (label: string, lastRunDaysAgo: number | null, enabled = true) => {
+      const saved = ctx.searches.save({ source: 'remoteok', label, params: {}, enabled })
+      ctx.db.run('UPDATE searches SET last_run_at = :at WHERE id = :id', { id: saved.id, at: lastRunDaysAgo === null ? null : daysAgo(lastRunDaysAgo) })
+      return saved.id
+    }
+    const job = (id: string, seenDaysAgo: number) => {
+      const j = ctx.jobs.upsertRaw(makeRaw({ source: 'remoteok', externalId: id }), null).job
+      ctx.db.run('UPDATE jobs SET last_seen_at = :at WHERE id = :id', { id: j.id, at: daysAgo(seenDaysAgo) })
+      return j.id
+    }
+    return { ctx, search, job }
+  }
+  const stage = (ctx: Ctx, id: string) => ctx.jobs.get(id)?.stage
+
+  it('keeps a job open while a search of its source has not run since the job was last seen', async () => {
+    const { ctx, search, job } = await setup()
+    search('ran yesterday', 1)
+    const stale = search('paused for weeks', 50)
+    const id = job('a', 40)
+    expect(ctx.jobs.closeUnseenSearchJobs(['remoteok'])).toEqual([])
+    expect(stage(ctx, id)).toBe('new')
+    // Once the other search has run too and still has not returned the job, it closes.
+    ctx.db.run('UPDATE searches SET last_run_at = :at WHERE id = :id', { id: stale, at: daysAgo(0) })
+    expect(ctx.jobs.closeUnseenSearchJobs(['remoteok'])).toEqual([id])
+    expect(stage(ctx, id)).toBe('closed')
+  })
+
+  it('does not close anything while an enabled search has never run', async () => {
+    const { ctx, search, job } = await setup()
+    search('ran', 1)
+    search('never', null)
+    const id = job('a', 40)
+    expect(ctx.jobs.closeUnseenSearchJobs(['remoteok'])).toEqual([])
+    expect(stage(ctx, id)).toBe('new')
+  })
+
+  it('ignores disabled searches', async () => {
+    const { ctx, search, job } = await setup()
+    search('ran', 1)
+    search('off', 90, false)
+    const id = job('a', 40)
+    expect(ctx.jobs.closeUnseenSearchJobs(['remoteok'])).toEqual([id])
+  })
+
+  it('still applies the 30-day rule when every search ran recently', async () => {
+    const { ctx, search, job } = await setup()
+    search('a', 1)
+    search('b', 2)
+    const recent = job('recent', 20)
+    const old = job('old', 31)
+    expect(ctx.jobs.closeUnseenSearchJobs(['remoteok'])).toEqual([old])
+    expect(stage(ctx, recent)).toBe('new')
+  })
+
+  it('compares each job with the oldest search run, not only the newest', async () => {
+    const { ctx, search, job } = await setup()
+    search('a', 0)
+    search('b', 35)
+    const seenBeforeBothRuns = job('x', 40)
+    const seenBetween = job('y', 33)
+    expect(ctx.jobs.closeUnseenSearchJobs(['remoteok'])).toEqual([seenBeforeBothRuns])
+    expect(stage(ctx, seenBetween)).toBe('new')
+  })
+})
+
 describe('restaging for the shortlist line', () => {
   it('moves scored and shortlisted jobs across the line and refreshes their bucket', async () => {
     const { ctx } = await makeTestEnv()

@@ -54,6 +54,7 @@ interface JobRow {
   updated_at: string
   last_seen_at: string | null
   dismissed_at: string | null
+  triage_failures: number
   application_id: string | null
 }
 
@@ -96,6 +97,7 @@ function toJob(row: JobRow): Job {
     dismissReason: row.dismiss_reason,
     dismissTags: parseJson<string[]>(row.dismiss_tags, []),
     dupOf: row.dup_of,
+    triageFailures: row.triage_failures ?? 0,
     updatedAt: row.updated_at
   }
 }
@@ -105,6 +107,9 @@ const KEEP_OPEN_STAGES: JobStage[] = ['applied', 'closed', 'dismissed', 'duplica
 
 /** Stages a fit score may move a job out of. Later stages (preparing, ready, applied, dismissed, closed) keep theirs. */
 export const SCORE_MOVABLE_STAGES: JobStage[] = ['new', 'filtered_out', 'prescored_out', 'duplicate', 'scored', 'shortlisted']
+
+/** A job whose AI scoring failed this many times with the current profile is skipped by runs. */
+export const MAX_TRIAGE_FAILURES = 3
 
 /** A job that no source has listed for this many days is treated as gone. */
 export const STALE_JOB_DAYS = 30
@@ -249,9 +254,9 @@ export class JobsRepo {
   }
 
   /** Full jobs in the given stages. orderBy 'prescore' and 'fit' both sort best first. */
-  listByStage(stages: JobStage | JobStage[], options: { orderBy?: 'prescore' | 'fit' | 'discovered'; limit?: number } = {}): Job[] {
+  listByStage(stages: JobStage | JobStage[], options: { orderBy?: 'prescore' | 'fit' | 'discovered'; limit?: number; skipRepeatedTriageFailures?: boolean } = {}): Job[] {
     const list = Array.isArray(stages) ? stages : [stages]
-    const params: Record<string, string> = {}
+    const params: Record<string, string | number> = {}
     const names = list.map((s, i) => {
       params[`s${i}`] = s
       return `:s${i}`
@@ -262,7 +267,12 @@ export class JobsRepo {
       discovered: 'j.discovered_at DESC'
     }[options.orderBy ?? 'discovered']
     const limit = options.limit ? `LIMIT ${Math.floor(options.limit)}` : ''
-    return this.db.all<JobRow>(`${SELECT_JOB} WHERE j.stage IN (${names.join(', ')}) ORDER BY ${order} ${limit}`, params).map(toJob)
+    let failures = ''
+    if (options.skipRepeatedTriageFailures) {
+      params.maxFailures = MAX_TRIAGE_FAILURES
+      failures = 'AND j.triage_failures < :maxFailures'
+    }
+    return this.db.all<JobRow>(`${SELECT_JOB} WHERE j.stage IN (${names.join(', ')}) ${failures} ORDER BY ${order} ${limit}`, params).map(toJob)
   }
 
   /** Same posting stored under another job id. The oldest original comes first. */
@@ -330,6 +340,17 @@ export class JobsRepo {
         at: now()
       }
     )
+    this.db.run('UPDATE jobs SET triage_failures = 0 WHERE id = :id AND triage_failures != 0', { id })
+  }
+
+  /** Clears every job's failed-scoring count, for example after the scoring model or provider changed. */
+  resetAllTriageFailures(): void {
+    this.db.run('UPDATE jobs SET triage_failures = 0 WHERE triage_failures != 0')
+  }
+
+  /** Counts one failed AI scoring attempt. Runs skip the job once it reaches MAX_TRIAGE_FAILURES. */
+  recordTriageFailure(id: string): void {
+    this.db.run('UPDATE jobs SET triage_failures = triage_failures + 1 WHERE id = :id', { id })
   }
 
   /** Profile version the stored fit was computed against, or null when the job was never scored. */
@@ -397,25 +418,33 @@ export class JobsRepo {
   /**
    * Closes jobs from the given search sources that no search has returned for `days` days.
    * Only early stages are touched. A job the user is working on stays open.
+   *
+   * A source runs one saved search per run, so a job may simply belong to a search that has not run
+   * lately (the app was off for weeks, or the search was paused). A job closes only when every enabled
+   * search of its source has run since the job was last seen. A search that never ran blocks it.
    */
   closeUnseenSearchJobs(sources: SourceKind[], days = STALE_JOB_DAYS): string[] {
-    if (sources.length === 0) return []
     const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
-    const params: Record<string, string> = { cutoff }
-    const names = sources.map((s, i) => {
-      params[`src${i}`] = s
-      return `:src${i}`
-    })
-    const rows = this.db.all<{ id: string }>(
-      `SELECT id FROM jobs WHERE source IN (${names.join(', ')}) AND stage IN (${sqlList(STALE_CLOSE_STAGES)})
-         AND COALESCE(last_seen_at, discovered_at) < :cutoff`,
-      params
-    )
+    const closed: string[] = []
+    for (const source of sources) {
+      const runs = this.db.all<{ last_run_at: string | null }>('SELECT last_run_at FROM searches WHERE source = :source AND enabled = 1', { source })
+      if (runs.some((r) => !r.last_run_at)) continue
+      const oldestRun = runs.reduce<string | null>((oldest, r) => (oldest === null || r.last_run_at! < oldest ? r.last_run_at : oldest), null)
+      // The job must have been last seen before the 30-day line and before the oldest search ran.
+      const rows = this.db.all<{ id: string }>(
+        `SELECT id FROM jobs WHERE source = :source AND stage IN (${sqlList(STALE_CLOSE_STAGES)})
+           AND COALESCE(last_seen_at, discovered_at) < :cutoff
+           AND (:oldestRun IS NULL OR COALESCE(last_seen_at, discovered_at) < :oldestRun)`,
+        { source, cutoff, oldestRun }
+      )
+      closed.push(...rows.map((r) => r.id))
+    }
+    if (closed.length === 0) return []
     const at = now()
     this.db.transaction(() => {
-      for (const row of rows) this.db.run("UPDATE jobs SET stage = 'closed', closed_at = :at, updated_at = :at WHERE id = :id", { id: row.id, at })
+      for (const id of closed) this.db.run("UPDATE jobs SET stage = 'closed', closed_at = :at, updated_at = :at WHERE id = :id", { id, at })
     })
-    return rows.map((r) => r.id)
+    return closed
   }
 
   /** True when no source has listed the job for more than `days` days. */

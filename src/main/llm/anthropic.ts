@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { z } from 'zod'
-import { LlmFormatError, LlmRefusalError } from './errors'
+import { LlmFormatError, LlmRefusalError, asRateLimited } from './errors'
 import { jsonInstructions, parseWithSchema } from './json'
 import type { LlmClient, LlmJsonResult, LlmRequest, LlmTextResult, LlmUsage } from './types'
 
@@ -43,10 +43,15 @@ export class AnthropicClient implements LlmClient {
   }
 
   async complete(model: string, req: LlmRequest): Promise<LlmTextResult> {
-    const res = await this.client.beta.messages.create({
-      ...this.baseParams(model, req),
-      ...(req.effort && supportsEffort(model) ? { output_config: { effort: req.effort } } : {})
-    })
+    let res: BetaMessage
+    try {
+      res = await this.client.beta.messages.create({
+        ...this.baseParams(model, req),
+        ...(req.effort && supportsEffort(model) ? { output_config: { effort: req.effort } } : {})
+      })
+    } catch (err) {
+      throw asRateLimited(err) ?? err
+    }
     return toResult(res)
   }
 
@@ -67,7 +72,7 @@ export class AnthropicClient implements LlmClient {
       if (err instanceof Anthropic.BadRequestError && /output_config|format|schema|structured/i.test(err.message)) {
         return this.completeJsonByPrompt(model, req, schema, schemaName)
       }
-      throw err
+      throw asRateLimited(err) ?? err
     }
     const result = toResult(res)
     const parsed = parseWithSchema(result.text, schema)

@@ -13,6 +13,13 @@ export type ProviderKind =
   | 'ollama'
   | 'openai_compatible'
 
+/**
+ * How the user pays for a provider. "free" is a free tier or a local model: calls cost nothing,
+ * never count toward the spending caps, and are paced to the provider's free limits instead.
+ * "paid" calls are priced per token and count toward the caps.
+ */
+export type ProviderBilling = 'free' | 'paid'
+
 /** A provider the user configured. The API key never leaves the main process. */
 export interface ProviderInfo {
   id: string
@@ -20,6 +27,11 @@ export interface ProviderInfo {
   label: string
   baseUrl: string | null
   hasKey: boolean
+  billing: ProviderBilling
+  /** Most calls to start per minute, or null for no pacing. Free tiers need this. */
+  requestsPerMinute: number | null
+  /** Most calls per calendar day (local time), or null for no daily limit. */
+  requestsPerDay: number | null
   createdAt: string
 }
 
@@ -30,6 +42,10 @@ export interface ProviderInput {
   baseUrl?: string | null
   /** Only sent when the user types a new key. Omit to keep the stored one. */
   apiKey?: string
+  /** Defaults to "free" for local providers (Ollama, localhost URLs) and "paid" otherwise. */
+  billing?: ProviderBilling
+  requestsPerMinute?: number | null
+  requestsPerDay?: number | null
 }
 
 export interface ModelRef {
@@ -434,6 +450,8 @@ export interface Job extends JobSummary {
   dismissReason: string | null
   dismissTags: string[]
   dupOf: string | null
+  /** Times AI scoring failed for this job with the current profile. Runs skip it after 3. */
+  triageFailures: number
   updatedAt: string
 }
 
@@ -689,6 +707,8 @@ export interface RunStats {
   costUsd: number
   tokens: number
   stoppedForBudget: boolean
+  /** The AI provider's rate or daily limit was reached, so AI work paused until the next run. */
+  stoppedForRateLimit: boolean
 }
 
 export interface RunRecord {
@@ -714,6 +734,7 @@ export type EventType =
   | 'run_started'
   | 'run_finished'
   | 'budget_stop'
+  | 'rate_limit_stop'
   | 'error'
 
 export interface EventRecord {
@@ -738,6 +759,8 @@ export interface UsageSummary {
   monthlyBudgetUsd: number
   /** Responses served from the local cache this month. Each one is a call you didn't pay for. */
   cacheHitsMonth: number
+  /** Calls made today through free-tier or local providers. They cost nothing and skip the caps. */
+  freeCallsToday: number
 }
 
 export interface CountByKey {

@@ -46,14 +46,14 @@ describe('LlmService', () => {
 
   it('falls back to a suggested model for the first provider', async () => {
     const { llm, providers } = await setup()
-    providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+    await providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
     expect(llm.resolveModel('triage').model).toBe('claude-haiku-5-5')
     expect(llm.resolveModel('writing').model).toBe('claude-sonnet-5-5')
   })
 
   it('records cost and serves repeats from the cache for free', async () => {
     const { llm, providers, calls, db } = await setup()
-    providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+    await providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
     const first = await llm.text(base)
     expect(first.cached).toBe(false)
     // claude-sonnet-5-5: 1000 in at $2/M + 500 out at $10/M
@@ -69,7 +69,7 @@ describe('LlmService', () => {
 
   it('skips the cache when asked to regenerate', async () => {
     const { llm, providers, calls } = await setup()
-    providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+    await providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
     await llm.text(base)
     await llm.text({ ...base, useCache: false })
     expect(calls).toHaveLength(2)
@@ -77,7 +77,7 @@ describe('LlmService', () => {
 
   it('stops before calling the model once the daily budget is spent', async () => {
     const { llm, providers, settings } = await setup()
-    providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+    await providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
     settings.update({ budget: { dailyUsd: 0.005 } })
     await llm.text(base)
     await expect(llm.text({ ...base, prompt: 'another' })).rejects.toBeInstanceOf(BudgetExceededError)
@@ -85,25 +85,25 @@ describe('LlmService', () => {
 
   it('validates JSON replies against the schema', async () => {
     const { llm, providers } = await setup()
-    providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+    await providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
     const res = await llm.json({ ...base, task: 'triage', stage: 'triage', schema: z.object({ score: z.number() }), schemaName: 'fit' })
     expect(res.value.score).toBe(80)
   })
 
   it('keeps API keys encrypted at rest and out of provider listings', async () => {
     const { providers, db } = await setup()
-    const saved = providers.save({ kind: 'openai', label: 'OpenAI', apiKey: 'sk-secret' })
+    const saved = await providers.save({ kind: 'openai', label: 'OpenAI', apiKey: 'sk-secret' })
     expect(saved.hasKey).toBe(true)
     expect(JSON.stringify(providers.list())).not.toContain('sk-secret')
     const raw = db.get<{ api_key_enc: string }>('SELECT api_key_enc FROM providers')!
     expect(raw.api_key_enc).not.toContain('sk-secret')
-    expect(providers.getApiKey(saved.id)).toBe('sk-secret')
+    expect(await providers.getApiKey(saved.id)).toBe('sk-secret')
     // Saving without apiKey keeps the stored key.
-    providers.save({ id: saved.id, kind: 'openai', label: 'Renamed' })
-    expect(providers.getApiKey(saved.id)).toBe('sk-secret')
+    await providers.save({ id: saved.id, kind: 'openai', label: 'Renamed' })
+    expect(await providers.getApiKey(saved.id)).toBe('sk-secret')
     // Pointing the provider somewhere else without a new key drops the old one.
-    providers.save({ id: saved.id, kind: 'openai_compatible', label: 'Elsewhere', baseUrl: 'https://example.invalid/v1' })
-    expect(providers.getApiKey(saved.id)).toBeNull()
+    await providers.save({ id: saved.id, kind: 'openai_compatible', label: 'Elsewhere', baseUrl: 'https://example.invalid/v1' })
+    expect(await providers.getApiKey(saved.id)).toBeNull()
   })
 })
 

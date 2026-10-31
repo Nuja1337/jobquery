@@ -8,7 +8,7 @@ import { useToast } from '@renderer/lib/toast'
 import { SOURCE_LABELS, formatDate, formatSalary, relativeTime } from '@renderer/lib/format'
 import { FitBadge, StageBadge, StatusBadge } from '@renderer/components/badges'
 import { DismissDialog } from '@renderer/components/DismissDialog'
-import { Badge, Button, Card, CardHeader, Chip, ErrorBlock, Loading, Page, ProgressBar } from '@renderer/components/ui'
+import { Badge, Button, Card, CardHeader, Chip, ErrorBlock, Loading, Notice, Page, ProgressBar } from '@renderer/components/ui'
 
 function Meta({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -108,7 +108,7 @@ export function JobDetail(): React.JSX.Element {
             Open posting
           </Button>
           <Button icon={<Gauge size={14} />} loading={busy === 'score'} onClick={() => void run('score', () => api.scoreJob(j.id), 'Scored.')}>
-            {j.fit ? 'Score again' : 'Score now'}
+            {j.fit || j.triageFailures >= 3 ? 'Score again' : 'Score now'}
           </Button>
           {app.data ? (
             <Button variant="primary" onClick={() => navigate(app.data?.status === 'submitted' ? '/applications' : `/review/${app.data?.id}`)}>
@@ -140,6 +140,11 @@ export function JobDetail(): React.JSX.Element {
           <Card>
             <CardHeader title="Fit" hint={fit ? `${fit.seniorityFit === 'match' ? 'Seniority matches.' : fit.seniorityFit === 'over' ? 'The role is above your level.' : fit.seniorityFit === 'under' ? 'The role is below your level.' : 'Seniority is unclear.'}` : undefined} />
             <div className="space-y-4 p-4">
+              {j.triageFailures >= 3 && (
+                <Notice tone="warn" title="Scoring failed three times">
+                  Runs skip this job until it scores. Press Score again to retry it.
+                </Notice>
+              )}
               {fit ? (
                 <>
                   <p className="text-sm leading-relaxed text-fg">{fit.summary}</p>
@@ -171,7 +176,7 @@ export function JobDetail(): React.JSX.Element {
                   )}
                 </>
               ) : (
-                <p className="text-sm text-muted">This job has not been scored. {j.filterReason ? 'It was stopped by a free filter, so no tokens were spent.' : 'Press Score now to have the AI judge the fit.'}</p>
+                <p className="text-sm text-muted">This job has not been scored. {j.filterReason ? 'It was stopped by a free filter, so no tokens were spent.' : `Press ${j.triageFailures >= 3 ? 'Score again' : 'Score now'} to have the AI judge the fit.`}</p>
               )}
               {(j.prescore != null || j.filterReason) && (
                 <div className="border-t border-line pt-4">

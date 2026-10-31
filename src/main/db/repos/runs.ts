@@ -24,7 +24,8 @@ export function emptyStats(): RunStats {
     errors: 0,
     costUsd: 0,
     tokens: 0,
-    stoppedForBudget: false
+    stoppedForBudget: false,
+    stoppedForRateLimit: false
   }
 }
 

@@ -12,7 +12,7 @@ import { runSubmission } from './apply/submitRun'
 import { getAnalytics } from './analytics'
 import { type AppContext, createContext } from './context'
 import { newId } from './db/database'
-import { BudgetExceededError } from './llm/errors'
+import { BudgetExceededError, RateLimitedError } from './llm/errors'
 import type { AppPaths } from './paths'
 import { dismissJob, restoreJob, scoreJobNow } from './pipeline/actions'
 import { dismissSuggestion, suggestPreferences } from './pipeline/learn'
@@ -197,7 +197,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       } else if (existing && status === 'draft') {
         ctx.applications.update(app.id, { status: existing.status === 'draft' ? 'needs_attention' : existing.status, error: (err as Error).message })
       }
-      if (!(err instanceof BudgetExceededError)) ctx.events.add('error', `Couldn't prepare ${j.title} at ${j.company}. ${(err as Error).message}`, jobId)
+      if (!(err instanceof BudgetExceededError) && !(err instanceof RateLimitedError)) ctx.events.add('error', `Couldn't prepare ${j.title} at ${j.company}. ${(err as Error).message}`, jobId)
       deps.emit('jobs:changed', { jobIds: [jobId] })
       throw err
     }
@@ -371,10 +371,12 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       return ctx.settings.get()
     },
     async updateSettings(patch) {
-      const before = ctx.settings.get().thresholds.shortlistScore
+      const previous = ctx.settings.get()
       const next = ctx.settings.update(patch)
       // Jobs already scored move across the new shortlist line and get the matching fit label.
-      if (next.thresholds.shortlistScore !== before) restageForShortlist(ctx)
+      if (next.thresholds.shortlistScore !== previous.thresholds.shortlistScore) restageForShortlist(ctx)
+      // A different scoring model deserves another try at jobs the old one failed on.
+      if (JSON.stringify(next.routing.triage) !== JSON.stringify(previous.routing.triage)) ctx.jobs.resetAllTriageFailures()
       scheduler.reschedule()
       return next
     },
@@ -387,8 +389,10 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       return ctx.providers.list()
     },
     async saveProvider(input) {
-      const saved = ctx.providers.save(input)
+      const saved = await ctx.providers.save(input)
       ctx.llm.resetClients()
+      // A fixed key or address may be what those jobs were waiting for.
+      ctx.jobs.resetAllTriageFailures()
       return saved
     },
     async deleteProvider(id) {

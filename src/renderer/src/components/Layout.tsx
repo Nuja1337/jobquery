@@ -3,7 +3,7 @@ import { BarChart3, Briefcase, FileText, Globe, Inbox, LayoutDashboard, Play, Ro
 import { clsx } from 'clsx'
 import { isDemo } from '@renderer/lib/api'
 import { useApp } from '@renderer/lib/app'
-import { formatUsd } from '@renderer/lib/format'
+import { formatUsd, plural } from '@renderer/lib/format'
 import { Badge, Button, ProgressBar } from './ui'
 
 const NAV = [
@@ -81,6 +81,11 @@ function TopBar(): React.JSX.Element {
         <Badge tone="warn" title="The app is open in a browser without the backend. Everything shown is sample data.">
           Demo data
         </Badge>
+      )}
+      {usage && usage.freeCallsToday > 0 && (
+        <span className="shrink-0 text-xs tabular-nums text-muted" title="Calls made today through free or local providers. They cost nothing and don't count toward your budget.">
+          {plural(usage.freeCallsToday, 'free call')} today
+        </span>
       )}
       {usage && (
         <div className="w-44" title={noLimit ? `${formatUsd(usage.todayUsd)} spent today. No daily limit is set.` : `${formatUsd(usage.todayUsd)} spent today of a ${formatUsd(usage.dailyBudgetUsd)} daily budget`}>

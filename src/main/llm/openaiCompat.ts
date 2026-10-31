@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
 import type { ProviderKind } from '@shared/types'
-import { LlmFormatError, LlmRefusalError } from './errors'
+import { LlmFormatError, LlmRefusalError, asRateLimited } from './errors'
 import { jsonInstructions, parseWithSchema } from './json'
 import type { LlmClient, LlmJsonResult, LlmRequest, LlmTextResult } from './types'
 
@@ -47,7 +47,12 @@ export class OpenAiCompatClient implements LlmClient {
   }
 
   async complete(model: string, req: LlmRequest): Promise<LlmTextResult> {
-    const res = await this.client.chat.completions.create(this.params(model, req))
+    let res: OpenAI.Chat.Completions.ChatCompletion
+    try {
+      res = await this.client.chat.completions.create(this.params(model, req))
+    } catch (err) {
+      throw asRateLimited(err) ?? err
+    }
     return toResult(res, model)
   }
 
@@ -78,7 +83,7 @@ export class OpenAiCompatClient implements LlmClient {
         lastError = err
         // A 400 usually means this server doesn't support the response_format we sent. Try the next mode.
         if (err instanceof OpenAI.BadRequestError && mode !== 'prompt') continue
-        throw err
+        throw asRateLimited(err) ?? err
       }
     }
     throw lastError

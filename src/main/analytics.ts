@@ -265,7 +265,9 @@ function averageTriageCall(ctx: AppContext, prices: Parameters<typeof priceFor>[
     `SELECT COUNT(*) AS n, AVG(input_tokens + output_tokens + cached_input_tokens) AS tokens, AVG(cost_usd) AS usd
      FROM llm_calls WHERE task = 'triage' AND cache_hit = 0 AND ok = 1`
   )
-  if (row && row.n > 0 && row.tokens) return { tokens: row.tokens, usd: row.usd ?? 0 }
+  // A free or local scoring model costs nothing, whatever earlier calls cost.
+  const free = ctx.llm.isFreeStage('triage')
+  if (row && row.n > 0 && row.tokens) return { tokens: row.tokens, usd: free ? 0 : (row.usd ?? 0) }
   let usd = 0
   try {
     const ref = ctx.llm.resolveModel('triage')
@@ -277,5 +279,5 @@ function averageTriageCall(ctx: AppContext, prices: Parameters<typeof priceFor>[
   } catch {
     // No model set up yet, so there is no price to estimate with.
   }
-  return { tokens: FALLBACK_TRIAGE_TOKENS, usd }
+  return { tokens: FALLBACK_TRIAGE_TOKENS, usd: free ? 0 : usd }
 }

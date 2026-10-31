@@ -16,18 +16,33 @@ You review each application and click Submit. If you trust it, auto-submit can d
 
 ## Bring your own AI
 
-Paste a key for any of these. Each step of the pipeline can use a different model, so high-volume fit scoring can run on a cheap model while writing uses a stronger one.
+Use a free option or a paid key, whichever you prefer. Each step of the pipeline can use a different model, so fit scoring can run on a free or cheap model while writing uses a stronger one.
+
+**Free**
+
+| Provider | Notes |
+|---|---|
+| Google Gemini (free tier) | You don't need a card. Google may use free-tier requests to improve its products, and people may read them |
+| Groq (free tier) | You don't need a card. It runs fast open models with daily limits |
+| OpenRouter free models | Pick models whose names end in `:free`. You get about 50 requests a day until you've bought credits, and any other model on OpenRouter is paid |
+| Mistral (free plan) | You don't need a card. Mistral may use free-plan requests to train its models |
+| Ollama or LM Studio | Models run on your own computer. They're free and private, but they need a fairly strong computer |
+
+**Paid**
 
 | Provider | Notes |
 |---|---|
 | Anthropic (Claude) | Suggested: Claude Haiku 5.5 for scoring, Claude Sonnet 5.5 for writing |
 | OpenAI | |
-| Google Gemini | Through Google's OpenAI-compatible endpoint |
-| OpenRouter | Any model OpenRouter offers |
-| Ollama | Local models, no key needed |
-| Any OpenAI-compatible API | Groq, Together, DeepSeek, Mistral, LM Studio and others |
+| Google Gemini with billing turned on | Google doesn't use paid-tier data to improve its products |
+| OpenRouter | Any model OpenRouter offers, paid from credits you buy |
+| Any OpenAI-compatible API | Together, DeepSeek, Fireworks and others |
 
-Your key stays on your computer. It's encrypted with your operating system's key store when one is available, and the app warns you when there isn't one. Daily and monthly spending caps stop all AI calls when they're reached.
+A ChatGPT or Claude subscription doesn't include API use, so a paid key is billed separately by its provider.
+
+Free and local providers never count toward your spending caps. JobPilot spaces out its requests to stay under a free tier's per-minute and per-day limits, and when a provider says the limit is reached, it pauses and carries on with the next run. Paid keys are priced per call, and daily and monthly caps stop all paid calls when they're reached.
+
+Your key stays on your computer. It's encrypted with your operating system's key store when one is available, and the app warns you when there isn't one.
 
 ## Why it's a desktop app
 
@@ -56,10 +71,10 @@ npm run dist:linux   # Linux (.AppImage)
 
 ### Try it without a key
 
-Demo mode runs the interface with sample data in a normal browser.
+Demo mode runs the interface with sample data in a normal browser. It doesn't open the app or touch your real data.
 
 ```bash
-npx electron-vite dev --rendererOnly
+npm run demo
 ```
 
 Then open http://localhost:5173. Add `?onboarding=1` to see the first-run setup.
@@ -116,3 +131,4 @@ This is an early version. Known gaps:
 - The Adzuna source follows Adzuna's documented format but hasn't been tested against the live API.
 - Replies from employers are tracked by hand. Reading them from your inbox is planned.
 - Tailoring the resume itself for each job is planned. Today the app tailors the cover letter and answers.
+- Free tiers change their limits often. The limits in each free preset are cautious starting points, and you can change them in Settings.

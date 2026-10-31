@@ -99,7 +99,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     const paths = appPaths(app.getPath('userData'))
-    const vault = createSafeStorageVault(safeStorage)
+    const vault = await createSafeStorageVault(safeStorage)
     shutdown = await registerIpc({ ipcMain, paths, vault, emit, appVersion: app.getVersion(), isTrustedSender })
     createWindow()
     app.on('activate', () => {

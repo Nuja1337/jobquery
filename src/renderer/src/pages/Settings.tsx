@@ -13,7 +13,7 @@ import { useToast } from '@renderer/lib/toast'
 import { applyTheme, getStoredTheme, setOnboardingSkipped, type Theme } from '@renderer/lib/theme'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 import { ModelPicker } from '@renderer/components/ModelPicker'
-import { KEY_STORAGE_NOTE, KeyStorageWarning, ProviderForm, useKeyStorageWeak } from '@renderer/components/ProviderForm'
+import { KEY_STORAGE_NOTE, KeyStorageWarning, ProviderForm, describeLimits, useKeyStorageWeak } from '@renderer/components/ProviderForm'
 import { Badge, Button, Card, CardHeader, Checkbox, Chip, ErrorBlock, Field, IconButton, Input, Loading, Modal, NumberInput, Page, PageHeader, Segmented, Select, TD, TH, TagInput, Textarea, Toggle } from '@renderer/components/ui'
 
 const SECTIONS = [
@@ -155,7 +155,7 @@ export function SettingsPage(): React.JSX.Element {
           />
 
           <Card id="settings-budget">
-            <CardHeader title="Budgets" hint="JobPilot stops spending when a budget runs out. A budget of 0 means no limit." />
+            <CardHeader title="Budgets" hint="JobPilot stops spending when a budget runs out. A budget of 0 means no limit. Free and local providers never count toward these limits." />
             <div className="grid grid-cols-2 gap-4 p-4">
               <Field label="Daily budget (US dollars)" hint={draft.budget.dailyUsd === 0 ? 'No limit. Nothing stops spending until you set a budget.' : 'Enter 0 for no limit.'}>
                 <BudgetInput value={draft.budget.dailyUsd} step={0.1} onChange={(v) => set('budget', { dailyUsd: v })} />
@@ -390,7 +390,20 @@ function ProvidersCard({ providers, error, reload, onDeleted }: { providers: Pro
                   {PROVIDER_LABELS[p.kind]}
                   {p.baseUrl ? `, ${p.baseUrl}` : ''}
                 </p>
+                {describeLimits(p) && <p className="text-xs text-faint">{describeLimits(p)}</p>}
               </div>
+              <Badge
+                tone={p.kind === 'openrouter' || p.billing === 'free' ? 'info' : 'neutral'}
+                title={
+                  p.kind === 'openrouter'
+                    ? 'Models whose names end in ":free" cost nothing. Every other model is priced and counts toward your budget.'
+                    : p.billing === 'free'
+                      ? "This is a free tier or a model on this computer, so JobPilot doesn't count it toward your budget."
+                      : 'Each call is priced and counts toward your budget.'
+                }
+              >
+                {p.kind === 'openrouter' ? 'Free and paid models' : p.billing === 'free' ? 'Free' : 'Paid'}
+              </Badge>
               {p.hasKey ? (
                 <Badge tone="good">
                   <CheckCircle2 size={11} /> Key saved
@@ -465,7 +478,7 @@ function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; o
 
   return (
     <Card id="settings-prices">
-      <CardHeader title="Prices" hint="Prices are in US dollars per million tokens, and the spend numbers and budgets use them. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Ollama models are free." />
+      <CardHeader title="Prices" hint="Prices are in US dollars per million tokens, and the spend numbers and budgets use them. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Models on free providers are always $0." />
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr>

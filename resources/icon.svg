@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="JobPilot">
+  <title>JobPilot</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6c7cff"/>
+      <stop offset="1" stop-color="#3a45bd"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#bg)"/>
+  <!-- A letter J whose stem ends in an upward arrow. -->
+  <path d="M 600 400 V 640 A 150 150 0 0 1 450 790 H 390" fill="none" stroke="#ffffff" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 600 190 L 740 410 L 460 410 Z" fill="#ffffff" stroke="#ffffff" stroke-width="40" stroke-linejoin="round"/>
+</svg>

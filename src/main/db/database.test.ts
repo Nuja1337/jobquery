@@ -281,3 +281,53 @@ describe('migration 3', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })
+
+describe('migration 4', () => {
+  it('adds the free-tier columns to a version 3 database and marks local providers free', async () => {
+    const SQL = await initSqlJs()
+    const raw = new SQL.Database()
+    raw.exec(MIGRATIONS[0] as string)
+    raw.exec(MIGRATIONS[1] as string)
+    ;(MIGRATIONS[2] as (db: typeof raw) => void)(raw)
+    raw.run("INSERT INTO meta (key, value) VALUES ('schema_version', '3')")
+    const provider = (id: string, kind: string, baseUrl: string | null) =>
+      raw.run("INSERT INTO providers (id, kind, label, base_url, created_at) VALUES (?, ?, ?, ?, '2026-01-01T00:00:00.000Z')", [id, kind, id, baseUrl])
+    provider('ollama', 'ollama', null)
+    provider('lmstudio', 'openai_compatible', 'http://localhost:1234/v1')
+    provider('loopback', 'openai_compatible', 'http://127.0.0.1:8080/v1')
+    provider('openai', 'openai', null)
+    provider('groq', 'openai_compatible', 'https://api.groq.com/openai/v1')
+    provider('not-local', 'openai_compatible', 'https://localhost.example.com/v1')
+    raw.run(
+      "INSERT INTO llm_calls (id, at, task, stage, provider_kind, model) VALUES ('c1', '2026-01-02T00:00:00.000Z', 'triage', 'triage', 'ollama', 'llama'), ('c2', '2026-01-02T00:00:00.000Z', 'triage', 'triage', 'openai', 'gpt-5')"
+    )
+    raw.run(
+      "INSERT INTO jobs (id, source, external_id, canonical_key, content_hash, company, company_norm, title, url, description, discovered_at, stage, updated_at) VALUES ('j1', 'greenhouse', '1', 'k1', 'h', 'Acme', 'acme', 'Engineer', 'https://example.com', 'Text.', '2026-01-01T00:00:00.000Z', 'new', '2026-01-01T00:00:00.000Z')"
+    )
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const file = path.join(dir, 'v3.sqlite')
+    fs.writeFileSync(file, raw.export())
+
+    const db = await Db.open(file)
+    expect(db.schemaVersion).toBe(MIGRATIONS.length)
+    const billing = Object.fromEntries(db.all<{ id: string; billing: string }>('SELECT id, billing FROM providers').map((r) => [r.id, r.billing]))
+    // Only Ollama becomes free. A local address can be a proxy to a paid API, so it stays paid.
+    expect(billing).toEqual({ ollama: 'free', lmstudio: 'paid', loopback: 'paid', openai: 'paid', groq: 'paid', 'not-local': 'paid' })
+    expect(db.get('SELECT requests_per_minute AS m, requests_per_day AS d FROM providers WHERE id = :id', { id: 'groq' })).toEqual({ m: null, d: null })
+    expect(db.all('SELECT id, provider_id, free FROM llm_calls ORDER BY id')).toEqual([
+      { id: 'c1', provider_id: null, free: 1 },
+      { id: 'c2', provider_id: null, free: 0 }
+    ])
+    expect(db.get<{ triage_failures: number }>("SELECT triage_failures FROM jobs WHERE id = 'j1'")?.triage_failures).toBe(0)
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('gives a fresh database the same columns and defaults', async () => {
+    const db = await Db.open(null)
+    db.run("INSERT INTO providers (id, kind, label, created_at) VALUES ('p', 'openai', 'p', 'x')")
+    expect(db.get('SELECT billing, requests_per_minute AS m, requests_per_day AS d FROM providers')).toEqual({ billing: 'paid', m: null, d: null })
+    db.run("INSERT INTO llm_calls (id, at, task, stage, provider_kind, model) VALUES ('c', 'x', 't', 's', 'openai', 'm')")
+    expect(db.get('SELECT provider_id, free FROM llm_calls')).toEqual({ provider_id: null, free: 0 })
+  })
+})

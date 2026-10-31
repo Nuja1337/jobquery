@@ -120,6 +120,7 @@ export function createMockBridge(): Bridge {
   let progress: PipelineProgress = { runId: null, phase: 'idle', message: 'Idle', done: 0, total: 0 }
   let cancelled = false
   let extraSpend = 0
+  let freeCallsToday = 12
 
   const listeners = new Map<PushChannel, Set<(p: never) => void>>()
   function emit<C extends PushChannel>(channel: C, payload: PushEvents[C]): void {
@@ -181,7 +182,8 @@ export function createMockBridge(): Bridge {
       monthTokens: a.daily.reduce((s, d) => s + d.tokens, 0),
       dailyBudgetUsd: settings.budget.dailyUsd,
       monthlyBudgetUsd: settings.budget.monthlyUsd,
-      cacheHitsMonth: a.tokenSavings.cacheHits
+      cacheHitsMonth: a.tokenSavings.cacheHits,
+      freeCallsToday
     }
   }
 
@@ -224,6 +226,9 @@ export function createMockBridge(): Bridge {
         label: input.label,
         baseUrl: input.baseUrl ?? null,
         hasKey: input.apiKey ? true : (existing?.hasKey ?? false),
+        billing: input.billing ?? existing?.billing ?? (input.kind === 'ollama' ? 'free' : 'paid'),
+        requestsPerMinute: input.requestsPerMinute !== undefined ? input.requestsPerMinute : (existing?.requestsPerMinute ?? null),
+        requestsPerDay: input.requestsPerDay !== undefined ? input.requestsPerDay : (existing?.requestsPerDay ?? null),
         createdAt: existing?.createdAt ?? iso(0)
       }
       providers = existing ? providers.map((p) => (p.id === next.id ? next : p)) : [...providers, next]
@@ -585,7 +590,8 @@ export function createMockBridge(): Bridge {
       fresh.discoveredAt = iso(0)
       jobs.unshift(fresh)
       extraSpend += 0.018
-      const stats: RunStats = { discovered: 31, newJobs: 1, duplicates: 4, filteredOut: 12, prescoredOut: 14, scored: 0, shortlisted: 0, prepared: 0, submitted: 0, errors: 0, costUsd: 0.018, tokens: 9800, stoppedForBudget: false }
+      freeCallsToday += 9
+      const stats: RunStats = { discovered: 31, newJobs: 1, duplicates: 4, filteredOut: 12, prescoredOut: 14, scored: 0, shortlisted: 0, prepared: 0, submitted: 0, errors: 0, costUsd: 0.018, tokens: 9800, stoppedForBudget: false, stoppedForRateLimit: false }
       runs.unshift({ id: runId, trigger: options.trigger ?? 'manual', startedAt, finishedAt: iso(0), stats, error: null })
       addEvent('run_finished', null, cancelled ? 'Run cancelled.' : 'Run finished: 31 found, 1 new.')
       progress = { runId: null, phase: 'idle', message: 'Idle', done: 0, total: 0 }

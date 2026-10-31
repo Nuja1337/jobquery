@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ModelRef, ProviderInfo, ProviderKind } from '@shared/types'
 import { api } from '@renderer/lib/api'
-import { Input, Select } from './ui'
+import { Checkbox, Input, Select } from './ui'
 
 const cache = new Map<string, string[]>()
 
@@ -48,7 +48,15 @@ export function ModelPicker({ providers, value, onChange, suggested }: Props): R
   const providerId = value?.providerId ?? null
   const { models, loading, failed } = useModels(providerId)
   const current = value?.model ?? ''
-  const options = current && !models.includes(current) ? [current, ...models] : models
+  const provider = providers.find((p) => p.id === providerId)
+  const isOpenRouter = provider?.kind === 'openrouter'
+  // On by default for a free provider, so the list shows only models that cost nothing.
+  const [freeOnly, setFreeOnly] = useState(provider?.billing === 'free')
+  useEffect(() => {
+    setFreeOnly(provider?.billing === 'free')
+  }, [providerId, provider?.billing])
+  const filtered = isOpenRouter && freeOnly ? models.filter((m) => m.endsWith(':free')) : models
+  const options = current && !filtered.includes(current) ? [current, ...filtered] : filtered
 
   return (
     <div className="grid grid-cols-2 gap-2">
@@ -86,6 +94,15 @@ export function ModelPicker({ providers, value, onChange, suggested }: Props): R
           placeholder={failed ? 'Could not load models. Type a model name.' : 'Model name'}
           onChange={(e) => providerId && onChange({ providerId, model: e.target.value })}
         />
+      )}
+      {isOpenRouter && models.length > 0 && (
+        <div className="col-span-2">
+          <Checkbox
+            label={filtered.length === 0 ? 'Free models only (none in this list)' : 'Free models only'}
+            checked={freeOnly}
+            onChange={setFreeOnly}
+          />
+        </div>
       )}
     </div>
   )

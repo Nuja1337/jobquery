@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ArrowLeft, ArrowRight, Check, Rocket, Wand2 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { EMPTY_PROFILE, PROVIDER_LABELS, SUGGESTED_MODELS } from '@shared/defaults'
+import { EMPTY_PROFILE, PROVIDER_LABELS, PROVIDER_PRESETS, SUGGESTED_MODELS, type ProviderPreset } from '@shared/defaults'
 import type { JobPreferences, LlmStage, ModelRef, Profile, ProviderInfo, RemotePreference, Seniority } from '@shared/types'
 import { api, isDemo } from '@renderer/lib/api'
 import { useApp } from '@renderer/lib/app'
@@ -44,6 +44,7 @@ export function Onboarding(): React.JSX.Element {
   const [reading, setReading] = useState(false)
   const [resumeId, setResumeId] = useState<string | null>(null)
   const [samples, setSamples] = useState({ writing: 0, letters: 0 })
+  const [presetByProvider, setPresetByProvider] = useState<Record<string, ProviderPreset | undefined>>({})
 
   const providers = useAsync(() => api.listProviders(), [])
   const stored = useAsync(() => api.getProfile(), [])
@@ -59,18 +60,19 @@ export function Onboarding(): React.JSX.Element {
     if (stored.data && stored.data.version > 0) setProfile(stored.data.profile)
   }, [stored.data])
 
-  // Prefill each stage with the suggested model for the first provider.
+  // Prefill each stage with the preset's models for the first provider, or the kind's suggestions.
   useEffect(() => {
     const first = providers.data?.[0]
     if (!first) return
+    const presetModels = presetByProvider[first.id]?.models
     setRouting((cur) => {
       const next = { ...cur }
       for (const s of STAGES) {
-        if (!next[s.id]) next[s.id] = { providerId: first.id, model: SUGGESTED_MODELS[first.kind]?.[s.id] ?? '' }
+        if (!next[s.id]) next[s.id] = { providerId: first.id, model: presetModels?.[s.id] ?? SUGGESTED_MODELS[first.kind]?.[s.id] ?? '' }
       }
       return next
     })
-  }, [providers.data])
+  }, [providers.data, presetByProvider])
 
   const list: ProviderInfo[] = providers.data ?? []
   const last = step === STEPS.length - 1
@@ -175,7 +177,10 @@ export function Onboarding(): React.JSX.Element {
           <div className="mt-5 space-y-4">
             {step === 0 && (
               <>
-                <p className="text-sm text-muted">JobPilot uses your own AI account. Pick a provider, paste a key and test the connection.</p>
+                <p className="text-sm text-muted">JobPilot uses your own AI key. Choose a free option or a paid one, whichever suits you. You can add both and change this later in Settings.</p>
+                <Notice tone="info" title="A ChatGPT or Claude subscription is not an API key">
+                  Those subscriptions don't include API use, so JobPilot can't use them. If you don't have a card, start with a free option.
+                </Notice>
                 {list.length > 0 && (
                   <Card>
                     <ul className="divide-y divide-line">
@@ -185,7 +190,10 @@ export function Onboarding(): React.JSX.Element {
                             <p className="text-sm text-fg">{p.label}</p>
                             <p className="text-xs text-faint">{PROVIDER_LABELS[p.kind]}</p>
                           </div>
-                          <Badge tone="good">{p.hasKey ? 'Key saved' : 'Ready'}</Badge>
+                          <div className="flex items-center gap-1.5">
+                            <Badge tone={p.billing === 'free' ? 'info' : 'neutral'}>{p.billing === 'free' ? 'Free' : 'Paid'}</Badge>
+                            <Badge tone="good">{p.hasKey ? 'Key saved' : 'Ready'}</Badge>
+                          </div>
                         </li>
                       ))}
                     </ul>
@@ -193,7 +201,14 @@ export function Onboarding(): React.JSX.Element {
                 )}
                 <Card className="p-4">
                   <h2 className="mb-3 text-sm font-medium text-fg">{list.length > 0 ? 'Add another provider' : 'Add a provider'}</h2>
-                  <ProviderForm key={list.length} onSaved={() => providers.reload()} />
+                  <ProviderForm
+                    key={list.length}
+                    onSaved={(saved, _tested, presetId) => {
+                      const preset = PROVIDER_PRESETS.find((p) => p.id === presetId)
+                      if (preset) setPresetByProvider((cur) => ({ ...cur, [saved.id]: preset }))
+                      providers.reload()
+                    }}
+                  />
                 </Card>
               </>
             )}

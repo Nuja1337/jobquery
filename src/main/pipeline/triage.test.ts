@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BudgetExceededError } from '../llm/errors'
+import { BudgetExceededError, LlmFormatError, RateLimitedError } from '../llm/errors'
 import { makeProfile, makeRaw, makeTestEnv } from '../testing'
+import { scoreJobNow } from './actions'
 import { renderProfile } from '../writing/prompts'
 import { ingestRaw } from './ingest'
 import { scoreJobWithAi, toAssessment, triageJobs } from './triage'
@@ -137,5 +138,77 @@ describe('triageJobs', () => {
     const first = add(env, 'a')
     await scoreJobWithAi(env.ctx, first)
     await expect(scoreJobWithAi(env.ctx, add(env, 'b'))).rejects.toBeInstanceOf(BudgetExceededError)
+  })
+})
+
+describe('triage and provider limits', () => {
+  it('stops on a rate limit without counting a failure against any job', async () => {
+    const env = await setup({ fail: (prompt) => (prompt.includes('Engineer rl') ? new RateLimitedError('Too many requests.') : null) })
+    const jobs = [add(env, 'ok1'), add(env, 'rl'), add(env, 'ok2')]
+    const summary = await triageJobs(env.ctx, jobs, { concurrency: 1 })
+    expect(summary).toMatchObject({ scored: 1, errors: 0, stoppedForRateLimit: true, rateLimitMessage: 'Too many requests.', stoppedForBudget: false })
+    expect(env.ctx.jobs.get(jobs[2].id)!.stage).toBe('new')
+    for (const job of jobs) expect(env.ctx.jobs.get(job.id)!.triageFailures).toBe(0)
+  })
+
+  it('does not count a budget stop as a failure either', async () => {
+    const env = await setup()
+    const jobs = Array.from({ length: 4 }, (_, i) => add(env, `j${i}`))
+    env.ctx.settings.update({ budget: { dailyUsd: 0.0004 } })
+    const summary = await triageJobs(env.ctx, jobs, { concurrency: 1 })
+    expect(summary.stoppedForBudget).toBe(true)
+    for (const job of jobs) expect(env.ctx.jobs.get(job.id)!.triageFailures).toBe(0)
+  })
+})
+
+describe('provider errors during triage', () => {
+  it("don't count against the jobs and stop scoring after three", async () => {
+    const env = await setup({ fail: () => new Error('connect ECONNREFUSED 127.0.0.1:11434') })
+    const jobs = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => add(env, id))
+    const summary = await triageJobs(env.ctx, jobs, { concurrency: 1 })
+    expect(summary.errors).toBe(3)
+    expect(env.llmCalls).toHaveLength(3)
+    expect(summary.errorMessages.at(-1)).toMatch(/stopped after 3 errors/)
+    for (const job of jobs) expect(env.ctx.jobs.get(job.id)!.triageFailures).toBe(0)
+  })
+})
+
+describe('triage failure cap', () => {
+  const pick = (env: Awaited<ReturnType<typeof setup>>) => env.ctx.jobs.listByStage('new', { skipRepeatedTriageFailures: true })
+
+  it('counts failures, skips a job after three, and resets on success', async () => {
+    let broken = true
+    const env = await setup({ fail: (prompt) => (broken && prompt.includes('Engineer bad') ? new LlmFormatError('model said no', '') : null) })
+    const bad = add(env, 'bad')
+    const good = add(env, 'good')
+    for (let run = 1; run <= 3; run++) {
+      const picked = pick(env)
+      expect(picked.map((j) => j.id)).toContain(bad.id)
+      await triageJobs(env.ctx, picked, { concurrency: 1 })
+      expect(env.ctx.jobs.get(bad.id)!.triageFailures).toBe(run)
+    }
+    expect(env.ctx.jobs.get(good.id)!.stage).not.toBe('new')
+    expect(pick(env)).toHaveLength(0)
+    expect(env.ctx.jobs.listByStage('new')).toHaveLength(1)
+
+    // "Score now" ignores the cap, and a good score clears the count.
+    broken = false
+    const rescored = await scoreJobNow(env.ctx, bad.id)
+    expect(rescored.triageFailures).toBe(0)
+    expect(rescored.fitScore).not.toBeNull()
+  })
+
+  it('gives every job a fresh start when the profile changes in a way that affects fit', async () => {
+    const env = await setup({ fail: () => new LlmFormatError('model said no', '') })
+    const job = add(env, 'bad')
+    for (let i = 0; i < 3; i++) await triageJobs(env.ctx, pick(env), { concurrency: 1 })
+    expect(pick(env)).toHaveLength(0)
+    const profile = env.ctx.profile.get().profile
+    // Notes don't change the fit version, so the count stays.
+    env.ctx.profile.save({ ...profile, notesForAi: 'Prefers small teams.' })
+    expect(env.ctx.jobs.get(job.id)!.triageFailures).toBe(3)
+    env.ctx.profile.save({ ...profile, skills: [...profile.skills, 'Rust'] })
+    expect(env.ctx.jobs.get(job.id)!.triageFailures).toBe(0)
+    expect(pick(env)).toHaveLength(1)
   })
 })

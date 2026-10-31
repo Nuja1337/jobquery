@@ -89,7 +89,7 @@ export async function makeTestEnv(options: FakeModelOptions & { provider?: boole
     },
     clientFactory: fakeClientFactory(llmCalls, options, model)
   })
-  if (options.provider !== false) ctx.providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+  if (options.provider !== false) await ctx.providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
   return { ctx, pushed, llmCalls, model }
 }
 

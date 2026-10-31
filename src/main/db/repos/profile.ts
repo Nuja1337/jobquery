@@ -60,6 +60,8 @@ export class ProfileRepo {
        ON CONFLICT(id) DO UPDATE SET data = :data, version = :version, hash = :hash, updated_at = :at`,
       { data: JSON.stringify(profile), version, hash, at: now() }
     )
+    // A changed profile may fix a job that kept failing to score, so give every job a fresh start.
+    if (existing && version !== existing.version) this.db.run('UPDATE jobs SET triage_failures = 0 WHERE triage_failures != 0')
     return this.get()
   }
 }

@@ -11,7 +11,7 @@ import type {
 import type { AppContext } from '../context'
 import { SEARCH_SOURCES } from '../db/repos/jobs'
 import { emptyStats } from '../db/repos/runs'
-import { BudgetExceededError } from '../llm/errors'
+import { BudgetExceededError, RateLimitedError } from '../llm/errors'
 import { type TaskProvider, defaultTasks } from '../sources'
 import { mapLimit } from '../sources/http'
 import {
@@ -54,6 +54,8 @@ export class Pipeline {
   private running = false
   private abort: AbortController | null = null
   private progress: PipelineProgress = IDLE
+  /** Set once the run has written its rate limit note. */
+  private rateLimitNoted = false
 
   constructor(
     private readonly ctx: AppContext,
@@ -87,6 +89,7 @@ export class Pipeline {
   async run(options: RunOptions = {}): Promise<RunStats> {
     if (this.running) throw new Error('A run is already in progress.')
     this.running = true
+    this.rateLimitNoted = false
     this.abort = new AbortController()
     const signal = this.abort.signal
     const { ctx } = this
@@ -245,10 +248,12 @@ export class Pipeline {
   private async triage(stats: RunStats, signal: AbortSignal): Promise<void> {
     const { ctx } = this
     const { budget } = ctx.settings.get()
-    const jobs = ctx.jobs.listByStage('new', { orderBy: 'prescore', limit: budget.maxTriagePerRun })
+    // A job whose scoring failed three times with this profile waits for a profile change or "Score now".
+    const jobs = ctx.jobs.listByStage('new', { orderBy: 'prescore', limit: budget.maxTriagePerRun, skipRepeatedTriageFailures: true })
     if (jobs.length === 0) return
 
-    const status = ctx.llm.budgetStatus()
+    // The budget limits money spent. A free or local scoring model is not held back by it.
+    const status = ctx.llm.isFreeStage('triage') ? { ok: true, reason: null } : ctx.llm.budgetStatus()
     if (!status.ok) {
       stats.stoppedForBudget = true
       ctx.events.add('budget_stop', `${status.reason} ${plural(jobs.length, 'job')} waiting to be scored.`)
@@ -273,10 +278,27 @@ export class Pipeline {
       stats.stoppedForBudget = true
       ctx.events.add('budget_stop', `${result.budgetMessage} Scoring stopped after ${plural(result.scored, 'job')}.`, null, { scored: result.scored })
     }
+    if (result.stoppedForRateLimit) {
+      stats.stoppedForRateLimit = true
+      this.addRateLimitStop(jobs.length - result.scored - result.errors, 'job', result.rateLimitMessage)
+    }
     if (result.scored > 0) {
       ctx.events.add('scored', `Scored ${plural(result.scored, 'job')}. ${result.shortlisted} made the shortlist.`)
     }
     ctx.emit('jobs:changed', { jobIds: jobs.map((j) => j.id) })
+  }
+
+  /** Adds the one calm note per run about a provider limit. Later stops in the same run add nothing. */
+  private addRateLimitStop(waiting: number, noun: string, detail: string | null, jobId?: string): void {
+    if (this.rateLimitNoted) return
+    this.rateLimitNoted = true
+    const count = Math.max(0, waiting)
+    this.ctx.events.add(
+      'rate_limit_stop',
+      `Your AI provider's limit was reached, so ${plural(count, noun)} ${count === 1 ? 'waits' : 'wait'} for a later run.${detail ? ` ${detail}` : ''}`,
+      jobId ?? null,
+      { waiting: count }
+    )
   }
 
   // -------------------------------------------------------------------------
@@ -311,6 +333,11 @@ export class Pipeline {
         if (err instanceof BudgetExceededError) {
           stats.stoppedForBudget = true
           ctx.events.add('budget_stop', `${err.message} Preparing stopped after ${plural(stats.prepared, 'application')}.`, job.id)
+          break
+        }
+        if (err instanceof RateLimitedError) {
+          stats.stoppedForRateLimit = true
+          this.addRateLimitStop(jobs.length - done, 'application', err.message, job.id)
           break
         }
         stats.errors += 1

@@ -3,7 +3,7 @@ import { bucketFor } from '@shared/defaults'
 import type { FitAssessment, Job, JobPreferences, JobStage, Profile } from '@shared/types'
 import type { AppContext } from '../context'
 import { SCORE_MOVABLE_STAGES } from '../db/repos/jobs'
-import { BudgetExceededError, NoModelConfiguredError } from '../llm/errors'
+import { BudgetExceededError, LlmCancelledError, LlmFormatError, LlmRefusalError, NoModelConfiguredError, RateLimitedError } from '../llm/errors'
 import { trimDescription } from '../util/text'
 import { renderProfile } from '../writing/prompts'
 
@@ -120,6 +120,9 @@ export function toAssessment(raw: z.infer<typeof fitSchema>, shortlistScore: num
   }
 }
 
+/** Provider errors (not the job's fault) in one run before scoring stops. */
+const MAX_PROVIDER_ERRORS = 3
+
 export interface ScoreResult {
   job: Job
   /** False when the job already had a score for the current profile and nothing was sent. */
@@ -133,7 +136,7 @@ export interface ScoreResult {
  * Scores one job. A job already scored against the current profile version is not sent again unless
  * `force` is set. Moves the job to shortlisted or scored when it is still in an early stage.
  */
-export async function scoreJobWithAi(ctx: AppContext, job: Job, options: { force?: boolean } = {}): Promise<ScoreResult> {
+export async function scoreJobWithAi(ctx: AppContext, job: Job, options: { force?: boolean; signal?: AbortSignal } = {}): Promise<ScoreResult> {
   const { profile, version } = ctx.profile.get()
   const { thresholds, preferences } = ctx.settings.get()
   const stageFor = (score: number): JobStage | undefined =>
@@ -149,6 +152,7 @@ export async function scoreJobWithAi(ctx: AppContext, job: Job, options: { force
     task: 'triage',
     stage: 'triage',
     jobId: job.id,
+    signal: options.signal,
     promptVersion: TRIAGE_PROMPT_VERSION,
     system: TRIAGE_SYSTEM,
     context: triageContext(profile, preferences),
@@ -170,12 +174,15 @@ export interface TriageSummary {
   tokens: number
   stoppedForBudget: boolean
   budgetMessage: string | null
+  /** The provider's rate or daily limit was reached. Scoring stopped without counting a failure. */
+  stoppedForRateLimit: boolean
+  rateLimitMessage: string | null
   noModel: boolean
   /** First few error messages, for the activity log. */
   errorMessages: string[]
 }
 
-/** Scores jobs four at a time. Stops starting new jobs when the budget runs out or no model is set up. */
+/** Scores jobs four at a time. Stops starting new jobs when the budget runs out, the provider's limit is reached or no model is set up. */
 export async function triageJobs(
   ctx: AppContext,
   jobs: Job[],
@@ -189,14 +196,26 @@ export async function triageJobs(
     tokens: 0,
     stoppedForBudget: false,
     budgetMessage: null,
+    stoppedForRateLimit: false,
+    rateLimitMessage: null,
     noModel: false,
     errorMessages: []
   }
   let next = 0
   let done = 0
   let halted = false
+  // Errors from the provider rather than the job (it's down, the key is wrong, the network failed).
+  let providerErrors = 0
+  // Cancels calls still waiting for their turn when the run is cancelled or triage halts.
+  const stop = new AbortController()
+  const onAbort = () => stop.abort()
+  options.signal?.addEventListener('abort', onAbort, { once: true })
+  const halt = () => {
+    halted = true
+    stop.abort()
+  }
   const worker = async () => {
-    while (!halted && !options.signal?.aborted && next < jobs.length) {
+    while (!halted && !stop.signal.aborted && next < jobs.length) {
       const queued = jobs[next++]
       // The list was read when triage started. Skip a job the user dismissed (or that moved on) since.
       const job = ctx.jobs.get(queued.id)
@@ -206,7 +225,7 @@ export async function triageJobs(
         continue
       }
       try {
-        const result = await scoreJobWithAi(ctx, job)
+        const result = await scoreJobWithAi(ctx, job, { signal: stop.signal })
         summary.scored += 1
         summary.costUsd += result.costUsd
         summary.tokens += result.tokens
@@ -216,17 +235,35 @@ export async function triageJobs(
           ctx.events.add('shortlisted', `${job.title} at ${job.company} scored ${fit.score}. ${fit.summary}`, job.id, { score: fit.score })
         }
       } catch (err) {
-        if (err instanceof BudgetExceededError) {
-          halted = true
+        if (err instanceof LlmCancelledError) {
+          // Never sent. The job stays where it was for the next run.
+        } else if (err instanceof BudgetExceededError) {
+          halt()
           summary.stoppedForBudget = true
           summary.budgetMessage = err.message
+        } else if (err instanceof RateLimitedError) {
+          halt()
+          summary.stoppedForRateLimit = true
+          summary.rateLimitMessage ??= err.message
         } else if (err instanceof NoModelConfiguredError) {
-          halted = true
+          halt()
           summary.noModel = true
           summary.errorMessages.push(err.message)
-        } else {
+        } else if (err instanceof LlmFormatError || err instanceof LlmRefusalError) {
+          // The model couldn't handle this posting. That counts against the job.
+          ctx.jobs.recordTriageFailure(job.id)
           summary.errors += 1
           if (summary.errorMessages.length < 3) summary.errorMessages.push(`${job.title} at ${job.company}: ${(err as Error).message}`)
+        } else {
+          // The provider failed, not the job. Don't hold it against the job, and stop after a few
+          // in a row so a provider that's down doesn't burn through the whole list.
+          summary.errors += 1
+          providerErrors += 1
+          if (summary.errorMessages.length < 3) summary.errorMessages.push(`${job.title} at ${job.company}: ${(err as Error).message}`)
+          if (providerErrors >= MAX_PROVIDER_ERRORS) {
+            summary.errorMessages.push(`Scoring stopped after ${MAX_PROVIDER_ERRORS} errors from your AI provider. Check that it's running and the key works, then run again.`)
+            halt()
+          }
         }
       }
       done += 1
@@ -234,6 +271,10 @@ export async function triageJobs(
     }
   }
   const count = Math.max(1, Math.min(options.concurrency ?? TRIAGE_CONCURRENCY, jobs.length))
-  await Promise.all(Array.from({ length: count }, worker))
+  try {
+    await Promise.all(Array.from({ length: count }, worker))
+  } finally {
+    options.signal?.removeEventListener('abort', onAbort)
+  }
   return summary
 }

@@ -42,11 +42,13 @@ export function seeded(seed: number): () => number {
 }
 
 export const DEMO_PROVIDER_ID = 'prov_demo'
+export const DEMO_FREE_PROVIDER_ID = 'prov_gemini_free'
 
 export function initialProviders(): ProviderInfo[] {
   return [
-    { id: DEMO_PROVIDER_ID, kind: 'anthropic', label: 'Claude', baseUrl: null, hasKey: true, createdAt: iso(40 * DAY) },
-    { id: 'prov_local', kind: 'ollama', label: 'Local Ollama', baseUrl: 'http://localhost:11434/v1', hasKey: false, createdAt: iso(12 * DAY) }
+    { id: DEMO_PROVIDER_ID, kind: 'anthropic', label: 'Claude', baseUrl: null, hasKey: true, billing: 'paid', requestsPerMinute: null, requestsPerDay: null, createdAt: iso(40 * DAY) },
+    { id: DEMO_FREE_PROVIDER_ID, kind: 'gemini', label: 'Google Gemini (free tier)', baseUrl: null, hasKey: true, billing: 'free', requestsPerMinute: 10, requestsPerDay: 250, createdAt: iso(20 * DAY) },
+    { id: 'prov_local', kind: 'ollama', label: 'Local Ollama', baseUrl: 'http://localhost:11434/v1', hasKey: false, billing: 'free', requestsPerMinute: null, requestsPerDay: null, createdAt: iso(12 * DAY) }
   ]
 }
 
@@ -55,7 +57,7 @@ export function initialSettings(onboardingDone: boolean): Settings {
   s.onboardingDone = onboardingDone
   if (onboardingDone) {
     s.routing = {
-      triage: { providerId: DEMO_PROVIDER_ID, model: 'claude-haiku-5-5' },
+      triage: { providerId: DEMO_FREE_PROVIDER_ID, model: 'gemini-2.5-flash-lite' },
       writing: { providerId: DEMO_PROVIDER_ID, model: 'claude-sonnet-5-5' },
       extraction: { providerId: DEMO_PROVIDER_ID, model: 'claude-haiku-5-5' }
     }
@@ -237,6 +239,7 @@ interface JobSeed {
   starred?: boolean
   dismiss?: { reason: string | null; tags: string[] }
   desc?: string
+  triageFailures?: number
 }
 
 const DESC = (title: string, company: string, extra: string): string =>
@@ -304,7 +307,7 @@ const SEEDS: JobSeed[] = [
     desc: DESC('Frontend Engineer, Product', 'Juniper AI', 'You will build the interface for an AI research assistant.')
   },
   {
-    n: 14, company: 'Ember & Oak', title: 'Senior Software Engineer', location: 'Berlin', remote: 'onsite', source: 'adzuna', posted: 2 * DAY, discovered: 5 * HOUR, stage: 'new', prescore: 48
+    n: 14, company: 'Ember & Oak', title: 'Senior Software Engineer', location: 'Berlin', remote: 'onsite', source: 'adzuna', posted: 2 * DAY, discovered: 5 * HOUR, stage: 'new', prescore: 48, triageFailures: 3
   },
   {
     n: 15, company: 'Dovetail Works', title: 'Senior Software Engineer', location: 'Remote', remote: 'remote', salary: [70000, 80000], source: 'remotive', posted: 15 * DAY, discovered: 6 * DAY, stage: 'dismissed', prescore: 52,
@@ -370,6 +373,7 @@ export function initialJobs(): Job[] {
       dismissReason: s.dismiss?.reason ?? null,
       dismissTags: s.dismiss?.tags ?? [],
       dupOf: null,
+      triageFailures: s.triageFailures ?? 0,
       updatedAt: iso(s.discovered)
     }
     return job
@@ -516,6 +520,7 @@ export function initialEvents(): EventRecord[] {
   const e = (n: number, ago: number, type: EventRecord['type'], jobId: string | null, message: string): EventRecord => ({ id: `ev_${n}`, at: iso(ago), type, jobId, message, data: null })
   return [
     e(1, 8 * MIN, 'run_finished', null, 'Run finished: 31 found, 2 new, 1 scored, 1 prepared.'),
+    e(16, 8 * MIN + 30_000, 'rate_limit_stop', null, 'Google Gemini (free tier) reached its limit of 250 requests a day. The rest continues on the next run.'),
     e(2, 9 * MIN, 'prepared', 'job_2', 'Prepared an application for Staff Software Engineer, Platform at Lumen Health. One answer needs you.'),
     e(3, 11 * MIN, 'shortlisted', 'job_2', 'Lumen Health, Staff Software Engineer, Platform scored 88 (perfect fit).'),
     e(4, 14 * MIN, 'filtered', 'job_10', 'Mosaic Pay, Senior Engineer, Payments filtered out. Listed maximum salary is below your minimum.'),
@@ -541,7 +546,7 @@ export function initialSuggestions(): PreferenceSuggestion[] {
 }
 
 export function initialRuns(): RunRecord[] {
-  const stats = { discovered: 31, newJobs: 2, duplicates: 4, filteredOut: 12, prescoredOut: 13, scored: 1, shortlisted: 1, prepared: 1, submitted: 0, errors: 0, costUsd: 0.021, tokens: 14200, stoppedForBudget: false }
+  const stats = { discovered: 31, newJobs: 2, duplicates: 4, filteredOut: 12, prescoredOut: 13, scored: 1, shortlisted: 1, prepared: 1, submitted: 0, errors: 0, costUsd: 0.021, tokens: 14200, stoppedForBudget: false, stoppedForRateLimit: true }
   return [
     { id: 'run_1', trigger: 'schedule', startedAt: iso(16 * MIN), finishedAt: iso(8 * MIN), stats, error: null },
     { id: 'run_2', trigger: 'schedule', startedAt: iso(6 * HOUR + 16 * MIN), finishedAt: iso(6 * HOUR + 4 * MIN), stats: { ...stats, discovered: 44, newJobs: 7, scored: 6, shortlisted: 3, costUsd: 0.083, tokens: 61000 }, error: null }
@@ -633,7 +638,7 @@ export const MODEL_LISTS: Record<string, string[]> = {
   anthropic: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-4-5', 'claude-sonnet-4-6'],
   openai: ['gpt-5', 'gpt-5-mini', 'gpt-5-nano'],
   gemini: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
-  openrouter: ['anthropic/claude-sonnet-5-5', 'openai/gpt-5-mini', 'meta-llama/llama-3.3-70b-instruct'],
+  openrouter: ['anthropic/claude-sonnet-5-5', 'openai/gpt-5-mini', 'meta-llama/llama-3.3-70b-instruct', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemini-2.0-flash-exp:free', 'mistralai/mistral-small-3.2-24b-instruct:free'],
   ollama: ['llama3.1:8b', 'qwen2.5:14b', 'mistral:7b'],
   openai_compatible: ['default']
 }

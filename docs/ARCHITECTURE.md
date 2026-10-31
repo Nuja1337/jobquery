@@ -54,7 +54,11 @@ Postings a board no longer lists are closed. Saved searches can't tell when a po
 - Each pipeline step has its own model, so high-volume scoring can run on a cheap model while writing uses a stronger one.
 - The stable parts of each prompt (instructions, then the profile) come first and are marked for provider prompt caching. Only the job changes between scoring calls.
 - Every response is cached locally by a hash of the model, prompt version and inputs. A repeat request costs nothing.
-- Daily and monthly dollar caps are checked before every call. A run that hits a cap stops cleanly and says so.
+- Each provider is marked free or paid. Free tiers and local models cost $0 in the ledger and never count toward the caps. Ollama starts as free. Any other address, even one on this computer, starts as paid, since it can be a proxy to a paid API. OpenRouter serves free and paid models through one key, so there only model ids ending in `:free` are free.
+- Daily and monthly dollar caps are checked before every paid call. A run that hits a cap stops cleanly and says so, and free providers keep working.
+- A provider can have a requests-per-minute and a requests-per-day limit. Calls are spaced to stay under the first. Reaching the second, or a 429 from the provider, pauses AI work until the next run. It doesn't count against the job.
+- A job the model fails on three times (a reply that can't be read, or a refusal) is skipped until the profile, the scoring model or a provider changes, or the user scores it by hand. Errors from the provider itself, such as a stopped Ollama or a wrong key, don't count against the job, and scoring stops for the run after three of them.
+- Cancelling a run also cancels calls still waiting for their turn under a rate limit.
 - Every call is written to the `llm_calls` ledger with its tokens and cost, which feeds the analytics screen.
 
 ## Writing that reads like the person

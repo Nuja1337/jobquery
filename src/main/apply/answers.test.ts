@@ -46,7 +46,7 @@ async function deps() {
   const db = await Db.open(null)
   const settings = new SettingsRepo(db)
   const providers = new ProvidersRepo(db, testVault)
-  providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+  await providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
   const llm = new LlmService(db, settings, providers, () => fake)
   return {
     llm,

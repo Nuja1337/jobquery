@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RawJob, SubmitResult } from '@shared/types'
+import { LlmFormatError, RateLimitedError } from '../llm/errors'
 import type { DiscoveryTask } from '../sources'
 import { type TestEnv, makeProfile, makeRaw, makeTestEnv } from '../testing'
 import { Pipeline, ingestJob, restageForShortlist } from './orchestrator'
@@ -122,6 +123,50 @@ describe('Pipeline', () => {
     const again = await env.pipeline.run({})
     expect(again.stoppedForBudget).toBe(true)
     expect(env.llmCalls).toHaveLength(calls)
+  })
+
+  it('stops for a provider rate limit with one calm event and no errors', async () => {
+    const jobs = () => Array.from({ length: 8 }, (_, i) => makeRaw({ externalId: `j${i}`, title: 'Software Engineer', description: `${TS_DESCRIPTION} Variant ${i}.` }))
+    const env = await setup(jobs, { fail: (prompt) => (prompt.includes('Variant 2.') ? new RateLimitedError('The provider said it received too many requests.') : null) })
+    const stats = await env.pipeline.run({})
+    expect(stats.stoppedForRateLimit).toBe(true)
+    expect(stats.stoppedForBudget).toBe(false)
+    expect(stats.errors).toBe(0)
+    expect(stats.scored).toBeLessThan(8)
+    const stop = env.ctx.events.list({ limit: 50, types: ['rate_limit_stop'] })
+    expect(stop).toHaveLength(1)
+    expect(stop[0].message).toMatch(/^Your AI provider's limit was reached, so \d+ jobs? waits? for a later run\./)
+    expect(env.ctx.events.list({ limit: 50, types: ['error'] })).toHaveLength(0)
+    expect(env.ctx.runs.list(1)[0].stats.stoppedForRateLimit).toBe(true)
+    // No job was marked as failing, so the next run picks them all up again.
+    for (const job of env.ctx.jobs.listByStage('new')) expect(job.triageFailures).toBe(0)
+  })
+
+  it('skips a job after three failed scoring attempts', async () => {
+    const jobs = () => [
+      makeRaw({ externalId: 'bad', title: 'Software Engineer', description: `${TS_DESCRIPTION} Broken marker.` }),
+      makeRaw({ externalId: 'fine', title: 'Software Engineer', description: `${TS_DESCRIPTION} Fine.` })
+    ]
+    const env = await setup(jobs, { fail: (prompt) => (prompt.includes('Broken marker') ? new LlmFormatError('model said no', '') : null) })
+    for (let run = 0; run < 3; run++) await env.pipeline.run({})
+    expect(stage(env, 'bad')).toMatchObject({ stage: 'new', triageFailures: 3 })
+    const calls = env.llmCalls.length
+    const fourth = await env.pipeline.run({})
+    expect(fourth.errors).toBe(0)
+    expect(env.llmCalls).toHaveLength(calls)
+  })
+
+  it('keeps scoring on a free provider after the budget is used up', async () => {
+    const jobs = () => Array.from({ length: 4 }, (_, i) => makeRaw({ externalId: `j${i}`, title: 'Software Engineer', description: `${TS_DESCRIPTION} Variant ${i}.` }))
+    const env = await setup(jobs)
+    env.ctx.settings.update({ budget: { dailyUsd: 0.0004 } })
+    const free = await env.ctx.providers.save({ kind: 'gemini', label: 'Gemini', apiKey: 'k', billing: 'free' })
+    const ref = { providerId: free.id, model: 'gemini-2.5-flash' }
+    env.ctx.settings.update({ routing: { triage: ref, writing: ref, extraction: ref } })
+    const stats = await env.pipeline.run({})
+    expect(stats.stoppedForBudget).toBe(false)
+    expect(stats.scored).toBe(4)
+    expect(stats.costUsd).toBe(0)
   })
 
   it('reports a missing AI model instead of failing', async () => {

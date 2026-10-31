@@ -207,8 +207,37 @@ export const MIGRATIONS: Migration[] = [
   ALTER TABLE applications ADD COLUMN submit_clicked_at TEXT;
   `,
 
-  /* 3: last_seen_at and dismissed_at, board-based job keys, full-description content hashes */ migrateJobKeysAndHashes
+  /* 3: last_seen_at and dismissed_at, board-based job keys, full-description content hashes */ migrateJobKeysAndHashes,
+
+  /* 4: free-tier providers (billing, request limits), per-call provider id and free flag, scoring failure count */ addFreeTierColumns
 ]
+
+/**
+ * Adds billing and request limits to providers, provider_id and free to llm_calls, and
+ * triage_failures to jobs. Ollama and any provider whose address is on this computer become
+ * 'free'. Everything else stays 'paid', which is what the app assumed before.
+ */
+function addFreeTierColumns(db: Database): void {
+  db.exec(`
+    ALTER TABLE providers ADD COLUMN billing TEXT NOT NULL DEFAULT 'paid';
+    ALTER TABLE providers ADD COLUMN requests_per_minute INTEGER;
+    ALTER TABLE providers ADD COLUMN requests_per_day INTEGER;
+    ALTER TABLE llm_calls ADD COLUMN provider_id TEXT;
+    ALTER TABLE llm_calls ADD COLUMN free INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN triage_failures INTEGER NOT NULL DEFAULT 0;
+    UPDATE llm_calls SET free = 1 WHERE provider_kind = 'ollama';
+    CREATE INDEX idx_llm_calls_provider ON llm_calls(provider_id, at);
+  `)
+  const rows: Array<{ id: string; kind: string; base_url: string | null }> = []
+  const select = db.prepare('SELECT id, kind, base_url FROM providers')
+  while (select.step()) rows.push(select.getAsObject() as unknown as { id: string; kind: string; base_url: string | null })
+  select.free()
+  // Only Ollama becomes free. Another local address can be a proxy to a paid API, so it stays paid
+  // until the user marks it free.
+  for (const row of rows) {
+    if (row.kind === 'ollama') db.run("UPDATE providers SET billing = 'free' WHERE id = ?", [row.id])
+  }
+}
 
 interface KeyRow {
   id: string
