@@ -4,7 +4,7 @@
   "private": true,
   "description": "Local-first desktop app that finds jobs that fit you, writes your applications in your own voice with your own AI key, and tracks everything you applied to.",
   "main": "./out/main/index.js",
-  "author": "ajshaham1337",
+  "author": "Nuja1337",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",

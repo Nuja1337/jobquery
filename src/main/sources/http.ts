@@ -1,4 +1,4 @@
-export const USER_AGENT = 'JobPilot/0.1 (+https://github.com/ajshaham1337/jobpilot)'
+export const USER_AGENT = 'JobPilot/0.1 (+https://github.com/Nuja1337/jobpilot)'
 
 const DEFAULT_TIMEOUT_MS = 20_000
 /** Minimum gap between two requests to the same host. */

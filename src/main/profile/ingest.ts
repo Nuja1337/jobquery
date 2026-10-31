@@ -49,7 +49,7 @@ export function copyIntoAppData(filePath: string, documentsDir: string, id: stri
 /** Fetches a portfolio or personal site and keeps its readable text. */
 export async function fetchUrlText(url: string): Promise<{ title: string; text: string }> {
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'JobPilot/0.1 (+https://github.com/ajshaham1337/jobpilot)' },
+    headers: { 'User-Agent': 'JobPilot/0.1 (+https://github.com/Nuja1337/jobpilot)' },
     signal: AbortSignal.timeout(20_000)
   })
   if (!res.ok) throw new Error(`Could not load ${url} (HTTP ${res.status}).`)

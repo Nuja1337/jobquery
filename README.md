@@ -38,7 +38,7 @@ Filling a job application needs a real browser with your logins, on your own int
 You need [Node.js](https://nodejs.org) 22 or later and Chrome or Edge.
 
 ```bash
-git clone https://github.com/ajshaham1337/jobpilot.git
+git clone https://github.com/Nuja1337/jobpilot.git
 cd jobpilot
 npm install
 npm run dev
