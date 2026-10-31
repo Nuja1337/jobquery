@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { BrowserWindow, dialog, shell, type IpcMain } from 'electron'
+import { BrowserWindow, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 import type { Api, PushChannel, PushEvents } from '@shared/api'
 import type { Application, ApplicationOutcome, DocumentKind, Job, SubmitResult } from '@shared/types'
 import { answerFields, type AnswerDeps } from './apply/answers'
@@ -34,7 +34,7 @@ export interface IpcDeps {
   emit: <C extends PushChannel>(channel: C, payload: PushEvents[C]) => void
   appVersion: string
   /** Only frames showing the app's own page may call the API. */
-  isTrustedSender: (url: string) => boolean
+  isTrustedSender: (event: IpcMainInvokeEvent) => boolean
 }
 
 const SAMPLE_KINDS: DocumentKind[] = ['cover_letter_sample', 'writing_sample']
@@ -570,8 +570,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
 export async function registerIpc(deps: IpcDeps): Promise<Shutdown> {
   const { api, shutdown } = await createServices(deps)
   deps.ipcMain.handle('api', async (event, method: string, args: unknown[]) => {
-    const sender = event.senderFrame?.url ?? ''
-    if (!deps.isTrustedSender(sender)) {
+    if (!deps.isTrustedSender(event)) {
       return { ok: false, error: 'Calls are only accepted from the JobPilot window.', name: 'Forbidden' }
     }
     if (!Object.prototype.hasOwnProperty.call(api, method)) {

@@ -33,8 +33,21 @@ export class Db {
   static async open(filePath: string | null, options: { saveDelayMs?: number } = {}): Promise<Db> {
     const SQL = await initSqlJs()
     let db: Database
+    const load = (file: string): Database => {
+      const loaded = new SQL.Database(fs.readFileSync(file))
+      // sql.js reads lazily, so query once to find out now whether the file is usable.
+      loaded.exec('SELECT count(*) FROM sqlite_master')
+      return loaded
+    }
     if (filePath && fs.existsSync(filePath)) {
-      db = new SQL.Database(fs.readFileSync(filePath))
+      try {
+        db = load(filePath)
+      } catch (err) {
+        // A save that failed between writing the temp file and renaming it leaves a good copy there.
+        const tmp = `${filePath}.tmp`
+        if (!fs.existsSync(tmp)) throw err
+        db = load(tmp)
+      }
     } else {
       db = new SQL.Database()
     }
@@ -101,8 +114,11 @@ export class Db {
       result = fn()
       this.db.exec('COMMIT')
     } catch (err) {
-      this.db.exec('ROLLBACK')
-      this.inTransaction = false
+      try {
+        this.db.exec('ROLLBACK')
+      } finally {
+        this.inTransaction = false
+      }
       throw err
     }
     // Clear the flag before scheduling the save, or markDirty would skip it.
@@ -150,12 +166,20 @@ export class Db {
     // Write to a temp file first so a crash mid-write never corrupts the real file.
     const tmp = `${this.filePath}.tmp`
     fs.writeFileSync(tmp, data)
-    try {
-      fs.renameSync(tmp, this.filePath)
-    } catch {
-      // Windows can refuse a rename while another program (an antivirus scan) holds the file.
-      fs.copyFileSync(tmp, this.filePath)
-      fs.rmSync(tmp, { force: true })
+    // Windows can refuse a rename for a moment while another program (an antivirus scan) holds
+    // the file. Retry briefly. If it still fails, the timer retries the whole save later, and the
+    // real file is never left half written.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(tmp, this.filePath)
+        break
+      } catch (err) {
+        if (attempt >= 4) throw err
+        const until = Date.now() + 50 * (attempt + 1)
+        while (Date.now() < until) {
+          // Short synchronous wait. flush() must stay synchronous so it can run during quit.
+        }
+      }
     }
     this.dirty = false
     this.dirtySince = null

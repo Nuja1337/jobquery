@@ -111,11 +111,6 @@ export async function answerFields(
       continue
     }
 
-    if (isCoverLetterField(field) && (field.type === 'textarea' || field.type === 'text')) {
-      results.set(field.key, blank(field, { value: coverLetter ?? '', source: 'ai', confidence: coverLetter ? 0.9 : 0, needsUser: !coverLetter && field.required }))
-      continue
-    }
-
     // AI-use, legal and consent questions: only the user's own saved answer may fill them.
     // This runs before regenerate on purpose, so a click on Regenerate can't hand them to the AI.
     const ask = mustAskUser(field)
@@ -128,6 +123,11 @@ export async function answerFields(
       } else {
         results.set(field.key, blank(field, { source: 'settings', needsUser: true, note: ask }))
       }
+      continue
+    }
+
+    if (isCoverLetterField(field) && (field.type === 'textarea' || field.type === 'text')) {
+      results.set(field.key, blank(field, { value: coverLetter ?? '', source: 'ai', confidence: coverLetter ? 0.9 : 0, needsUser: !coverLetter && field.required }))
       continue
     }
 

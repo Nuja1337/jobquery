@@ -525,7 +525,7 @@ function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends Sectio
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
             <div>
               <p className="text-fg">Auto-submit sends real applications in your name. Turn it on only after you trust the drafts.</p>
-              <p className="mt-1">Guardrails apply when it is on. It only submits jobs that score {draft.thresholds.autoSubmitScore} or more, never more than {a.dailySubmitCap} a day, and never when an answer is flagged for you. Try dry run first.</p>
+              <p className="mt-1">Guardrails apply when it is on. It only submits jobs that score {draft.thresholds.autoSubmitScore} or more, never more than {a.dailySubmitCap} a day, and never when an answer is flagged for you. Consent boxes, terms and questions about AI use are always flagged unless you saved your own answer for them in the answer bank. Try dry run first.</p>
             </div>
           </div>
           <div className={clsx('mt-4 grid grid-cols-2 gap-4', !a.autoSubmit && 'opacity-60')}>

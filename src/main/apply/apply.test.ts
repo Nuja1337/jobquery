@@ -223,7 +223,13 @@ describe('questions only the person can answer', () => {
   })
 
   it('leaves ordinary AI skills questions to the writer', () => {
-    for (const label of ['How would you apply AI to our product?', 'Describe your experience building with LLMs', 'Why do you want to work on Claude?']) {
+    for (const label of [
+      'How would you apply AI to our product?',
+      'Describe your experience building with LLMs',
+      'Why do you want to work on Claude?',
+      'What AI application are you most proud of building?',
+      'Tell us about your experience applying AI to search'
+    ]) {
       expect(mustAskUser(f(label, 'textarea')), label).toBeNull()
     }
   })
@@ -234,6 +240,7 @@ describe('questions only the person can answer', () => {
     expect(mustAskUser(f('I certify that the information above is true and complete', 'checkbox'))).not.toBeNull()
     expect(mustAskUser(f('Agreement to Arbitrate', 'select'))).not.toBeNull()
     expect(mustAskUser(f('First name'))).toBeNull()
+    expect(mustAskUser(f('Cover letter (no AI-generated text)', 'textarea'))).not.toBeNull()
   })
 })
 

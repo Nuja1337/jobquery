@@ -80,4 +80,18 @@ describe('Db saving', () => {
     reopened.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }, 10_000)
+
+  it('opens the temp copy when the main file is damaged', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const file = path.join(dir, 'damaged.sqlite')
+    const db = await Db.open(file)
+    db.run("INSERT INTO settings (key, value) VALUES ('kept', 'yes')")
+    db.close()
+    fs.copyFileSync(file, `${file}.tmp`)
+    fs.writeFileSync(file, 'not a database')
+    const reopened = await Db.open(file)
+    expect(reopened.get<{ value: string }>("SELECT value FROM settings WHERE key = 'kept'")?.value).toBe('yes')
+    reopened.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
 })

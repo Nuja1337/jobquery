@@ -1,6 +1,6 @@
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
+import { fileURLToPath } from 'node:url'
+import { app, BrowserWindow, ipcMain, safeStorage, shell, type IpcMainInvokeEvent } from 'electron'
 import type { PushChannel, PushEvents } from '@shared/api'
 import { createSafeStorageVault } from './secrets'
 import { appPaths } from './paths'
@@ -12,10 +12,21 @@ let shutdown: Shutdown | null = null
 const rendererIndex = path.join(__dirname, '../renderer/index.html')
 const devUrl = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
 
-/** True only for the app's own pages. Anything else must never reach the API bridge. */
+/** True only for the app's own page. Compares origins and file paths, not raw URL strings. */
 function isAppUrl(url: string): boolean {
-  if (devUrl && url.startsWith(devUrl)) return true
-  return url.split('#')[0] === pathToFileURL(rendererIndex).href
+  try {
+    const target = new URL(url)
+    if (devUrl) return target.origin === new URL(devUrl).origin
+    if (target.protocol !== 'file:') return false
+    return path.resolve(fileURLToPath(target)).toLowerCase() === path.resolve(rendererIndex).toLowerCase()
+  } catch {
+    return false
+  }
+}
+
+/** Only the main frame of the app's own window may call the API. */
+function isTrustedSender(event: IpcMainInvokeEvent): boolean {
+  return mainWindow !== null && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && event.senderFrame === event.sender.mainFrame
 }
 
 function emit<C extends PushChannel>(channel: C, payload: PushEvents[C]): void {
@@ -85,7 +96,7 @@ if (!gotLock) {
     // JOBPILOT_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
     const paths = appPaths(process.env.JOBPILOT_DATA_DIR || app.getPath('userData'))
     const vault = createSafeStorageVault(safeStorage)
-    shutdown = await registerIpc({ ipcMain, paths, vault, emit, appVersion: app.getVersion(), isTrustedSender: isAppUrl })
+    shutdown = await registerIpc({ ipcMain, paths, vault, emit, appVersion: app.getVersion(), isTrustedSender })
     createWindow()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

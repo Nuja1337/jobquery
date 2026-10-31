@@ -100,7 +100,7 @@ const HEARD_ABOUT: Partial<Record<SourceKind, string>> = {
 }
 
 const AI_TERMS = /\b(ai|a\.i\.|genai|gen ai|generative ai|artificial intelligence|llms?|large language models?|chatgpt|gpt-?\d*|copilot|claude|gemini|machine[- ]generated)\b/i
-const APPLICATION_TERMS = /\b(polic(y|ies)|disclos\w*|application|this form|cover letter|resume|cv|submission|your (answers|responses)|(prepar|complet|writ|draft|fill)\w* (this|your|the)\b)/i
+const APPLICATION_TERMS = /\b(polic(y|ies)|disclos\w*|(your|this|the|my) application|this form|cover letter|resume|cv|submission|your (answers|responses)|(prepar|complet|writ|draft|fill)\w* (this|your|the)\b)/i
 const LEGAL_TERMS = /arbitrat|non-?compete|non-?solicit|legal agreement|terms of (the )?agreement|terms of (service|use)|terms (and|&) conditions|\bwaive|\bwaiver\b|\bcertify\b|\battest|\bi declare\b|under penalty|true,? (complete|accurate) and|true and (complete|correct|accurate)|\bi (agree|consent|acknowledge|confirm|understand)\b|privacy (policy|notice)|data (processing|retention|protection)|\bgdpr\b/i
 
 /**

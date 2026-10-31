@@ -99,6 +99,18 @@ describe('job actions', () => {
     expect(env.ctx.jobs.get(job.id)?.stage).toBe('shortlisted')
   })
 
+  it('withdraws an unsent application on dismiss and brings it back on restore', async () => {
+    const env = await setup()
+    const job = ingestRaw(env.ctx, makeRaw({ title: 'Software Engineer' })).job
+    const app = env.ctx.applications.create(job.id)
+    env.ctx.applications.update(app.id, { status: 'ready' })
+    dismissJob(env.ctx, job.id, null, [])
+    expect(env.ctx.applications.get(app.id)?.status).toBe('withdrawn')
+    expect(env.ctx.applications.listReady()).toHaveLength(0)
+    restoreJob(env.ctx, job.id)
+    expect(env.ctx.applications.get(app.id)?.status).toBe('needs_attention')
+  })
+
   it('scores a filtered-out job when asked', async () => {
     const env = await setup()
     env.ctx.settings.update({ preferences: { excludeTitleKeywords: ['intern'] } })

@@ -27,6 +27,12 @@ export function restoreJob(ctx: AppContext, id: string): void {
   const job = ctx.jobs.get(id)
   if (!job) throw new Error('That job no longer exists.')
   ctx.jobs.restore(id, ctx.settings.get().thresholds.shortlistScore)
+  // Dismissing withdrew any unsent application. Bring it back so it can be reviewed and sent.
+  const app = ctx.applications.getByJob(id)
+  if (app && app.status === 'withdrawn' && !app.submittedAt) {
+    ctx.applications.update(app.id, { status: 'needs_attention', error: 'Restored after being dismissed. Check it before sending.' })
+    ctx.emit('applications:changed', { applicationIds: [app.id] })
+  }
   ctx.events.add('restored', `Restored ${job.title} at ${job.company}.`, id)
   changed(ctx, id)
 }
