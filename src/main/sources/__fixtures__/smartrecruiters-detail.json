@@ -1,0 +1,43 @@
+{
+ "id": "744000158320111",
+ "name": "Senior / Lead Engineering Operations Manager",
+ "company": {
+  "name": "SmartRecruiters Inc",
+  "identifier": "smartrecruiters"
+ },
+ "releasedDate": "2026-10-28T15:14:43.941Z",
+ "location": {
+  "city": "Poland",
+  "region": "Remote",
+  "country": "pl",
+  "remote": true,
+  "hybrid": false,
+  "fullLocation": "Poland, Remote, Poland"
+ },
+ "typeOfEmployment": {
+  "id": "permanent",
+  "label": "Full-time"
+ },
+ "postingUrl": "https://jobs.smartrecruiters.com/smartrecruiters/744000158320111-senior-lead-engineering-operations-manager",
+ "applyUrl": "https://jobs.smartrecruiters.com/smartrecruiters/744000158320111-senior-lead-engineering-operations-manager?oga=true",
+ "jobAd": {
+  "sections": {
+   "companyDescription": {
+    "title": "Company Description",
+    "text": "<p>SmartRecruiters is the Recruiting AI Company that transforms hiring for the world’s leading enterprises. Built for global scale, SmartRecruiters, an SAP company, delivers an AI-powered hiring platform that automates and optimizes the entire talent acquisition process, ensuring faster and smarter hiring decisions. More than 4,000 companies, including Amazon, Visa, and McDonald's, rely on SmartRecruiters to build winning teams. In 2025, SmartRecruiters joined SAP, the global leader in enterprise applications. Together, SmartRecruiters and SAP are accelerating the reinvention of hiring by comb"
+   },
+   "jobDescription": {
+    "title": "Job Description",
+    "text": "<p>Our Product and Engineering (R&amp;D) org consists of 500+ professionals, organized in Groups and Squads, coming from two different companies and using different ways of working. We are seeking Engineering Operations Managers to join a dedicated team supporting our organization, processes, and tooling. If you are passionate about continuous improvements and operational excellence, impact driven organizational and process design, execution, data and insights, we want to hear from you.</p><p>Engineering Operations helps R&amp;D solve complex challenges related to our multi-product, multi-orga"
+   },
+   "qualifications": {
+    "title": "Qualifications",
+    "text": "<ul><li>Significant experience from similar role(s) in software product organizations (e.g. technical program management, product leadership, engineering management, engineering operations, release management, organizational coaching)</li><li>In-depth understanding of modern development patterns, practices and tools used in software and digital product development</li><li>Strong analytical skills with the ability to use data to understand, take decisions, inspire, drive change, and assess impact</li><li>Exceptional English communication and interpersonal skills</li><li>Ability to use systems t"
+   },
+   "additionalInformation": {
+    "title": "Additional Information",
+    "text": "<p>SmartRecruiters is proud to be an Equal Employment Opportunity employer. We do not discriminate based upon race, religion, color, national origin, gender (including pregnancy, childbirth, or related medical conditions), sexual orientation, gender identity, gender expression, age, status as a protected veteran, status as an individual with a disability, or other applicable legally protected characteristics</p>"
+   }
+  }
+ }
+}

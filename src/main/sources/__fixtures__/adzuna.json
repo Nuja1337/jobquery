@@ -1,0 +1,45 @@
+{
+ "count": 2,
+ "results": [
+  {
+   "id": "4890123456",
+   "title": "Senior Software Engineer",
+   "description": "We are looking for a Senior Software Engineer to join our platform team. You will build APIs in TypeScript...",
+   "created": "2026-10-25T08:30:00Z",
+   "redirect_url": "https://www.adzuna.com/land/ad/4890123456",
+   "company": {
+    "display_name": "Acme Corp"
+   },
+   "location": {
+    "display_name": "Austin, Travis County",
+    "area": [
+     "US",
+     "Texas",
+     "Travis County",
+     "Austin"
+    ]
+   },
+   "salary_min": 140000,
+   "salary_max": 180000,
+   "salary_is_predicted": "0",
+   "contract_time": "full_time",
+   "contract_type": "permanent"
+  },
+  {
+   "id": "4890123999",
+   "title": "Data Analyst",
+   "description": "Analyse sales data and build dashboards.",
+   "created": "2026-10-20T12:00:00Z",
+   "redirect_url": "https://www.adzuna.com/land/ad/4890123999",
+   "company": {
+    "display_name": "Globex"
+   },
+   "location": {
+    "display_name": "Remote"
+   },
+   "salary_min": 52000,
+   "salary_max": 52000,
+   "salary_is_predicted": "1"
+  }
+ ]
+}

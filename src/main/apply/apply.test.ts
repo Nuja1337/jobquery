@@ -1,0 +1,192 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { chromium, type Browser, type Page } from 'playwright-core'
+import { DEFAULT_SETTINGS, EMPTY_PROFILE } from '@shared/defaults'
+import type { PreparedAnswer, Profile } from '@shared/types'
+import { readForm } from './browser'
+import { isCoverLetterField, isLongAnswer, mapKnownField, pickOption } from './fieldMap'
+import { fillForm, matchAnswers, readComboboxOptions, toFormField } from './fill'
+import { clickSubmit, waitForOutcome } from './submit'
+
+// A form shaped like the ones Greenhouse, Lever and Ashby render: labels tied by "for", a label
+// wrapping its input, a fieldset of radios, a hidden file input, a custom combobox, a consent box.
+const FORM_HTML = `<!doctype html><html><body>
+<form id="app" novalidate>
+  <div class="field"><label for="first_name">First Name *</label><input id="first_name" name="first_name" required></div>
+  <div class="field"><label for="last_name">Last Name *</label><input id="last_name" name="last_name" required></div>
+  <div class="field"><label for="email">Email *</label><input id="email" name="email" type="email" required></div>
+  <div class="field"><label>Phone<input name="phone" type="tel"></label></div>
+  <div class="field"><label for="resume">Resume/CV *</label><input id="resume" name="resume" type="file" style="display:none" required></div>
+  <div class="field"><div class="label">LinkedIn Profile</div><input name="question_1" aria-label="LinkedIn Profile"></div>
+  <div class="field"><label for="auth">Are you legally authorized to work in the United States? *</label>
+    <select id="auth" name="question_2" required><option value="">Select...</option><option value="1">Yes</option><option value="0">No</option></select></div>
+  <fieldset><legend>Will you now or in the future require visa sponsorship? *</legend>
+    <label><input type="radio" name="question_3" value="y"> Yes</label>
+    <label><input type="radio" name="question_3" value="n"> No</label></fieldset>
+  <div class="field"><label for="why">Why do you want to work at Acme? *</label><textarea id="why" name="question_4" maxlength="1500" required></textarea></div>
+  <div class="field"><label id="gender_label">Gender</label>
+    <input id="gender" role="combobox" aria-labelledby="gender_label" aria-autocomplete="list">
+    <ul id="gender_list" role="listbox" style="display:none">
+      <li role="option">Male</li><li role="option">Female</li><li role="option">Decline to self-identify</li></ul></div>
+  <div class="field"><label><input type="checkbox" name="consent" required> I agree to the privacy policy</label></div>
+  <button type="submit">Submit Application</button>
+</form>
+<div id="done" style="display:none">Thank you for applying to Acme.</div>
+<script>
+  const g = document.getElementById('gender'); const list = document.getElementById('gender_list');
+  g.addEventListener('click', () => { list.style.display = 'block'; });
+  g.addEventListener('keydown', (e) => { if (e.key === 'Escape') list.style.display = 'none'; });
+  list.querySelectorAll('[role=option]').forEach((o) => o.addEventListener('click', () => { g.value = o.textContent; list.style.display = 'none'; }));
+  document.getElementById('app').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const missing = [...document.querySelectorAll('[required]')].filter((el) => el.type === 'checkbox' ? !el.checked : el.type === 'file' ? el.files.length === 0 : !el.value);
+    document.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+    if (missing.length) { missing.forEach((el) => el.setAttribute('aria-invalid', 'true')); return; }
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('done').style.display = 'block';
+  });
+</script></body></html>`
+
+const PROFILE: Profile = {
+  ...EMPTY_PROFILE,
+  fullName: 'Sam Rivera Ortiz',
+  email: 'sam@example.com',
+  phone: '555-0100',
+  links: { ...EMPTY_PROFILE.links, linkedin: 'https://linkedin.com/in/samrivera' },
+  workAuthorization: { authorizedCountries: ['United States'], needsSponsorship: false, notes: '' }
+}
+
+function findBrowser(): string | undefined {
+  const candidates = [
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium'
+  ]
+  return candidates.find((p) => fs.existsSync(p))
+}
+
+const executablePath = findBrowser()
+
+describe.skipIf(!executablePath)('form extraction, filling and submit (headless browser)', () => {
+  let browser: Browser
+  let page: Page
+  const resumePath = path.join(os.tmpdir(), 'jobpilot-test-resume.pdf')
+
+  beforeAll(async () => {
+    fs.writeFileSync(resumePath, '%PDF-1.4 test')
+    browser = await chromium.launch({ executablePath, headless: true })
+  })
+  afterAll(async () => {
+    await browser?.close()
+    fs.rmSync(resumePath, { force: true })
+  })
+
+  async function load(): Promise<Page> {
+    page = await browser.newPage()
+    await page.setContent(FORM_HTML)
+    return page
+  }
+
+  it('reads labels, types, options and required flags', async () => {
+    const p = await load()
+    const { fields, frame } = await readForm(p, { clickApply: false })
+    await readComboboxOptions(frame, fields)
+    const byKey = Object.fromEntries(fields.map((f) => [f.key, f]))
+    expect(byKey.first_name).toMatchObject({ label: 'First Name', type: 'text', required: true })
+    expect(byKey.email.type).toBe('email')
+    expect(byKey.phone.label).toBe('Phone')
+    expect(byKey.resume).toMatchObject({ type: 'file', fileHint: 'resume' })
+    expect(byKey.question_1.label).toBe('LinkedIn Profile')
+    expect(byKey.question_2).toMatchObject({ type: 'select', options: ['Yes', 'No'] })
+    expect(byKey.question_3).toMatchObject({ type: 'radio', options: ['Yes', 'No'], required: false })
+    expect(byKey.question_3.label).toMatch(/visa sponsorship/)
+    expect(byKey.question_4).toMatchObject({ type: 'textarea', maxLength: 1500 })
+    expect(byKey.gender).toMatchObject({ type: 'combobox', label: 'Gender' })
+    expect(byKey.gender.options).toContain('Decline to self-identify')
+    expect(byKey.consent).toMatchObject({ type: 'checkbox', label: 'I agree to the privacy policy' })
+    await p.close()
+  })
+
+  it('maps known fields from the profile, fills the form and detects the confirmation', async () => {
+    const p = await load()
+    const { fields, frame } = await readForm(p, { clickApply: false })
+    await readComboboxOptions(frame, fields)
+
+    const answers: PreparedAnswer[] = fields.map((f) => {
+      const field = toFormField(f)
+      const mapped = mapKnownField(field, { profile: PROFILE, settings: DEFAULT_SETTINGS, jobSource: 'greenhouse', jobLocation: 'New York, NY', company: 'Acme' })
+      const value = isLongAnswer(field) ? 'I have shipped two payment systems and Acme is building a third.' : mapped?.value ?? ''
+      return { fieldKey: f.key, label: f.label, type: field.type, required: f.required, options: f.options, value, source: mapped?.source ?? 'ai', confidence: 1, needsUser: false, note: null, lint: null }
+    })
+    const byKey = Object.fromEntries(answers.map((a) => [a.fieldKey, a]))
+    expect(byKey.first_name.value).toBe('Sam')
+    expect(byKey.last_name.value).toBe('Rivera Ortiz')
+    expect(byKey.question_1.value).toContain('linkedin.com')
+    expect(byKey.question_2.value).toBe('Yes')
+    expect(byKey.question_3.value).toBe('No')
+    expect(byKey.gender.value).toBe('Decline to self-identify')
+    expect(byKey.consent.value).toBe('true')
+
+    const { matched, unmatched } = matchAnswers(fields, answers)
+    expect(unmatched).toHaveLength(0)
+    const failures = await fillForm(p, frame, matched, { resume: resumePath, coverLetter: null })
+    expect(failures).toEqual([])
+
+    const values = await p.evaluate(() => ({
+      first: (document.getElementById('first_name') as HTMLInputElement).value,
+      auth: (document.getElementById('auth') as HTMLSelectElement).selectedOptions[0].text,
+      sponsorNo: (document.querySelector('input[name=question_3][value=n]') as HTMLInputElement).checked,
+      gender: (document.getElementById('gender') as HTMLInputElement).value,
+      files: (document.getElementById('resume') as HTMLInputElement).files?.length
+    }))
+    expect(values).toEqual({ first: 'Sam', auth: 'Yes', sponsorNo: true, gender: 'Decline to self-identify', files: 1 })
+
+    expect(await clickSubmit(frame)).toBe(true)
+    const outcome = await waitForOutcome(p, frame, 8000)
+    expect(outcome.kind).toBe('confirmed')
+    await p.close()
+  })
+
+  it('reports validation errors instead of claiming success', async () => {
+    const p = await load()
+    const { frame } = await readForm(p, { clickApply: false })
+    expect(await clickSubmit(frame)).toBe(true)
+    const outcome = await waitForOutcome(p, frame, 8000)
+    expect(outcome.kind).toBe('invalid')
+    await p.close()
+  })
+})
+
+describe('field mapping', () => {
+  it('picks options for yes, no and decline', () => {
+    expect(pickOption(['Yes', 'No'], 'yes')).toBe('Yes')
+    expect(pickOption(['Yes, I am', 'No, I am not'], 'no')).toBe('No, I am not')
+    expect(pickOption(['Man', 'Woman', 'I don\'t wish to answer'], 'decline')).toBe('I don\'t wish to answer')
+    expect(pickOption(['Red', 'Blue'], 'Green')).toBeNull()
+  })
+
+  it('never guesses salary or legal history', () => {
+    const field = { key: 'q', label: 'What are your salary expectations?', type: 'text' as const, required: true, options: [], placeholder: null, maxLength: null, fileHint: null }
+    const mapped = mapKnownField(field, { profile: PROFILE, settings: DEFAULT_SETTINGS, jobSource: 'lever', jobLocation: null, company: 'Acme' })
+    expect(mapped?.needsUser).toBe(true)
+    const legal = mapKnownField({ ...field, label: 'Have you ever been convicted of a felony?' }, { profile: PROFILE, settings: DEFAULT_SETTINGS, jobSource: 'lever', jobLocation: null, company: 'Acme' })
+    expect(legal?.needsUser).toBe(true)
+  })
+
+  it('uses profile facts when the user gave one', () => {
+    const profile = { ...PROFILE, facts: [{ question: 'Salary expectations', answer: '$150,000' }] }
+    const field = { key: 'q', label: 'What are your salary expectations?', type: 'text' as const, required: true, options: [], placeholder: null, maxLength: null, fileHint: null }
+    expect(mapKnownField(field, { profile, settings: DEFAULT_SETTINGS, jobSource: 'lever', jobLocation: null, company: 'Acme' })?.value).toBe('$150,000')
+  })
+
+  it('spots long answers and cover letter fields', () => {
+    const base = { key: 'k', required: false, options: [], placeholder: null, maxLength: null, fileHint: null }
+    expect(isLongAnswer({ ...base, label: 'Why do you want to join?', type: 'text' })).toBe(true)
+    expect(isLongAnswer({ ...base, label: 'City', type: 'text' })).toBe(false)
+    expect(isCoverLetterField({ ...base, label: 'Cover Letter', type: 'textarea' })).toBe(true)
+  })
+})

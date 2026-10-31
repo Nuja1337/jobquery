@@ -59,7 +59,8 @@ if (!gotLock) {
   })
 
   app.whenReady().then(async () => {
-    const paths = appPaths(app.getPath('userData'))
+    // JOBPILOT_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
+    const paths = appPaths(process.env.JOBPILOT_DATA_DIR || app.getPath('userData'))
     const vault = createSafeStorageVault(safeStorage)
     shutdown = await registerIpc({ ipcMain, paths, vault, emit, appVersion: app.getVersion() })
     createWindow()

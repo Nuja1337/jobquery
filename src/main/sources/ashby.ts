@@ -1,0 +1,90 @@
+import type { RawJob } from '@shared/types'
+import { prettifyToken } from './detect'
+import { fetchJson } from './http'
+import { cleanTitle, findSalaryInText, inferRemote, toIsoDate } from './normalize'
+
+// Public job board API: https://api.ashbyhq.com/posting-api/job-board/{org}?includeCompensation=true
+// It lists every posting with its plain-text description, so a single posting is found by listing the board.
+
+interface AshbyComponent {
+  compensationType?: string
+  interval?: string
+  currencyCode?: string | null
+  minValue?: number | null
+  maxValue?: number | null
+}
+
+export interface AshbyJob {
+  id: string
+  title: string
+  location?: string
+  secondaryLocations?: Array<{ location?: string }>
+  employmentType?: string
+  workplaceType?: string
+  isRemote?: boolean
+  isListed?: boolean
+  publishedAt?: string
+  jobUrl?: string
+  applyUrl?: string
+  descriptionPlain?: string
+  compensation?: { summaryComponents?: AshbyComponent[] } | null
+}
+
+const EMPLOYMENT: Record<string, string> = {
+  FullTime: 'Full-time',
+  PartTime: 'Part-time',
+  Contract: 'Contract',
+  Intern: 'Internship',
+  Temporary: 'Temporary'
+}
+
+function salaryOf(job: AshbyJob, description: string) {
+  const salary = job.compensation?.summaryComponents?.find(
+    (c) => c.compensationType === 'Salary' && typeof c.minValue === 'number' && typeof c.maxValue === 'number'
+  )
+  if (salary) {
+    const factor = /HOUR/i.test(salary.interval ?? '') ? 2080 : /MONTH/i.test(salary.interval ?? '') ? 12 : 1
+    return { min: Math.round(salary.minValue! * factor), max: Math.round(salary.maxValue! * factor), currency: salary.currencyCode ?? null }
+  }
+  return findSalaryInText(description)
+}
+
+export function parseAshbyJob(job: AshbyJob, org: string, companyName?: string | null): RawJob {
+  const description = (job.descriptionPlain ?? '').trim()
+  const title = cleanTitle(job.title)
+  const location = job.location?.trim() || null
+  // The `isRemote` flag is true when any listed location is remote, so the workplace type comes first.
+  const explicit = job.workplaceType && job.workplaceType !== 'Unspecified' ? job.workplaceType : job.isRemote ? 'remote' : null
+  const salary = salaryOf(job, description)
+  const url = job.jobUrl || `https://jobs.ashbyhq.com/${org}/${job.id}`
+  return {
+    source: 'ashby',
+    externalId: job.id,
+    company: companyName || prettifyToken(org),
+    title,
+    location,
+    remote: inferRemote({ explicit, location, title, description }),
+    salaryMin: salary?.min ?? null,
+    salaryMax: salary?.max ?? null,
+    salaryCurrency: salary?.currency ?? null,
+    employmentType: job.employmentType ? (EMPLOYMENT[job.employmentType] ?? job.employmentType) : null,
+    url,
+    applyUrl: job.applyUrl || `${url}/application`,
+    ats: 'ashby',
+    atsToken: org,
+    description,
+    postedAt: toIsoDate(job.publishedAt)
+  }
+}
+
+export function parseAshby(json: { jobs?: AshbyJob[] }, org: string, companyName?: string | null): RawJob[] {
+  return (json.jobs ?? []).filter((j) => j.isListed !== false).map((j) => parseAshbyJob(j, org, companyName))
+}
+
+export async function fetchAshbyBoard(org: string, companyName?: string | null, signal?: AbortSignal): Promise<RawJob[]> {
+  const json = await fetchJson<{ jobs?: AshbyJob[] }>(
+    `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(org)}?includeCompensation=true`,
+    { timeoutMs: 60_000, signal }
+  )
+  return parseAshby(json, org, companyName)
+}

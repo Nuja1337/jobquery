@@ -47,4 +47,13 @@ export class SettingsRepo {
     this.cache = next
     return next
   }
+
+  /** Removes one price override so the built-in price applies again. */
+  removePrice(model: string): Settings {
+    const prices = { ...this.get().prices }
+    delete prices[model]
+    this.db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (:key, :value)', { key: 'prices', value: JSON.stringify(prices) })
+    this.cache = { ...this.get(), prices }
+    return this.cache
+  }
 }

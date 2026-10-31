@@ -67,6 +67,8 @@ export interface Api {
   // Settings
   getSettings(): Promise<Settings>
   updateSettings(patch: DeepPartial<Settings>): Promise<Settings>
+  /** Drops a price override so the built-in price (or none) applies. */
+  removePriceOverride(model: string): Promise<Settings>
 
   // AI providers
   listProviders(): Promise<ProviderInfo[]>
