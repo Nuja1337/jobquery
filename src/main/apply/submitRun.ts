@@ -79,7 +79,14 @@ interface PageFill {
  * In assist mode it fills, hands over to the user and keeps watching, so multi-page forms
  * get filled page by page and the submission is recorded when a new confirmation shows up.
  */
-export async function runSubmission(deps: SubmitRunDeps, job: Job, app: Application, mode: 'assist' | 'auto'): Promise<SubmitRunResult> {
+export async function runSubmission(
+  deps: SubmitRunDeps,
+  job: Job,
+  app: Application,
+  mode: 'assist' | 'auto',
+  /** Who pressed Submit. Autopilot never sends a question only the person may answer. */
+  by: 'user' | 'autopilot' = 'autopilot'
+): Promise<SubmitRunResult> {
   const page = await deps.browser.newVisiblePage(deps.settings.browser)
   await page.bringToFront().catch(() => {})
   await page.goto(applyUrlFor(job), { waitUntil: 'domcontentloaded', timeout: 60_000 })
@@ -192,8 +199,12 @@ export async function runSubmission(deps: SubmitRunDeps, job: Job, app: Applicat
     return { ok: true, status: 'submitting', message, screenshotPath: null, confirmation: null, answers, formFields, costUsd, completion: watch() }
   }
 
-  // Questions about AI use, legal terms and consent are the user's to send, even with a saved answer.
-  problems.push(...first.userOnly.map((l) => `"${l}" is a question you answer yourself, so auto mode won't send it`))
+  // Questions about AI use, legal terms and consent are the user's to send, even with a saved
+  // answer. Autopilot leaves them. When the user presses Submit on the Review page, they have seen
+  // the answer on the draft and it's their call.
+  if (by === 'autopilot') {
+    problems.push(...first.userOnly.map((l) => `"${l}" is a question you answer yourself, so autopilot won't send it. Check it and press Submit on the Review page`))
+  }
 
   if (deps.settings.autopilot.dryRun) {
     const shot = await screenshot(page, deps.screenshotsDir, app.id)

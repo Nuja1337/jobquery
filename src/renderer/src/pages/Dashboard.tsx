@@ -9,6 +9,7 @@ import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { formatPercent, formatUsd, plural, relativeTime } from '@renderer/lib/format'
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Loading, Notice, Page, PageHeader, Stat, Toggle, type Tone } from '@renderer/components/ui'
+import { autopilotConfirmMessage } from '@renderer/lib/autopilot'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 
 const WEEK = 7 * 24 * 3600 * 1000
@@ -78,7 +79,16 @@ export function Dashboard(): React.JSX.Element {
   }
 
   const ready = queue.data.items
-  const needYou = ready.filter((a) => a.flaggedCount > 0 || a.guessCount > 0).length
+  const needAnswer = ready.filter((a) => a.flaggedCount > 0).length
+  const needCheck = ready.filter((a) => a.flaggedCount === 0 && a.guessCount > 0).length
+  const readyNote =
+    ready.length === 0
+      ? 'Nothing is waiting. Prepare an application from the shortlist.'
+      : needAnswer > 0
+        ? `${plural(needAnswer, 'application')} still ${needAnswer === 1 ? 'needs' : 'need'} an answer from you${needCheck > 0 ? `, and ${needCheck} ${needCheck === 1 ? 'has' : 'have'} guesses to check` : ''}.`
+        : needCheck > 0
+          ? `${plural(needCheck, 'application')} ${needCheck === 1 ? 'has' : 'have'} guesses to check before you submit.`
+          : 'Everything is filled in. Review and click Submit.'
   const counts: Record<FitBucket, number> = { perfect: 0, great: 0, good: 0, weak: 0 }
   shortlist.data.items.forEach((j) => j.fitBucket && (counts[j.fitBucket] += 1))
   const sentApps = submitted.data.items
@@ -116,7 +126,7 @@ export function Dashboard(): React.JSX.Element {
             </div>
             <p className="mt-1 text-4xl font-semibold tabular-nums tracking-tight text-fg">{ready.length}</p>
             <p className="mt-1 text-sm text-muted">
-              {ready.length === 0 ? 'Nothing is waiting. Prepare an application from the shortlist.' : needYou > 0 ? `${plural(needYou, 'application')} still ${needYou === 1 ? 'needs' : 'need'} an answer from you.` : 'Everything is filled in. Review and click Submit.'}
+              {readyNote}
             </p>
           </div>
           <Button variant="primary" className="mt-4 self-start" disabled={ready.length === 0} onClick={() => navigate('/review')} icon={<ArrowRight size={14} />}>
@@ -234,7 +244,7 @@ export function Dashboard(): React.JSX.Element {
         <ConfirmDialog
           title="Turn on autopilot?"
           confirmLabel="Turn on autopilot"
-          message={`Auto-submit is on and dry run is off, so the app will click Submit on applications by itself. It does that when the fit score is ${settings.thresholds.autoSubmitScore} or higher, and it sends up to ${plural(settings.autopilot.dailySubmitCap, 'application')} a day. If the last run was longer ago than ${settings.autopilot.intervalHours === 1 ? 'an hour' : `${settings.autopilot.intervalHours} hours`}, the first run starts in about a minute.`}
+          message={autopilotConfirmMessage(settings, true)}
           onConfirm={async () => {
             await updateSettings({ autopilot: { enabled: true } })
           }}

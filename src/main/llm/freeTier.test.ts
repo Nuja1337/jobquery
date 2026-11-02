@@ -102,7 +102,7 @@ describe('free providers', () => {
     const p = await add({ ...GEMINI, billing: 'free' }, 'gemini-2.5-flash')
     await llm.text(writing)
     await llm.text(writing)
-    fake.fail = new Error('boom')
+    fake.fail = Object.assign(new Error('boom'), { status: 400 })
     await expect(llm.text({ ...writing, prompt: 'other' })).rejects.toThrow('boom')
     const rows = db.all<{ cache_hit: number; ok: number; free: number; provider_id: string }>('SELECT cache_hit, ok, free, provider_id FROM llm_calls ORDER BY at, rowid')
     expect(rows).toHaveLength(3)
@@ -144,6 +144,26 @@ describe('OpenRouter billing', () => {
   it('tests a free OpenRouter key with a free model', () => {
     expect(pickChatModel(['anthropic/claude-sonnet-4.5', 'meta-llama/llama-3.3-70b-instruct:free'], true)).toBe('meta-llama/llama-3.3-70b-instruct:free')
     expect(pickChatModel(['anthropic/claude-sonnet-4.5', 'meta-llama/llama-3.3-70b-instruct:free'])).toBe('anthropic/claude-sonnet-4.5')
+  })
+})
+
+describe('calls that never reached the provider', () => {
+  it("aren't recorded and don't use up the daily limit", async () => {
+    const { llm, add, fake, db } = await setup()
+    await add({ ...GEMINI, billing: 'free', requestsPerDay: 1 }, 'gemini-2.5-flash')
+    fake.fail = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:11434'), { cause: 'refused' })
+    await expect(llm.text(writing)).rejects.toThrow(/ECONNREFUSED/)
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM llm_calls')?.n).toBe(0)
+    fake.fail = null
+    await expect(llm.text({ ...writing, prompt: 'after' })).resolves.toMatchObject({ cached: false })
+  })
+
+  it('are recorded when the provider answered with an error status', async () => {
+    const { llm, add, fake, db } = await setup()
+    await add({ ...GEMINI, billing: 'free' }, 'gemini-2.5-flash')
+    fake.fail = Object.assign(new Error('Internal server error'), { status: 500 })
+    await expect(llm.text(writing)).rejects.toThrow(/Internal/)
+    expect(db.get<{ n: number; ok: number }>('SELECT COUNT(*) AS n, MAX(ok) AS ok FROM llm_calls')).toEqual({ n: 1, ok: 0 })
   })
 })
 

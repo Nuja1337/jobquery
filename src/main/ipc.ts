@@ -263,7 +263,8 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         },
         j,
         app,
-        mode
+        mode,
+        by
       )
     } catch (err) {
       const message = `Couldn't open or fill the form. ${(err as Error).message.split('\n')[0]}`

@@ -7,7 +7,7 @@ import { type Db, newId, now, parseJson } from '../db/database'
 import type { ProvidersRepo } from '../db/repos/providers'
 import type { SettingsRepo } from '../db/repos/settings'
 import { AnthropicClient } from './anthropic'
-import { BudgetExceededError, LlmCancelledError, NoModelConfiguredError, RateLimitedError } from './errors'
+import { BudgetExceededError, LlmCancelledError, LlmFormatError, LlmRefusalError, NoModelConfiguredError, RateLimitedError } from './errors'
 import { OpenAiCompatClient } from './openaiCompat'
 import { costOf, priceFor, totalTokens, UNKNOWN_MODEL_PRICE } from './pricing'
 import { type Effort, type LlmClient, type LlmUsage, ZERO_USAGE } from './types'
@@ -76,6 +76,16 @@ const NOT_A_CHAT_MODEL = /embed|whisper|tts|speech|audio|transcribe|guard|modera
 export function pickChatModel(models: string[], preferFree = false): string | undefined {
   const chat = models.filter((m) => !NOT_A_CHAT_MODEL.test(m))
   return (preferFree ? chat.find(isFreeModelId) : undefined) ?? chat[0] ?? models[0]
+}
+
+/**
+ * True when the provider got the request and answered, even with an error: an HTTP status, a
+ * refusal, a reply that couldn't be read or a rate limit. A refused connection or a dropped
+ * network has no status.
+ */
+function providerAnswered(err: unknown): boolean {
+  if (err instanceof RateLimitedError || err instanceof LlmFormatError || err instanceof LlmRefusalError) return true
+  return typeof err === 'object' && err !== null && typeof (err as { status?: unknown }).status === 'number'
 }
 
 /** OpenRouter's free models end in ":free". */
@@ -265,8 +275,9 @@ export class LlmService {
         truncated: result.truncated
       }
     } catch (err) {
-      // Nothing reached the provider, so there is nothing to record.
-      if (!sent) throw err
+      // Nothing reached the provider, or nothing came back from it (the server isn't running, the
+      // network is down). There's nothing to record, and it doesn't count toward a daily limit.
+      if (!sent || !providerAnswered(err)) throw err
       // A refused or malformed reply was still billed. Count it so the caps see it.
       const billed = (err as { usage?: LlmUsage }).usage ?? ZERO_USAGE
       const cost = free ? 0 : this.price(ref.model, billed)

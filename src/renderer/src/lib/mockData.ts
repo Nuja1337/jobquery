@@ -1,6 +1,7 @@
 // Sample data for demo mode (the Vite dev server opened in a normal browser).
 // None of this is real. Companies and people are made up.
 
+import { answerNeedsUser, isGuess } from '@shared/answers'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 import type {
   AnalyticsReport,
@@ -478,8 +479,8 @@ export function initialApplications(jobs: Job[]): Application[] {
       status: s.status,
       outcome: s.outcome,
       submitMode: s.mode,
-      flaggedCount: answers.filter((a) => a.needsUser).length,
-      guessCount: 0,
+      flaggedCount: answers.filter(answerNeedsUser).length,
+      guessCount: answers.filter(isGuess).length,
       submittedAt: s.submittedDaysAgo != null ? iso(s.submittedDaysAgo * DAY) : null,
       outcomeAt: s.outcomeDaysAgo != null ? iso(s.outcomeDaysAgo * DAY) : null,
       createdAt: iso((s.submittedDaysAgo ?? 1) * DAY + 3 * HOUR),

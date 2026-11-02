@@ -78,7 +78,7 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  async function run(html: string, draft: PreparedAnswer[], allowClick = true) {
+  async function run(html: string, draft: PreparedAnswer[], allowClick = true, by: 'user' | 'autopilot' = 'autopilot') {
     const file = path.join(dir, `form-${Date.now()}-${Math.random().toString(36).slice(2)}.html`)
     fs.writeFileSync(file, html)
     page = await browser.newPage()
@@ -100,7 +100,8 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
       },
       job,
       app,
-      'auto'
+      'auto',
+      by
     )
     const submits = page.isClosed() ? 0 : await page.evaluate(() => (window as unknown as { __submits?: number }).__submits ?? 0)
     return { result, clicks, submits }
@@ -130,6 +131,15 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
     expect(result.message).toMatch(/answer yourself/)
     expect(submits).toBe(0)
     expect(clicks).toEqual([])
+  })
+
+  it('sends it when the person presses Submit on the Review page', async () => {
+    const extra = `<label for="ai">Did you use AI tools to write any part of this application?</label>
+      <select id="ai" name="ai_use"><option value="">Select</option><option>Yes</option><option>No</option></select>`
+    const draft = [...DRAFT, answer('ai_use', 'Did you use AI tools to write any part of this application?', 'Yes', { type: 'select', options: ['Yes', 'No'], source: 'user', confidence: 1 })]
+    const { result, submits } = await run(formHtml(extra), draft, true, 'user')
+    expect(result.status).toBe('submitted')
+    expect(submits).toBe(1)
   })
 
   it('never sends answers nobody could review, even ones taken from the profile', async () => {

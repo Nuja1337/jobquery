@@ -443,11 +443,14 @@ export function Modal({ title, onClose, children, footer, wide }: { title: strin
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef(onClose)
   closeRef.current = onClose
+  // Read while rendering. Effects run after the browser has already moved focus to an autoFocus field.
+  const openerRef = useRef<HTMLElement | null | undefined>(undefined)
+  if (openerRef.current === undefined) openerRef.current = document.activeElement as HTMLElement | null
 
   useEffect(() => {
     const token = {}
     openModals.push(token)
-    const opener = document.activeElement as HTMLElement | null
+    const opener = openerRef.current
     const dialog = dialogRef.current
     // Move focus in unless a field inside already took it (autoFocus).
     if (dialog && !dialog.contains(document.activeElement)) {

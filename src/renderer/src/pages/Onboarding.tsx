@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ArrowLeft, ArrowRight, Check, Rocket, Wand2 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { EMPTY_PROFILE, PROVIDER_LABELS, PROVIDER_PRESETS, SUGGESTED_MODELS, type ProviderPreset } from '@shared/defaults'
+import { EMPTY_PROFILE, PROVIDER_LABELS, PROVIDER_PRESETS, type ProviderPreset } from '@shared/defaults'
 import type { JobPreferences, LlmStage, ModelRef, Profile, ProviderInfo, RemotePreference, Seniority } from '@shared/types'
 import { api, isDemo } from '@renderer/lib/api'
 import { useApp } from '@renderer/lib/app'
 import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
+import { suggestedModel } from '@renderer/lib/providers'
 import { setOnboardingSkipped } from '@renderer/lib/theme'
+import { ProviderBillingBadge } from '@renderer/components/badges'
 import { DocumentSection } from '@renderer/components/DocumentSection'
 import { ModelPicker } from '@renderer/components/ModelPicker'
 import { ProfileEditor, cleanProfile } from '@renderer/components/ProfileEditor'
@@ -68,7 +70,7 @@ export function Onboarding(): React.JSX.Element {
     setRouting((cur) => {
       const next = { ...cur }
       for (const s of STAGES) {
-        if (!next[s.id]) next[s.id] = { providerId: first.id, model: presetModels?.[s.id] ?? SUGGESTED_MODELS[first.kind]?.[s.id] ?? '' }
+        if (!next[s.id]) next[s.id] = { providerId: first.id, model: presetModels?.[s.id] ?? suggestedModel(first, s.id) ?? '' }
       }
       return next
     })
@@ -191,7 +193,7 @@ export function Onboarding(): React.JSX.Element {
                             <p className="text-xs text-faint">{PROVIDER_LABELS[p.kind]}</p>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            <Badge tone={p.billing === 'free' ? 'info' : 'neutral'}>{p.billing === 'free' ? 'Free' : 'Paid'}</Badge>
+                            <ProviderBillingBadge provider={p} />
                             <Badge tone="good">{p.hasKey ? 'Key saved' : 'Ready'}</Badge>
                           </div>
                         </li>
@@ -226,7 +228,7 @@ export function Onboarding(): React.JSX.Element {
                           providers={list}
                           value={routing[s.id]}
                           onChange={(ref) => setRouting({ ...routing, [s.id]: ref })}
-                          suggested={(kind) => SUGGESTED_MODELS[kind]?.[s.id]}
+                          suggested={(provider) => suggestedModel(provider, s.id)}
                         />
                       </Field>
                     ))}

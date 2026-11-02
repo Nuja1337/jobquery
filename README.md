@@ -22,7 +22,7 @@ Use a free option or a paid key, whichever you prefer. Each step of the pipeline
 
 | Provider | Notes |
 |---|---|
-| Google Gemini (free tier) | You don't need a card. Google may use free-tier requests to improve its products, and people may read them |
+| Google Gemini (free tier) | You don't need a card. Use a key from a Google project without billing, since a billed key is charged for each call and JobPilot treats it as free. Google may use free-tier requests to improve its products, and people may read them |
 | Groq (free tier) | You don't need a card. It runs fast open models with daily limits |
 | OpenRouter free models | Pick models whose names end in `:free`. You get about 50 requests a day until you've bought credits, and any other model on OpenRouter is paid |
 | Mistral (free plan) | You don't need a card. Mistral may use free-plan requests to train its models |
@@ -40,7 +40,7 @@ Use a free option or a paid key, whichever you prefer. Each step of the pipeline
 
 A ChatGPT or Claude subscription doesn't include API use, so a paid key is billed separately by its provider.
 
-Free and local providers never count toward your spending caps. JobPilot spaces out its requests to stay under a free tier's per-minute and per-day limits, and when a provider says the limit is reached, it pauses and carries on with the next run. Paid keys are priced per call, and daily and monthly caps stop all paid calls when they're reached.
+Free and local providers never count toward your spending caps, so only mark a provider free when its key can't be charged. JobPilot spaces out its requests to stay under a free tier's per-minute and per-day limits, and when a provider says the limit is reached, it pauses and carries on with the next run. Paid keys are priced per call, and daily and monthly caps stop all paid calls when they're reached.
 
 Your key stays on your computer. It's encrypted with your operating system's key store when one is available, and the app warns you when there isn't one.
 

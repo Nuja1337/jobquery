@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { AlertTriangle, CheckCircle2, Download, FolderOpen, Pencil, Plus, TestTube2, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { BUILTIN_PRICES, PROVIDER_LABELS, SUGGESTED_MODELS } from '@shared/defaults'
+import { BUILTIN_PRICES, PROVIDER_LABELS } from '@shared/defaults'
 import type { DeepPartial } from '@shared/api'
 import type { AppInfo } from '@shared/api'
 import type { BrowserChannel, CoverLetterLength, LlmStage, ModelPrice, ProviderInfo, RemotePreference, Seniority, Settings } from '@shared/types'
@@ -11,6 +11,9 @@ import { useApp } from '@renderer/lib/app'
 import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { applyTheme, getStoredTheme, setOnboardingSkipped, type Theme } from '@renderer/lib/theme'
+import { autopilotConfirmMessage } from '@renderer/lib/autopilot'
+import { suggestedModel } from '@renderer/lib/providers'
+import { ProviderBillingBadge } from '@renderer/components/badges'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 import { ModelPicker } from '@renderer/components/ModelPicker'
 import { KEY_STORAGE_NOTE, KeyStorageWarning, ProviderForm, describeLimits, useKeyStorageWeak } from '@renderer/components/ProviderForm'
@@ -133,7 +136,7 @@ export function SettingsPage(): React.JSX.Element {
                       providers={providers.data as ProviderInfo[]}
                       value={draft.routing[s.id]}
                       onChange={(ref) => set('routing', { [s.id]: ref })}
-                      suggested={(kind) => SUGGESTED_MODELS[kind]?.[s.id]}
+                      suggested={(provider) => suggestedModel(provider, s.id)}
                     />
                   </Field>
                 ))
@@ -143,7 +146,7 @@ export function SettingsPage(): React.JSX.Element {
 
           <PricesCard
             prices={settings.prices}
-            onSave={async (model, price) => { await updateSettings({ prices: { [model]: price } }) }}
+            onSave={async (model, price) => (await updateSettings({ prices: { [model]: price } })) !== null}
             onReset={async (model) => {
               try {
                 await api.removePriceOverride(model)
@@ -157,10 +160,10 @@ export function SettingsPage(): React.JSX.Element {
           <Card id="settings-budget">
             <CardHeader title="Budgets" hint="JobPilot stops spending when a budget runs out. A budget of 0 means no limit. Free and local providers never count toward these limits." />
             <div className="grid grid-cols-2 gap-4 p-4">
-              <Field label="Daily budget (US dollars)" hint={draft.budget.dailyUsd === 0 ? 'No limit. Nothing stops spending until you set a budget.' : 'Enter 0 for no limit.'}>
+              <Field label="Daily budget (US dollars)" hint={draft.budget.dailyUsd === 0 ? 'No daily limit. The monthly budget still applies if you set one.' : 'Enter 0 for no limit.'}>
                 <BudgetInput value={draft.budget.dailyUsd} step={0.1} onChange={(v) => set('budget', { dailyUsd: v })} />
               </Field>
-              <Field label="Monthly budget (US dollars)" hint={draft.budget.monthlyUsd === 0 ? 'No limit. Nothing stops spending until you set a budget.' : 'Enter 0 for no limit.'}>
+              <Field label="Monthly budget (US dollars)" hint={draft.budget.monthlyUsd === 0 ? 'No monthly limit. The daily budget still applies if you set one.' : 'Enter 0 for no limit.'}>
                 <BudgetInput value={draft.budget.monthlyUsd} step={1} onChange={(v) => set('budget', { monthlyUsd: v })} />
               </Field>
               <Field label="Jobs scored per run" hint="The most jobs sent to the AI in one run.">
@@ -392,18 +395,7 @@ function ProvidersCard({ providers, error, reload, onDeleted }: { providers: Pro
                 </p>
                 {describeLimits(p) && <p className="text-xs text-faint">{describeLimits(p)}</p>}
               </div>
-              <Badge
-                tone={p.kind === 'openrouter' || p.billing === 'free' ? 'info' : 'neutral'}
-                title={
-                  p.kind === 'openrouter'
-                    ? 'Models whose names end in ":free" cost nothing. Every other model is priced and counts toward your budget.'
-                    : p.billing === 'free'
-                      ? "This is a free tier or a model on this computer, so JobPilot doesn't count it toward your budget."
-                      : 'Each call is priced and counts toward your budget.'
-                }
-              >
-                {p.kind === 'openrouter' ? 'Free and paid models' : p.billing === 'free' ? 'Free' : 'Paid'}
-              </Badge>
+              <ProviderBillingBadge provider={p} />
               {p.hasKey ? (
                 <Badge tone="good">
                   <CheckCircle2 size={11} /> Key saved
@@ -463,7 +455,7 @@ function ProvidersCard({ providers, error, reload, onDeleted }: { providers: Pro
 // Prices
 // ---------------------------------------------------------------------------
 
-function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; onSave: (model: string, price: ModelPrice) => Promise<void>; onReset: (model: string) => Promise<void> }): React.JSX.Element {
+function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; onSave: (model: string, price: ModelPrice) => Promise<boolean>; onReset: (model: string) => Promise<void> }): React.JSX.Element {
   const [newModel, setNewModel] = useState('')
   const [newIn, setNewIn] = useState('')
   const [newOut, setNewOut] = useState('')
@@ -503,7 +495,8 @@ function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; o
           if (!canAdd || inVal === null || outVal === null) return
           setAdding(true)
           void onSave(id, { inputPerMTok: inVal, outputPerMTok: outVal })
-            .then(() => {
+            .then((saved) => {
+              if (!saved) return
               setNewModel('')
               setNewIn('')
               setNewOut('')
@@ -520,14 +513,14 @@ function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; o
             Add model
           </Button>
         </div>
-        <p className="text-xs text-faint">Enter what the model costs per million tokens. Without prices, its calls would not count toward your budgets.</p>
+        <p className="text-xs text-faint">Enter what the model costs per million tokens. A model priced at 0 never counts toward your budgets.</p>
         {allZero && <Checkbox label="This model is free, so both prices are 0" checked={isFree} onChange={setIsFree} />}
       </form>
     </Card>
   )
 }
 
-function PriceRow({ model, price, custom, builtin, onSave, onReset }: { model: string; price: ModelPrice; custom: boolean; builtin?: ModelPrice; onSave: (model: string, price: ModelPrice) => Promise<void>; onReset: (model: string) => Promise<void> }): React.JSX.Element {
+function PriceRow({ model, price, custom, builtin, onSave, onReset }: { model: string; price: ModelPrice; custom: boolean; builtin?: ModelPrice; onSave: (model: string, price: ModelPrice) => Promise<boolean>; onReset: (model: string) => Promise<void> }): React.JSX.Element {
   const [p, setP] = useState(price)
   const [busy, setBusy] = useState(false)
   const dirty = JSON.stringify(p) !== JSON.stringify(price)
@@ -587,12 +580,14 @@ function PriceRow({ model, price, custom, builtin, onSave, onReset }: { model: s
 function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(key: K, patch: Partial<Settings[K]>) => void }): React.JSX.Element {
   const a = draft.autopilot
   const [confirmAuto, setConfirmAuto] = useState(false)
+  /** Turning autopilot on, or dry run off, while auto-submit is on lets the app send applications by itself. */
+  const [confirmSend, setConfirmSend] = useState<null | 'enable' | 'dryRun'>(null)
   return (
     <Card id="settings-autopilot">
       <CardHeader title="Autopilot" hint="Runs on a schedule while the app is open." />
       <div className="space-y-4 p-4">
         <div className="grid grid-cols-2 gap-4">
-          <Toggle checked={a.enabled} onChange={(v) => set('autopilot', { enabled: v })} label="Run on a schedule" />
+          <Toggle checked={a.enabled} onChange={(v) => (v && a.autoSubmit && !a.dryRun ? setConfirmSend('enable') : set('autopilot', { enabled: v }))} label="Run on a schedule" />
           <Field label="Run every (hours)">
             <NumberInput value={a.intervalHours} min={1} max={168} onChange={(v) => set('autopilot', { intervalHours: v ?? 6 })} />
           </Field>
@@ -621,10 +616,19 @@ function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends Sectio
               <NumberInput value={a.dailySubmitCap} min={0} max={100} onChange={(v) => set('autopilot', { dailySubmitCap: v ?? 0 })} />
             </Field>
             <Toggle checked={a.requireNoFlags} onChange={() => undefined} disabled label="Skip applications with flagged answers" hint="Always on." />
-            <Toggle checked={a.dryRun} onChange={(v) => set('autopilot', { dryRun: v })} label="Dry run" hint="Fill the form, take a screenshot and stop before the final click." />
+            <Toggle checked={a.dryRun} onChange={(v) => (!v && a.autoSubmit ? setConfirmSend('dryRun') : set('autopilot', { dryRun: v }))} label="Dry run" hint="Fill the form, take a screenshot and stop before the final click." />
           </div>
         </div>
       </div>
+      {confirmSend && (
+        <ConfirmDialog
+          title={confirmSend === 'enable' ? 'Turn on autopilot?' : 'Turn off dry run?'}
+          confirmLabel={confirmSend === 'enable' ? 'Turn on autopilot' : 'Turn off dry run'}
+          message={autopilotConfirmMessage({ thresholds: draft.thresholds, autopilot: { ...a, dryRun: false } }, confirmSend === 'enable')}
+          onClose={() => setConfirmSend(null)}
+          onConfirm={() => set('autopilot', confirmSend === 'enable' ? { enabled: true } : { dryRun: false })}
+        />
+      )}
       {confirmAuto && (
         <ConfirmDialog
           title="Turn on auto-submit"

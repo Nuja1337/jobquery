@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ModelRef, ProviderInfo, ProviderKind } from '@shared/types'
+import type { ModelRef, ProviderInfo } from '@shared/types'
 import { api } from '@renderer/lib/api'
 import { Checkbox, Input, Select } from './ui'
 
@@ -39,8 +39,8 @@ interface Props {
   providers: ProviderInfo[]
   value: ModelRef | null
   onChange: (ref: ModelRef | null) => void
-  /** Model to select when the user picks a provider. Gets the kind of the provider just picked. */
-  suggested?: (kind: ProviderKind) => string | undefined
+  /** Model to select when the user picks a provider. Gets the provider just picked. */
+  suggested?: (provider: ProviderInfo) => string | undefined
 }
 
 /** A provider dropdown and a model dropdown loaded from the provider. */
@@ -65,8 +65,8 @@ export function ModelPicker({ providers, value, onChange, suggested }: Props): R
         aria-label="Provider"
         onChange={(e) => {
           const id = e.target.value
-          const kind = providers.find((p) => p.id === id)?.kind
-          onChange(id ? { providerId: id, model: (kind && suggested?.(kind)) || '' } : null)
+          const picked = providers.find((p) => p.id === id)
+          onChange(id ? { providerId: id, model: (picked && suggested?.(picked)) || '' } : null)
         }}
       >
         <option value="">Not set</option>

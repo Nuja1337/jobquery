@@ -1,6 +1,17 @@
 import { BUCKET_LABELS } from '@shared/defaults'
 import type { AnswerSource, ApplicationOutcome, ApplicationStatus, FitBucket, JobStage, SubmitMode } from '@shared/types'
+import { billingLabel, billingTitle } from '@renderer/lib/providers'
+import type { ProviderInfo } from '@shared/types'
 import { Badge, type Tone } from './ui'
+
+/** What a provider costs, with the same wording everywhere. */
+export function ProviderBillingBadge({ provider }: { provider: Pick<ProviderInfo, 'kind' | 'billing'> }): React.JSX.Element {
+  return (
+    <Badge tone={provider.kind === 'openrouter' || provider.billing === 'free' ? 'info' : 'neutral'} title={billingTitle(provider)}>
+      {billingLabel(provider)}
+    </Badge>
+  )
+}
 
 const BUCKET_TONE: Record<FitBucket, Tone> = { perfect: 'good', great: 'info', good: 'accent', weak: 'neutral' }
 

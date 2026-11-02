@@ -76,7 +76,7 @@ For each field the app tries, in order:
 3. One batched call to the reading model for the remaining short and multiple-choice fields.
 4. The writing model with the style check for open-ended questions.
 
-Questions about how the applicant used AI, legal agreements, terms, attestations and consent boxes are never sent to the AI. A check runs before every other step, including Regenerate, and only the user's own saved answer can fill one. Auto-submit never sends a form with one of these questions, even when a saved answer filled it.
+Questions about how the applicant used AI, legal agreements, terms, attestations and consent boxes are never sent to the AI. A check runs before every other step, including Regenerate, and only the user's own saved answer can fill one. Auto-submit never sends a form with one of these questions, even when a saved answer filled it. The Submit button on the Review page does, since the user has seen the answer there.
 
 Salary, start date and legal history are filled only from facts the user added to the profile, and flagged otherwise.
 
@@ -87,8 +87,8 @@ Greenhouse publishes each job's questions in its public API, so those applicatio
 ## Submitting
 
 - **Fill and let me submit** opens the visible browser, fills everything and leaves the final click to the user. The app watches for the confirmation page and records the submission.
-- **Submit** fills and clicks submit, then waits for a confirmation. It only clicks when nothing is flagged, no AI answer is below the confidence line, every answer was on the draft the user could review (whether it came from the profile, a saved answer or the AI) and no question is one the user must answer. A captcha, a validation error or no confirmation turns the application into "needs attention" with the browser left open.
-- **Auto-submit** (off by default) applies the same rules to applications at or above its fit score, under the daily cap, and re-checks each application right before sending it. A dry-run setting makes Submit and auto-submit fill the form and stop before the click.
+- **Submit** fills and clicks submit, then waits for a confirmation. It only clicks when nothing is flagged, no AI answer is below the confidence line, and every answer was on the draft the user could review (whether it came from the profile, a saved answer or the AI). A captcha, a validation error or no confirmation turns the application into "needs attention" with the browser left open.
+- **Auto-submit** (off by default) applies the same rules to applications at or above its fit score, under the daily cap, and re-checks each application right before sending it. It also leaves any form with a question only the user may answer. A dry-run setting makes Submit and auto-submit fill the form and stop before the click.
 
 The time of each automatic click is stored before the click happens. An application the app clicked Submit on is never clicked again automatically, and the click counts toward the daily cap, even if no confirmation was seen.
 

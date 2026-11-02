@@ -24,6 +24,15 @@ export function Review(): React.JSX.Element {
   const index = items.findIndex((a) => a.id === activeId)
   const itemsRef = useRef(items)
   itemsRef.current = items
+  /** The queue order as of the last time the open application was in it, so we know its neighbours after it leaves. */
+  const lastOrderRef = useRef<string[]>([])
+  if (index >= 0) lastOrderRef.current = items.map((a) => a.id)
+
+  // Keep the open application in the address, so a reload of the queue can't swap it for another one.
+  const firstId = items[0]?.id
+  useEffect(() => {
+    if (!id && firstId) navigate(`/review/${firstId}`, { replace: true })
+  }, [id, firstId, navigate])
   /** True while the open application is being submitted. Switching away then would hide the result. */
   const [navLocked, setNavLocked] = useState(false)
 
@@ -40,10 +49,16 @@ export function Review(): React.JSX.Element {
   /** After an application leaves the queue, show the one that took its place. */
   const advance = useCallback(
     (fromId: string) => {
-      const list = itemsRef.current
-      const rest = list.filter((a) => a.id !== fromId)
-      const i = list.findIndex((a) => a.id === fromId)
-      const next = rest[Math.min(i, rest.length - 1)]
+      const rest = itemsRef.current.filter((a) => a.id !== fromId)
+      // The application may already be gone from the queue, so its place comes from the last order we saw.
+      const order = lastOrderRef.current
+      const i = order.indexOf(fromId)
+      let next = rest[0]
+      if (i >= 0) {
+        const remaining = new Set(rest.map((a) => a.id))
+        const nextId = order.slice(i + 1).find((x) => remaining.has(x)) ?? order.slice(0, i).reverse().find((x) => remaining.has(x))
+        next = rest.find((a) => a.id === nextId) ?? next
+      }
       navigate(next ? `/review/${next.id}` : '/review', { replace: true })
     },
     [navigate]
@@ -396,7 +411,7 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
 
       {clickedNoConfirmation && (
         <Notice tone="warn" title="Check whether this one went through">
-          The app clicked Submit on {formatDateTime(app.submitClickedAt)} and saw no confirmation. Check your email or the company&apos;s site. If it went through, mark it as submitted.
+          The app clicked Submit on {formatDateTime(app.submitClickedAt)} and saw no confirmation. Check your email or the company&apos;s site. If it went through, mark it as submitted. If it didn&apos;t, press Fill and let me submit and send it yourself.
         </Notice>
       )}
 
@@ -453,7 +468,7 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
             needYou.length > 0
               ? `${needYou.length} to fill in${guesses.length > 0 ? `, ${plural(guesses.length, 'guess', 'guesses')} to check` : ''}`
               : guesses.length > 0
-                ? `All answers are filled in. ${plural(guesses.length, 'guess', 'guesses')} to check before auto mode will submit.`
+                ? `All answers are filled in. ${plural(guesses.length, 'guess', 'guesses')} to check before the Submit button will send it.`
                 : 'All answers are filled in.'
           }
           actions={needYou.length > 0 ? <Badge tone="warn">{needYou.length} flagged</Badge> : guesses.length > 0 ? <Badge tone="warn">{guesses.length} to check</Badge> : <Badge tone="good">Complete</Badge>}
@@ -478,9 +493,17 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
                 variant="primary"
                 icon={<MousePointerClick size={14} />}
                 loading={busy === 'auto'}
-                disabled={needYou.length > 0 || (locked && busy !== 'auto') || regenCount > 0}
+                disabled={needYou.length > 0 || guesses.length > 0 || (locked && busy !== 'auto') || regenCount > 0}
                 onClick={() => void submit('auto')}
-                title={needYou.length > 0 ? 'Fill in the flagged answers first' : dryRun ? 'Dry run is on. This fills the form and stops before the final click.' : undefined}
+                title={
+                  needYou.length > 0
+                    ? 'Fill in the flagged answers first'
+                    : guesses.length > 0
+                      ? `Check these answers first: ${guesses.map((g) => g.label).join(', ')}`
+                      : dryRun
+                        ? 'Dry run is on. This fills the form and stops before the final click.'
+                        : undefined
+                }
               >
                 Submit
               </Button>

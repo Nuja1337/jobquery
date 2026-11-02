@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { BookmarkPlus, RefreshCw, TriangleAlert } from 'lucide-react'
+import { BookmarkPlus, Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { AnswerKind, PreparedAnswer } from '@shared/types'
 import { AUTO_SUBMIT_MIN_CONFIDENCE, answerNeedsUser, isGuess } from '@shared/answers'
@@ -55,6 +55,11 @@ export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerat
 
   function setValue(value: string): void {
     onChange({ ...answer, value, source: 'user', confidence: 1, needsUser: answer.needsUser && !value.trim() && value !== 'false' })
+  }
+
+  /** Confirms a guess as it stands. It is saved like any other edit. */
+  function confirmGuess(): void {
+    onChange({ ...answer, source: 'user', confidence: 1 })
   }
 
   async function regenerate(): Promise<void> {
@@ -166,7 +171,7 @@ export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerat
             </Badge>
           )}
           {!flagged && guess && (
-            <Badge tone="warn" title={`Below ${Math.round(AUTO_SUBMIT_MIN_CONFIDENCE * 100)}% sure. Auto mode will not click Submit while this stays a guess.`}>
+            <Badge tone="warn" title={`Below ${Math.round(AUTO_SUBMIT_MIN_CONFIDENCE * 100)}% sure. The Submit button won't send this application while it's a guess. Edit it or press Looks right.`}>
               <TriangleAlert size={11} /> Check this, it&apos;s a guess
             </Badge>
           )}
@@ -191,8 +196,13 @@ export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerat
         </div>
       )}
 
-      {(canRegenerate || canBank) && (
+      {(canRegenerate || canBank || guess) && (
         <div className="mt-2.5 flex items-center gap-2">
+          {guess && (
+            <Button size="sm" variant="secondary" icon={<Check size={12} />} disabled={locked} onClick={confirmGuess} title="Keep this answer as it is and stop treating it as a guess">
+              Looks right
+            </Button>
+          )}
           {canRegenerate && (
             <Button size="sm" variant="ghost" icon={<RefreshCw size={12} />} disabled={locked} onClick={() => setGuidanceOpen(!guidanceOpen)}>
               Regenerate
@@ -205,18 +215,20 @@ export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerat
           )}
         </div>
       )}
-      {guidanceOpen && (
+      {guidanceOpen && canRegenerate && (
         <form
-          className="mt-2 flex items-center gap-2"
+          className="mt-2"
           onSubmit={(e) => {
             e.preventDefault()
-            void regenerate()
+            if (!locked) void regenerate()
           }}
         >
-          <Input autoFocus value={guidance} onChange={(e) => setGuidance(e.target.value)} placeholder="Guidance, for example: mention the open source project" aria-label="Guidance for the new answer" />
-          <Button type="submit" size="sm" variant="primary" loading={busy}>
-            Write it again
-          </Button>
+          <fieldset disabled={locked} className="m-0 flex min-w-0 items-center gap-2 border-0 p-0">
+            <Input autoFocus value={guidance} onChange={(e) => setGuidance(e.target.value)} placeholder="Guidance, for example: mention the open source project" aria-label="Guidance for the new answer" />
+            <Button type="submit" size="sm" variant="primary" loading={busy} disabled={locked}>
+              Write it again
+            </Button>
+          </fieldset>
         </form>
       )}
       {bankOpen && <SaveToBank answer={answer} onClose={() => setBankOpen(false)} />}

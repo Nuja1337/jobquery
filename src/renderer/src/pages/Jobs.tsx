@@ -80,16 +80,20 @@ export function Jobs(): React.JSX.Element {
       const items: JobSummary[] = []
       const seen = new Set<string>()
       let total = 0
+      // The offset counts rows the main process has handed out, duplicates included.
+      let offset = 0
       while (items.length < (query.limit ?? PAGE)) {
-        const page = await api.listJobs({ ...query, limit: Math.min(MAX_REQUEST, (query.limit ?? PAGE) - items.length), offset: items.length })
+        const page = await api.listJobs({ ...query, limit: Math.min(MAX_REQUEST, (query.limit ?? PAGE) - items.length), offset })
         total = page.total
+        const before = items.length
         for (const j of page.items) {
           if (!seen.has(j.id)) {
             seen.add(j.id)
             items.push(j)
           }
         }
-        if (page.items.length === 0 || items.length >= total) break
+        offset += page.items.length
+        if (page.items.length === 0 || items.length === before || offset >= total) break
       }
       return { items, total }
     },

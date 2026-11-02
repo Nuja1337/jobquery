@@ -35,7 +35,7 @@ const PAID_PRESETS = PROVIDER_PRESETS.filter((p) => p.billing === 'paid')
 const CUSTOM_PRESET_ID = 'custom'
 
 const BILLING_OPTIONS: Array<{ id: ProviderBilling; label: string; text: string }> = [
-  { id: 'free', label: 'Free', text: "Use this for a free tier or a model on this computer. JobPilot won't count it toward your budget." },
+  { id: 'free', label: 'Free', text: "Use this for a free tier or a model on this computer, and only when the key can't be charged. JobPilot won't count it toward your budget." },
   { id: 'paid', label: 'Paid', text: 'Each call is priced and counts toward your budget.' }
 ]
 

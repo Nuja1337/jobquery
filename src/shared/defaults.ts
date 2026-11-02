@@ -137,7 +137,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     requestsPerMinute: 10,
     requestsPerDay: 250,
     models: { triage: 'gemini-2.5-flash-lite', writing: 'gemini-2.5-flash', extraction: 'gemini-2.5-flash' },
-    note: "You don't need a card. Google may use what you send on the free tier to improve its products, and people may read it, including your resume and answers.",
+    note: "You don't need a card. Use a key from a Google project without billing. If billing is on, Google charges for each call and JobPilot's budgets won't stop it. Google may use what you send on the free tier to improve its products, and people may read it, including your resume and answers.",
     trainsOnData: true
   },
   {
@@ -151,7 +151,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     requestsPerMinute: 30,
     requestsPerDay: 1000,
     models: null,
-    note: "You don't need a card. It runs fast open models, with a daily limit for each model.",
+    note: "You don't need a card. It runs fast open models, with a daily limit for each model. If your Groq account is on a paid plan, mark this provider paid so the budgets apply.",
     trainsOnData: false
   },
   {
@@ -179,7 +179,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     requestsPerMinute: 20,
     requestsPerDay: null,
     models: { triage: 'mistral-small-latest', writing: 'mistral-medium-latest', extraction: 'mistral-small-latest' },
-    note: "You don't need a card, but Mistral may ask for a phone number. It may use requests on the free plan to train its models.",
+    note: "You don't need a card, but Mistral may ask for a phone number. It may use requests on the free plan to train its models. If you're on a paid Mistral plan, mark this provider paid so the budgets apply.",
     trainsOnData: true
   },
   {

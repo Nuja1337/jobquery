@@ -67,7 +67,7 @@ export function useDebounced<T>(value: T, ms: number): T {
   return v
 }
 
-/** Runs a handler on a key press unless focus is in a form field. */
+/** Runs a handler on a key press unless focus is in a form field or a dialog is open. */
 export function useHotkeys(map: Record<string, () => void>, enabled = true): void {
   const ref = useRef(map)
   ref.current = map
@@ -77,6 +77,7 @@ export function useHotkeys(map: Record<string, () => void>, enabled = true): voi
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (document.querySelector('[aria-modal="true"]')) return
       const fn = ref.current[e.key.toLowerCase()]
       if (fn) {
         e.preventDefault()

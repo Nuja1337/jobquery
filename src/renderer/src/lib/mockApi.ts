@@ -445,7 +445,7 @@ export function createMockBridge(): Bridge {
       const answers = makeAnswers('flagged', j.company)
       const app: Application = {
         id: uid('app'), jobId, company: j.company, title: j.title, fitScore: j.fitScore, fitBucket: j.fitBucket, status: 'needs_attention', outcome: 'none', submitMode: null,
-        flaggedCount: 1, guessCount: 0, submittedAt: null, outcomeAt: null, createdAt: iso(0), updatedAt: iso(0),
+        flaggedCount: answers.filter(answerNeedsUser).length, guessCount: answers.filter(isGuess).length, submittedAt: null, outcomeAt: null, createdAt: iso(0), updatedAt: iso(0),
         coverLetter: `Hello ${j.company} team,\n\nI read the posting for the ${j.title} role and the work looks close to what I have been doing for the last three years. At Fieldstone Analytics I rebuilt our dashboard in React and TypeScript, which cut load time from six seconds to under two.\n\nI would be glad to talk about how I could help.\n\nBest,\nAlex`,
         coverLetterLint: { score: 93, issues: [], stats: { words: 62, sentences: 4, avgSentenceWords: 15.5, sentenceLengthStdDev: 5, paragraphs: 3 } },
         answers, formFields: answers.map((a) => ({ key: a.fieldKey, label: a.label, type: a.type, required: a.required, options: a.options, placeholder: null, maxLength: null, fileHint: null })),
