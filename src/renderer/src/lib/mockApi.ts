@@ -23,8 +23,10 @@ import type {
   RunStats,
   SavedSearch,
   Settings,
+  UpdateStatus,
   UsageSummary
 } from '@shared/types'
+import { RELEASES_URL } from '@shared/defaults'
 import {
   MODEL_LISTS,
   buildAnalytics,
@@ -45,6 +47,27 @@ import {
   makeAnswers,
   makeFit
 } from './mockData'
+
+const DEMO_VERSION = '0.1.0 (demo)'
+
+/** The update status a demo starts in. ?update=ready, available, downloading, up_to_date, error or disabled picks it, for screenshots. */
+function initialUpdateStatus(param: string | null): UpdateStatus {
+  const base: UpdateStatus = { state: 'up_to_date', currentVersion: DEMO_VERSION, version: null, percent: null, checkedAt: iso(12 * 60_000), message: null, downloadUrl: null }
+  switch (param) {
+    case 'ready':
+      return { ...base, state: 'ready', version: '0.2.0' }
+    case 'available':
+      return { ...base, state: 'available', version: '0.2.0', downloadUrl: RELEASES_URL }
+    case 'downloading':
+      return { ...base, state: 'downloading', version: '0.2.0', percent: 42 }
+    case 'error':
+      return { ...base, state: 'error', message: "JobPilot couldn't check for updates. Check your internet connection, or try again later." }
+    case 'disabled':
+      return { ...base, state: 'disabled', checkedAt: null, message: 'Updates work only in the installed app.' }
+    default:
+      return base
+  }
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 let counter = 1000
@@ -121,10 +144,16 @@ export function createMockBridge(): Bridge {
   let cancelled = false
   let extraSpend = 0
   let freeCallsToday = startOnboarding ? 0 : 12
+  let updateStatus = initialUpdateStatus(params.get('update'))
 
   const listeners = new Map<PushChannel, Set<(p: never) => void>>()
   function emit<C extends PushChannel>(channel: C, payload: PushEvents[C]): void {
     listeners.get(channel)?.forEach((l) => (l as (p: PushEvents[C]) => void)(payload))
+  }
+  function setUpdateStatus(next: UpdateStatus): UpdateStatus {
+    updateStatus = next
+    emit('update:status', { ...next })
+    return { ...next }
   }
   function addEvent(type: EventRecord['type'], jobId: string | null, message: string): void {
     const ev: EventRecord = { id: uid('ev'), at: iso(0), type, jobId, message, data: null }
@@ -191,7 +220,7 @@ export function createMockBridge(): Bridge {
 
   const api: Api = {
     async getAppInfo(): Promise<AppInfo> {
-      return { version: '0.1.0 (demo)', dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\JobPilot', platform: 'win32', secureKeyStorage: true }
+      return { version: DEMO_VERSION, dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\JobPilot', platform: 'win32', secureKeyStorage: true }
     },
     async openExternal(url) {
       window.open(url, '_blank', 'noopener')
@@ -633,6 +662,18 @@ export function createMockBridge(): Bridge {
     },
     async getUsage() {
       return usage()
+    },
+
+    async getUpdateStatus() {
+      return { ...updateStatus }
+    },
+    async checkForUpdates() {
+      setUpdateStatus({ ...updateStatus, state: 'checking', message: null })
+      await sleep(800)
+      return setUpdateStatus({ ...updateStatus, state: 'up_to_date', version: null, percent: null, checkedAt: iso(0), message: null, downloadUrl: null })
+    },
+    async installUpdate() {
+      throw new Error("Demo mode can't install updates.")
     }
   }
 

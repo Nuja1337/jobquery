@@ -174,6 +174,11 @@ export interface EeoSettings {
   pronouns: string
 }
 
+export interface UpdateSettings {
+  /** Check for a new version at launch and every few hours. A check by hand works either way. */
+  autoCheck: boolean
+}
+
 export interface Settings {
   routing: Record<LlmStage, ModelRef | null>
   /** Overrides and additions to the built-in price table, keyed by model id. */
@@ -185,7 +190,40 @@ export interface Settings {
   browser: BrowserSettings
   writing: WritingSettings
   eeo: EeoSettings
+  updates: UpdateSettings
   onboardingDone: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+/**
+ * Where this copy of the app stands on updates.
+ * - disabled: this copy can't update itself (a development build, or Linux outside the AppImage)
+ * - idle: no check has run yet
+ * - checking, up_to_date: a check is running, or the last one found nothing newer
+ * - downloading: a newer version is downloading, and percent says how far along it is
+ * - ready: downloaded, and it installs on restart or when the app closes
+ * - available: a newer version exists, but this copy can't install it itself (macOS until the app
+ *   is signed), so downloadUrl opens the download page
+ * - error: the last check or download failed, and message says why
+ */
+export type UpdateState = 'disabled' | 'idle' | 'checking' | 'up_to_date' | 'downloading' | 'ready' | 'available' | 'error'
+
+export interface UpdateStatus {
+  state: UpdateState
+  currentVersion: string
+  /** The newer version, once one is found. */
+  version: string | null
+  /** 0 to 100 while downloading, otherwise null. */
+  percent: number | null
+  /** When the last check finished, as an ISO time. */
+  checkedAt: string | null
+  /** Why updates are off, or what went wrong. Written for the user. */
+  message: string | null
+  /** The download page, when the user has to install the new version by hand. */
+  downloadUrl: string | null
 }
 
 // ---------------------------------------------------------------------------

@@ -59,8 +59,17 @@ export const DEFAULT_SETTINGS: Settings = {
     disability: 'decline',
     pronouns: ''
   },
+  updates: {
+    autoCheck: true
+  },
   onboardingDone: false
 }
+
+/**
+ * The public page where new versions are published. It must match `build.publish` in
+ * package.json, which tells installed copies where to look (a test checks that they match).
+ */
+export const RELEASES_URL = 'https://github.com/Nuja1337/jobpilot-releases/releases/latest'
 
 export const EMPTY_PROFILE: Profile = {
   fullName: '',

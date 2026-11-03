@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, ipcMain, safeStorage, shell, type IpcMainInvokeEvent } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import type { PushChannel, PushEvents } from '@shared/api'
 import { createSafeStorageVault } from './secrets'
 import { appPaths } from './paths'
@@ -100,7 +101,15 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     const paths = appPaths(app.getPath('userData'))
     const vault = await createSafeStorageVault(safeStorage)
-    shutdown = await registerIpc({ ipcMain, paths, vault, emit, appVersion: app.getVersion(), isTrustedSender })
+    shutdown = await registerIpc({
+      ipcMain,
+      paths,
+      vault,
+      emit,
+      appVersion: app.getVersion(),
+      isTrustedSender,
+      updates: { backend: autoUpdater, isPackaged: app.isPackaged, platform: process.platform, quit: () => app.quit() }
+    })
     createWindow()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

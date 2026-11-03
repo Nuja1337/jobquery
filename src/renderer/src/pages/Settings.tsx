@@ -1,23 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useBlocker, useNavigate } from 'react-router'
-import { AlertTriangle, CheckCircle2, Download, FolderOpen, Pencil, Plus, TestTube2, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FolderOpen, Loader2, Pencil, Plus, RefreshCw, TestTube2, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { BILLING_RESPONSIBILITY, BUILTIN_PRICES, PROVIDER_LABELS } from '@shared/defaults'
 import type { DeepPartial } from '@shared/api'
 import type { AppInfo } from '@shared/api'
-import type { BrowserChannel, CoverLetterLength, LlmStage, ModelPrice, ProviderInfo, RemotePreference, Seniority, Settings } from '@shared/types'
+import type { BrowserChannel, CoverLetterLength, LlmStage, ModelPrice, ProviderInfo, RemotePreference, Seniority, Settings, UpdateStatus } from '@shared/types'
 import { api, isDemo } from '@renderer/lib/api'
 import { useApp } from '@renderer/lib/app'
 import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { applyTheme, getStoredTheme, setOnboardingSkipped, type Theme } from '@renderer/lib/theme'
+import { relativeTime } from '@renderer/lib/format'
 import { autopilotConfirmMessage } from '@renderer/lib/autopilot'
 import { suggestedModel } from '@renderer/lib/providers'
 import { ProviderBillingBadge } from '@renderer/components/badges'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 import { ModelPicker } from '@renderer/components/ModelPicker'
+import { RestartToUpdateDialog } from '@renderer/components/RestartToUpdateDialog'
 import { KEY_STORAGE_NOTE, KeyStorageWarning, ProviderForm, describeLimits, useKeyStorageWeak } from '@renderer/components/ProviderForm'
-import { Badge, Button, Card, CardHeader, Checkbox, Chip, ErrorBlock, Field, IconButton, Input, Loading, Modal, NumberInput, Page, PageHeader, Segmented, Select, TD, TH, TagInput, Textarea, Toggle } from '@renderer/components/ui'
+import { Badge, Button, Card, CardHeader, Checkbox, Chip, ErrorBlock, Field, IconButton, Input, Loading, Modal, NumberInput, Page, PageHeader, ProgressBar, Segmented, Select, TD, TH, TagInput, Textarea, Toggle } from '@renderer/components/ui'
 
 const SECTIONS = [
   ['providers', 'AI providers'],
@@ -30,6 +32,7 @@ const SECTIONS = [
   ['browser', 'Browser'],
   ['writing', 'Writing'],
   ['eeo', 'EEO answers'],
+  ['updates', 'Updates'],
   ['data', 'Theme and data']
 ] as const
 
@@ -320,6 +323,7 @@ export function SettingsPage(): React.JSX.Element {
           </Card>
 
           <EeoCard draft={draft} set={set} />
+          <UpdatesCard draft={draft} set={set} />
           <DataCard />
         </div>
       </div>
@@ -698,6 +702,90 @@ function EeoCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(
 }
 
 // ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+/** One sentence saying where updates stand, for the Updates card. */
+function updateLine(u: UpdateStatus): string {
+  switch (u.state) {
+    case 'disabled':
+      return u.message ?? "This copy of JobPilot can't update itself."
+    case 'idle':
+      return "JobPilot hasn't checked for updates yet."
+    case 'checking':
+      return 'Checking for updates.'
+    case 'up_to_date':
+      return u.checkedAt ? `JobPilot is up to date. Last checked ${relativeTime(u.checkedAt)}.` : 'JobPilot is up to date.'
+    case 'downloading':
+      return `Downloading version ${u.version ?? 'the update'}.${u.percent === null ? '' : ` ${Math.round(u.percent)}% done.`}`
+    case 'ready':
+      return `Version ${u.version ?? 'the update'} is ready. It installs the next time JobPilot closes, or you can restart now.`
+    case 'available':
+      return `Version ${u.version ?? 'the update'} is available. This computer can't install it for you, so download it and run the installer.`
+    case 'error':
+      return u.message ?? "JobPilot couldn't check for updates."
+  }
+}
+
+function UpdatesCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(key: K, patch: Partial<Settings[K]>) => void }): React.JSX.Element {
+  const toast = useToast()
+  const { updateStatus: u, checkForUpdates } = useApp()
+  const [restarting, setRestarting] = useState(false)
+  const canCheck = !!u && u.state !== 'disabled' && u.state !== 'checking' && u.state !== 'downloading'
+
+  return (
+    <Card id="settings-updates">
+      <CardHeader title="Updates" hint="To look for a new version, JobPilot asks GitHub whether one exists. GitHub sees your IP address and the version you run, as it does for any download. Updates keep your data." />
+      <div className="space-y-4 p-4">
+        {!u ? (
+          <Loading />
+        ) : (
+          <>
+            <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
+              <dt className="text-muted">Version</dt>
+              <dd className="text-fg">{u.currentVersion}</dd>
+              <dt className="text-muted">Status</dt>
+              <dd className="flex items-start gap-2 text-fg" aria-live="polite">
+                {u.state === 'checking' || u.state === 'downloading' ? (
+                  <Loader2 size={15} className="mt-0.5 shrink-0 text-muted motion-safe:animate-spin" />
+                ) : u.state === 'up_to_date' ? (
+                  <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-good" />
+                ) : u.state === 'error' ? (
+                  <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warn" />
+                ) : null}
+                <span>{updateLine(u)}</span>
+              </dd>
+            </dl>
+            {u.state === 'downloading' && u.percent !== null && (
+              <div className="max-w-sm">
+                <ProgressBar value={u.percent / 100} />
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button icon={<RefreshCw size={13} />} loading={u.state === 'checking'} disabled={!canCheck} onClick={() => void checkForUpdates()}>
+                Check for updates
+              </Button>
+              {u.state === 'ready' && (
+                <Button variant="primary" onClick={() => setRestarting(true)}>
+                  Restart to update
+                </Button>
+              )}
+              {u.downloadUrl && (
+                <Button icon={<Download size={13} />} onClick={() => void api.openExternal(u.downloadUrl as string).catch(toast.error)}>
+                  {u.state === 'available' && u.version ? `Download version ${u.version}` : 'Open the download page'}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+        <Toggle checked={draft.updates.autoCheck} onChange={(v) => set('updates', { autoCheck: v })} label="Check for updates automatically" hint="JobPilot checks a few seconds after it opens and then every few hours. Checking by hand works either way." />
+      </div>
+      {restarting && <RestartToUpdateDialog onClose={() => setRestarting(false)} />}
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Theme and data
 // ---------------------------------------------------------------------------
 
@@ -764,8 +852,6 @@ function DataCard(): React.JSX.Element {
         <div className="border-t border-line pt-4">
           {info.data ? (
             <dl className="grid grid-cols-[8rem_1fr] gap-y-1.5 text-sm">
-              <dt className="text-muted">Version</dt>
-              <dd className="text-fg">{info.data.version}</dd>
               <dt className="text-muted">Platform</dt>
               <dd className="text-fg">{info.data.platform}</dd>
               <dt className="text-muted">Data folder</dt>

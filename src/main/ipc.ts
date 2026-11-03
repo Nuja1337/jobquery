@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { BrowserWindow, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 import type { Api, PushChannel, PushEvents } from '@shared/api'
-import type { Application, ApplicationOutcome, DocumentKind, Job, SubmitResult } from '@shared/types'
+import type { Application, ApplicationOutcome, DocumentKind, Job, SubmitResult, UpdateStatus } from '@shared/types'
 import { answerFields, type AnswerDeps } from './apply/answers'
 import { BrowserManager } from './apply/browser'
 import { renderCoverLetterPdf } from './apply/coverLetterPdf'
@@ -22,6 +22,7 @@ import { copyIntoAppData, extractTextFromFile, fetchUrlText } from './profile/in
 import { Scheduler } from './scheduler'
 import type { KeyVault } from './secrets'
 import { detectAts, fetchJobByUrl } from './sources'
+import { Updater, type UpdaterOptions } from './updater'
 import { lintText } from './writing/lint'
 import { writeCoverLetter } from './writing/generate'
 
@@ -35,6 +36,8 @@ export interface IpcDeps {
   appVersion: string
   /** Only frames showing the app's own page may call the API. */
   isTrustedSender: (event: IpcMainInvokeEvent) => boolean
+  /** Left out in tests and anywhere the app can't update itself. */
+  updates?: Pick<UpdaterOptions, 'backend' | 'isPackaged' | 'platform' | 'quit'>
 }
 
 const SAMPLE_KINDS: DocumentKind[] = ['cover_letter_sample', 'writing_sample']
@@ -328,6 +331,26 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     submit: (applicationId) => submit(applicationId, 'auto', 'autopilot')
   })
   scheduler.start()
+
+  const updater = deps.updates
+    ? new Updater({
+        ...deps.updates,
+        currentVersion: deps.appVersion,
+        emit: (status) => deps.emit('update:status', status),
+        isAutoCheckOn: () => ctx.settings.get().updates.autoCheck,
+        beforeInstall: () => shutdown()
+      })
+    : null
+  updater?.start()
+  const noUpdater = (): UpdateStatus => ({
+    state: 'disabled',
+    currentVersion: deps.appVersion,
+    version: null,
+    percent: null,
+    checkedAt: null,
+    message: 'Updates work only in the installed app.',
+    downloadUrl: null
+  })
 
   const insideDataDir = (p: string) => {
     const rel = path.relative(deps.paths.dataDir, path.resolve(p))
@@ -657,10 +680,29 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async getUsage() {
       return ctx.llm.usageSummary()
+    },
+
+    // Updates
+    async getUpdateStatus() {
+      return updater?.getStatus() ?? noUpdater()
+    },
+    async checkForUpdates() {
+      return updater ? updater.check() : noUpdater()
+    },
+    async installUpdate() {
+      if (!updater) throw new Error('Updates work only in the installed app.')
+      if (pipeline.status().phase !== 'idle') throw new Error('A run is in progress. Restart to update after it finishes, or close JobPilot to install the update then.')
+      const busy = inFlight.size > 0 || ctx.applications.list({ statuses: ['draft', 'submitting'], limit: 1 }).total > 0
+      if (busy) throw new Error('JobPilot is preparing or sending an application. Restart to update after it finishes.')
+      await updater.install()
     }
   }
 
-  const shutdown: Shutdown = async () => {
+  // Runs once. Closing the app and installing an update can both ask for it.
+  let closing: Promise<void> | null = null
+  const shutdown: Shutdown = () => (closing ??= closeDown())
+  const closeDown = async (): Promise<void> => {
+    updater?.stop()
     scheduler.stop()
     pipeline.cancel()
     // Save first, so nothing is lost if closing the browser hangs.

@@ -35,6 +35,7 @@ import type {
   Settings,
   SubmitMode,
   SubmitResult,
+  UpdateStatus,
   UsageSummary
 } from './types'
 
@@ -155,6 +156,19 @@ export interface Api {
   // Analytics
   getAnalytics(rangeDays: number): Promise<AnalyticsReport>
   getUsage(): Promise<UsageSummary>
+
+  // Updates
+  getUpdateStatus(): Promise<UpdateStatus>
+  /**
+   * Checks for a new version now, even when automatic checks are off. Resolves when the check
+   * finishes. A newer version then downloads in the background, reported through 'update:status'.
+   */
+  checkForUpdates(): Promise<UpdateStatus>
+  /**
+   * Saves everything, closes the app, installs the downloaded update and opens the app again.
+   * Refuses while a run is going or an application is open in the browser.
+   */
+  installUpdate(): Promise<void>
 }
 
 export type ApiMethod = keyof Api
@@ -165,6 +179,7 @@ export interface PushEvents {
   'event:new': EventRecord
   'jobs:changed': { jobIds: string[] }
   'applications:changed': { applicationIds: string[] }
+  'update:status': UpdateStatus
 }
 
 export type PushChannel = keyof PushEvents

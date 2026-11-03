@@ -88,6 +88,8 @@ npm run dist:mac     # macOS (.dmg)
 npm run dist:linux   # Linux (.AppImage)
 ```
 
+[docs/RELEASING.md](docs/RELEASING.md) covers publishing a build so installed copies can update.
+
 ### Try it without a key
 
 Demo mode runs the interface with sample data in a normal browser. It doesn't open the app or touch your real data.
@@ -119,17 +121,28 @@ Then open http://localhost:5173. Add `?onboarding=1` to see the first-run setup.
 - Nothing counts as submitted until the page changes after the click and shows a new confirmation message or moves to a thank-you page, or until you mark it yourself. A screenshot is saved for each submission the app sees.
 - Jobs come from public APIs meant for listing jobs. JobPilot doesn't scrape LinkedIn, Indeed or Glassdoor. RemoteOK and Remotive ask for a link back to their listings, and the app links each of their jobs to its page there.
 
+## Updates
+
+Installed copies of JobPilot look for new versions on GitHub. They check about 10 seconds after the app opens and then every 4 hours, while "Check for updates automatically" is on in Settings, Updates. A check you start yourself works either way.
+
+- **Windows and the Linux AppImage.** A new version downloads in the background and installs the next time JobPilot closes. The top bar shows "Restart to update" if you would rather install it right away. JobPilot saves your work, closes, installs and opens again.
+- **macOS.** The app isn't signed yet, and macOS won't install unsigned updates. JobPilot shows "Update available" instead, which opens the download page, and you install the new version yourself.
+- **Development builds and other Linux installs.** These can't update themselves. Settings, Updates says so and links to the download page when there is one.
+
+Updates keep your data. Your jobs, profile, settings and API keys stay where they are. [Privacy](#privacy) says what a check sends.
+
 ## Your data
 
 Everything lives in one SQLite file in the app's data folder, along with copies of your uploads, cover letter PDFs and submission screenshots. Settings has an export of everything except your API keys. [Privacy](#privacy) lists what leaves your computer.
 
 ## Privacy
 
-JobPilot has no account, server or tracking of its own. It doesn't send telemetry, check for updates or send crash reports. The list below covers everything that leaves your computer.
+JobPilot has no account, server or tracking of its own. It doesn't send telemetry or crash reports. The list below covers everything that leaves your computer.
 
 - **Your AI provider.** Each AI call goes straight to the provider you chose, with your key. Depending on the step, it can include the job posting, your profile, the text of your resume, your notes, your writing samples and the questions on an application form. With Ollama or LM Studio on this computer, none of it leaves. Read your provider's data policy, because a free tier may use what you send to train its models.
 - **Job sources.** To find jobs, JobPilot asks the public job APIs you turned on for postings, and sends the company names, search words and places you set up. It identifies itself as JobPilot in the request. For Adzuna it sends your own Adzuna app ID and key.
 - **Pages you give it.** When you paste a job link or add a portfolio link, JobPilot loads that page to read its text.
+- **Update checks.** JobPilot asks GitHub whether a newer version exists, and on Windows and Linux downloads it if there is one. GitHub sees your IP address and the version you run, as with any download. No account or personal data is sent. You can turn automatic checks off under Settings, Updates.
 - **Employers.** To read or fill an application, JobPilot opens the form in your own Chrome or Edge, like a visit you made yourself. For Greenhouse jobs it can read the form from Greenhouse's public API first. What you fill in goes to the employer only when you submit, or when auto-submit does it for you.
 
 Links in the app open in your default browser, and only when you click them.

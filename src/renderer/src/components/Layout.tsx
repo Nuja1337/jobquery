@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
-import { BarChart3, Briefcase, FileText, Globe, Inbox, LayoutDashboard, Play, Rocket, Send, Settings as SettingsIcon, Square, Wand2 } from 'lucide-react'
+import { BarChart3, Briefcase, Download, FileText, Globe, Inbox, LayoutDashboard, Play, RefreshCw, Rocket, Send, Settings as SettingsIcon, Square, Wand2 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { isDemo } from '@renderer/lib/api'
+import { RELEASES_URL } from '@shared/defaults'
+import { api, isDemo } from '@renderer/lib/api'
 import { useApp } from '@renderer/lib/app'
 import { formatUsd, plural } from '@renderer/lib/format'
+import { useToast } from '@renderer/lib/toast'
+import { RestartToUpdateDialog } from './RestartToUpdateDialog'
 import { Badge, Button, ProgressBar } from './ui'
 
 const NAV = [
@@ -55,6 +59,31 @@ function Sidebar(): React.JSX.Element {
   )
 }
 
+/** Shows a button only when an update is ready to install or has to be downloaded by hand. */
+function UpdateButton(): React.JSX.Element | null {
+  const { updateStatus } = useApp()
+  const toast = useToast()
+  const [confirming, setConfirming] = useState(false)
+  if (updateStatus?.state === 'ready') {
+    return (
+      <>
+        <Button size="sm" icon={<RefreshCw size={13} />} onClick={() => setConfirming(true)}>
+          Restart to update
+        </Button>
+        {confirming && <RestartToUpdateDialog onClose={() => setConfirming(false)} />}
+      </>
+    )
+  }
+  if (updateStatus?.state === 'available') {
+    return (
+      <Button size="sm" icon={<Download size={13} />} onClick={() => void api.openExternal(updateStatus.downloadUrl ?? RELEASES_URL).catch(toast.error)} title={updateStatus.version ? `Version ${updateStatus.version} is available. This opens the download page.` : undefined}>
+        Update available
+      </Button>
+    )
+  }
+  return null
+}
+
 function TopBar(): React.JSX.Element {
   const { progress, running, starting, runNow, cancelRun, usage } = useApp()
   const noLimit = !!usage && usage.dailyBudgetUsd <= 0
@@ -98,15 +127,18 @@ function TopBar(): React.JSX.Element {
           {noLimit ? <div className="h-1.5 w-full rounded-full border border-dashed border-line-strong" aria-hidden="true" /> : <ProgressBar value={spendRatio} tone={spendRatio >= 1 ? 'bad' : spendRatio >= 0.8 ? 'warn' : 'accent'} />}
         </div>
       )}
-      {running ? (
-        <Button onClick={() => void cancelRun()} icon={<Square size={13} />}>
-          Cancel run
-        </Button>
-      ) : (
-        <Button variant="primary" loading={starting} disabled={starting} onClick={() => void runNow()} icon={<Play size={13} />}>
-          Run now
-        </Button>
-      )}
+      <div className="flex shrink-0 items-center gap-2">
+        <UpdateButton />
+        {running ? (
+          <Button onClick={() => void cancelRun()} icon={<Square size={13} />}>
+            Cancel run
+          </Button>
+        ) : (
+          <Button variant="primary" loading={starting} disabled={starting} onClick={() => void runNow()} icon={<Play size={13} />}>
+            Run now
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
