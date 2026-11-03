@@ -120,7 +120,7 @@ export function createMockBridge(): Bridge {
   let progress: PipelineProgress = { runId: null, phase: 'idle', message: 'Idle', done: 0, total: 0 }
   let cancelled = false
   let extraSpend = 0
-  let freeCallsToday = 12
+  let freeCallsToday = startOnboarding ? 0 : 12
 
   const listeners = new Map<PushChannel, Set<(p: never) => void>>()
   function emit<C extends PushChannel>(channel: C, payload: PushEvents[C]): void {
@@ -175,14 +175,16 @@ export function createMockBridge(): Bridge {
   const usage = (): UsageSummary => {
     const a = buildAnalytics(30)
     const today = a.daily[a.daily.length - 1]
+    // A fresh install has no history, so only what this session spent counts.
+    const base = startOnboarding ? { today: 0, month: 0, todayTokens: 0, monthTokens: 0 } : { today: today.costUsd, month: a.daily.reduce((s, d) => s + d.costUsd, 0), todayTokens: today.tokens, monthTokens: a.daily.reduce((s, d) => s + d.tokens, 0) }
     return {
-      todayUsd: Math.round((today.costUsd + extraSpend) * 1000) / 1000,
-      monthUsd: Math.round((a.daily.reduce((s, d) => s + d.costUsd, 0) + extraSpend) * 1000) / 1000,
-      todayTokens: today.tokens,
-      monthTokens: a.daily.reduce((s, d) => s + d.tokens, 0),
+      todayUsd: Math.round((base.today + extraSpend) * 1000) / 1000,
+      monthUsd: Math.round((base.month + extraSpend) * 1000) / 1000,
+      todayTokens: base.todayTokens,
+      monthTokens: base.monthTokens,
       dailyBudgetUsd: settings.budget.dailyUsd,
       monthlyBudgetUsd: settings.budget.monthlyUsd,
-      cacheHitsMonth: a.tokenSavings.cacheHits,
+      cacheHitsMonth: startOnboarding ? 0 : a.tokenSavings.cacheHits,
       freeCallsToday
     }
   }
@@ -626,7 +628,8 @@ export function createMockBridge(): Bridge {
 
     async getAnalytics(rangeDays) {
       await sleep(250)
-      return buildAnalytics(rangeDays)
+      const report = buildAnalytics(rangeDays)
+      return jobs.length === 0 ? { ...report, funnel: { ...report.funnel, discovered: 0 } } : report
     },
     async getUsage() {
       return usage()

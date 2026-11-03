@@ -22,7 +22,7 @@ Use a free option or a paid key, whichever you prefer. Each step of the pipeline
 
 | Provider | Notes |
 |---|---|
-| Google Gemini (free tier) | You don't need a card. Use a key from a Google project without billing, since a billed key is charged for each call and JobPilot treats it as free. Google may use free-tier requests to improve its products, and people may read them |
+| Google Gemini (free tier) | You don't need a card. Use a key from a Google project without billing, since a billed key is charged for each call and JobPilot treats it as free. Google may use free-tier requests to improve its products, and people may read them. This doesn't apply in the European Economic Area, Switzerland or the UK |
 | Groq (free tier) | You don't need a card. It runs fast open models with daily limits |
 | OpenRouter free models | Pick models whose names end in `:free`. You get about 50 requests a day until you've bought credits, and any other model on OpenRouter is paid |
 | Mistral (free plan) | You don't need a card. Mistral may use free-plan requests to train its models |
@@ -40,9 +40,28 @@ Use a free option or a paid key, whichever you prefer. Each step of the pipeline
 
 A ChatGPT or Claude subscription doesn't include API use, so a paid key is billed separately by its provider.
 
-Free and local providers never count toward your spending caps, so only mark a provider free when its key can't be charged. JobPilot spaces out its requests to stay under a free tier's per-minute and per-day limits, and when a provider says the limit is reached, it pauses and carries on with the next run. Paid keys are priced per call, and daily and monthly caps stop all paid calls when they're reached.
+JobPilot spaces out its requests to stay under a free tier's per-minute and per-day limits. When a provider says the limit is reached, it pauses and carries on with the next run.
 
 Your key stays on your computer. It's encrypted with your operating system's key store when one is available, and the app warns you when there isn't one.
+
+## Costs and billing
+
+Your AI provider bills you directly, and JobPilot isn't responsible for any charges from your provider.
+
+- A free tier costs nothing while billing is off for the key. A key with billing turned on gets charged for each call, even if you marked it free in JobPilot.
+- JobPilot's costs and budgets are estimates from published prices, so your bill can be higher. Providers change their prices, so check the prices in Settings against your provider's price page.
+- JobPilot stops making paid calls when its estimate reaches your daily or monthly budget. A call that is already running can go a little over. A budget of 0 means no limit, and free and local providers don't count toward budgets.
+- Set a spend limit with your provider too.
+
+Each provider below has a price page and a place to check usage or set a limit.
+
+- **Groq.** [Prices](https://groq.com/pricing) and [limits](https://console.groq.com/settings/limits). On a paid Groq plan, you can set a spend limit under Settings, Billing, Limits in the Groq console.
+- **OpenRouter.** [Prices](https://openrouter.ai/models) and [keys](https://openrouter.ai/settings/keys). OpenRouter bills from credits you buy ahead, and you can set a credit limit on the key so it can't spend more than you choose.
+- **Anthropic.** [Prices](https://platform.claude.com/docs/en/about-claude/pricing) and [limits](https://platform.claude.com/settings/limits). Set a monthly spend limit on the Limits page of the Claude Console.
+- **OpenAI.** [Prices](https://platform.openai.com/docs/pricing) and [billing](https://platform.openai.com/settings/organization/billing/overview). OpenAI bills from credits you buy ahead. Auto recharge is on by default, so turn it off if you don't want OpenAI to buy more credits on its own.
+- **Google Gemini with billing turned on.** [Prices](https://ai.google.dev/gemini-api/docs/pricing) and [spend](https://aistudio.google.com/spend). Set a monthly spend cap on the Spend page in AI Studio. Google says spending can run past the cap for about 10 minutes.
+
+The Gemini free tier has a [price page](https://ai.google.dev/gemini-api/docs/pricing) and a [usage page](https://aistudio.google.com/usage), and Mistral has a [price page](https://mistral.ai/pricing).
 
 ## Why it's a desktop app
 
@@ -102,7 +121,18 @@ Then open http://localhost:5173. Add `?onboarding=1` to see the first-run setup.
 
 ## Your data
 
-Everything lives in one SQLite file in the app's data folder, along with copies of your uploads, cover letter PDFs and submission screenshots. The only data that leaves your computer is what goes to your AI provider in each request and what you submit to employers. Settings has an export of everything except your API keys.
+Everything lives in one SQLite file in the app's data folder, along with copies of your uploads, cover letter PDFs and submission screenshots. Settings has an export of everything except your API keys. [Privacy](#privacy) lists what leaves your computer.
+
+## Privacy
+
+JobPilot has no account, server or tracking of its own. It doesn't send telemetry, check for updates or send crash reports. The list below covers everything that leaves your computer.
+
+- **Your AI provider.** Each AI call goes straight to the provider you chose, with your key. Depending on the step, it can include the job posting, your profile, the text of your resume, your notes, your writing samples and the questions on an application form. With Ollama or LM Studio on this computer, none of it leaves. Read your provider's data policy, because a free tier may use what you send to train its models.
+- **Job sources.** To find jobs, JobPilot asks the public job APIs you turned on for postings, and sends the company names, search words and places you set up. It identifies itself as JobPilot in the request. For Adzuna it sends your own Adzuna app ID and key.
+- **Pages you give it.** When you paste a job link or add a portfolio link, JobPilot loads that page to read its text.
+- **Employers.** To read or fill an application, JobPilot opens the form in your own Chrome or Edge, like a visit you made yourself. For Greenhouse jobs it can read the form from Greenhouse's public API first. What you fill in goes to the employer only when you submit, or when auto-submit does it for you.
+
+Links in the app open in your default browser, and only when you click them.
 
 ## Development
 
@@ -132,3 +162,7 @@ This is an early version. Known gaps:
 - Replies from employers are tracked by hand. Reading them from your inbox is planned.
 - Tailoring the resume itself for each job is planned. Today the app tailors the cover letter and answers.
 - Free tiers change their limits often. The limits in each free preset are cautious starting points, and you can change them in Settings.
+
+## Disclaimer
+
+JobPilot is provided as is, without warranty. You're responsible for charges from your AI providers, for everything sent to employers in your name, and for following the terms of the job sites and AI providers you use. JobPilot isn't affiliated with any AI provider or job board. Their names are trademarks of their owners.

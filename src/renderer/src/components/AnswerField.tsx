@@ -172,11 +172,11 @@ export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerat
           )}
           {!flagged && guess && (
             <Badge tone="warn" title={`Below ${Math.round(AUTO_SUBMIT_MIN_CONFIDENCE * 100)}% sure. The Submit button won't send this application while it's a guess. Edit it or press Looks right.`}>
-              <TriangleAlert size={11} /> Check this, it&apos;s a guess
+              <TriangleAlert size={11} /> Check this guess
             </Badge>
           )}
           <AnswerSourceBadge source={answer.source} />
-          {answer.source !== 'user' && answer.source !== 'file' && (
+          {answer.source !== 'user' && answer.source !== 'file' && (answer.value.trim() || flagged) && (
             <Badge tone={guess ? 'warn' : answer.confidence >= 0.8 ? 'good' : 'neutral'} title="How sure JobPilot is about this answer">
               {Math.round(answer.confidence * 100)}%
             </Badge>

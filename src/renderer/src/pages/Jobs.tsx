@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { Briefcase, FileEdit, Link as LinkIcon, RotateCcw, Search, Star, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { BUCKET_LABELS } from '@shared/defaults'
@@ -7,7 +7,7 @@ import type { FitBucket, JobQuery, JobStage, JobSummary, SourceKind } from '@sha
 import { api } from '@renderer/lib/api'
 import { useAsync, useDebounced } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
-import { SOURCE_LABELS, formatSalary, plural, shortAge } from '@renderer/lib/format'
+import { REMOTE_LABELS, SOURCE_LABELS, formatSalary, plural, shortAge } from '@renderer/lib/format'
 import { FitBadge, StageBadge } from '@renderer/components/badges'
 import { DismissDialog } from '@renderer/components/DismissDialog'
 import { Badge, Button, EmptyState, ErrorBlock, Field, IconButton, Input, Loading, Modal, Page, PageHeader, Select, TD, TH, Tabs } from '@renderer/components/ui'
@@ -41,6 +41,8 @@ const EMPTY_TEXT: Record<TabId, { title: string; text: string }> = {
   all: { title: 'No jobs yet', text: 'Add a company or a saved search in Sources, then press Run now. You can also add a single job by its web address.' }
 }
 
+const FIT_FILTERS: FitBucket[] = ['perfect', 'great', 'good', 'weak']
+
 const PAGE = 100
 /** The most rows the main process returns for one request. */
 const MAX_REQUEST = 500
@@ -48,9 +50,13 @@ const MAX_REQUEST = 500
 export function Jobs(): React.JSX.Element {
   const navigate = useNavigate()
   const toast = useToast()
+  const [searchParams] = useSearchParams()
   const [tab, setTab] = useState<TabId>('shortlist')
   const [search, setSearch] = useState('')
-  const [bucket, setBucket] = useState<FitBucket | ''>('')
+  const [bucket, setBucket] = useState<FitBucket | ''>(() => {
+    const fit = searchParams.get('fit')
+    return FIT_FILTERS.find((b) => b === fit) ?? ''
+  })
   const [source, setSource] = useState<SourceKind | ''>('')
   const [starredOnly, setStarredOnly] = useState(false)
   const [sort, setSort] = useState<NonNullable<JobQuery['sort']>>('score')
@@ -179,7 +185,7 @@ export function Jobs(): React.JSX.Element {
         </div>
         <Select value={bucket} onChange={(e) => setBucket(e.target.value as FitBucket | '')} className="w-36" aria-label="Fit">
           <option value="">Any fit</option>
-          {(['perfect', 'great', 'good', 'weak'] as FitBucket[]).map((b) => (
+          {FIT_FILTERS.map((b) => (
             <option key={b} value={b}>
               {BUCKET_LABELS[b]}
             </option>
@@ -193,7 +199,7 @@ export function Jobs(): React.JSX.Element {
             </option>
           ))}
         </Select>
-        <Button variant={starredOnly ? 'primary' : 'secondary'} icon={<Star size={13} />} onClick={() => setStarredOnly(!starredOnly)} aria-pressed={starredOnly}>
+        <Button variant="secondary" className={starredOnly ? 'border-accent/60 bg-accent-soft text-accent-strong' : undefined} icon={<Star size={13} />} onClick={() => setStarredOnly(!starredOnly)} aria-pressed={starredOnly}>
           Starred
         </Button>
         <div className="ml-auto flex items-center gap-2">
@@ -226,26 +232,38 @@ export function Jobs(): React.JSX.Element {
       ) : items.length === 0 ? (
         search || bucket || source || starredOnly ? (
           <EmptyState icon={<Briefcase size={24} />} title="No jobs match these filters" text="Clear the search or a filter to see more." />
+        ) : counts.data?.all === 0 ? (
+          <EmptyState
+            icon={<Briefcase size={24} />}
+            {...EMPTY_TEXT.all}
+            action={
+              <Button variant="primary" onClick={() => navigate('/sources')}>
+                Open Sources
+              </Button>
+            }
+          />
         ) : (
           <EmptyState icon={<Briefcase size={24} />} {...EMPTY_TEXT[tab]} />
         )
       ) : (
-        <div className="overflow-hidden rounded-lg border border-line bg-surface">
-          <table className="w-full border-collapse text-sm">
+        <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+          <table className="w-full border-collapse text-sm [&_td]:px-2 [&_th]:px-2 xl:[&_td]:px-3 xl:[&_th]:px-3">
             <thead>
               <tr>
                 <th className={clsx(TH, 'w-8')}>
                   <input type="checkbox" aria-label="Select all" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? new Set(items.map((j) => j.id)) : new Set())} />
                 </th>
                 <th className={clsx(TH, 'w-8')} />
-                <th className={clsx(TH, 'w-40')}>Fit</th>
+                <th className={clsx(TH, 'w-32')}>Fit</th>
                 <th className={TH}>Job</th>
                 <th className={TH}>Where</th>
                 <th className={TH}>Pay</th>
-                <th className={TH}>Source</th>
+                <th className={clsx(TH, 'hidden xl:table-cell')}>Source</th>
                 <th className={clsx(TH, 'text-right')}>Posted</th>
-                <th className={clsx(TH, 'text-right')}>Prescore</th>
-                <th className={clsx(TH, 'w-56 text-right')}>Actions</th>
+                <th className={clsx(TH, 'hidden text-right xl:table-cell')} title="Keyword match from the free filters, 0 to 100. Jobs below your threshold never reach the AI.">
+                  Prescore
+                </th>
+                <th className={clsx(TH, 'w-36 text-right')}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -281,7 +299,7 @@ export function Jobs(): React.JSX.Element {
                         {tab === 'all' && <StageBadge stage={j.stage} />}
                       </div>
                     </td>
-                    <td className={clsx(TD, 'max-w-md')}>
+                    <td className={clsx(TD, 'w-full max-w-0')}>
                       <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/jobs/${j.id}`) }} className="block w-full text-left">
                         <span className="block truncate font-medium text-fg group-hover:text-accent-strong">{j.title}</span>
                         <span className="block truncate text-xs text-muted">{j.company}</span>
@@ -289,22 +307,22 @@ export function Jobs(): React.JSX.Element {
                       </button>
                     </td>
                     <td className={clsx(TD, 'text-muted')}>
-                      <p className="max-w-44 truncate">{j.location ?? 'Not listed'}</p>
-                      {j.remote !== 'unknown' && <p className="text-xs capitalize text-faint">{j.remote}</p>}
+                      <p className="max-w-32 truncate xl:max-w-44">{j.location ?? 'Not listed'}</p>
+                      {j.remote !== 'unknown' && !(j.location ?? '').toLowerCase().replace(/[\s-]/g, '').includes(j.remote) && <p className="text-xs text-faint">{REMOTE_LABELS[j.remote]}</p>}
                     </td>
                     <td className={clsx(TD, 'whitespace-nowrap text-muted')}>{formatSalary(j) || <span className="text-faint">Not listed</span>}</td>
-                    <td className={clsx(TD, 'whitespace-nowrap text-muted')}>{SOURCE_LABELS[j.source]}</td>
+                    <td className={clsx(TD, 'hidden whitespace-nowrap text-muted xl:table-cell')}>{SOURCE_LABELS[j.source]}</td>
                     <td className={clsx(TD, 'text-right tabular-nums text-muted')}>{shortAge(j.postedAt ?? j.discoveredAt)}</td>
-                    <td className={clsx(TD, 'text-right tabular-nums text-muted')}>{j.prescore ?? '-'}</td>
+                    <td className={clsx(TD, 'hidden text-right tabular-nums text-muted xl:table-cell')}>{j.prescore ?? '-'}</td>
                     <td className={TD} onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1.5">
                         {j.applicationId && j.stage === 'ready' && (
-                          <Button size="sm" variant="primary" onClick={() => navigate(`/review/${j.applicationId}`)}>
+                          <Button size="sm" variant="secondary" onClick={() => navigate(`/review/${j.applicationId}`)}>
                             Review
                           </Button>
                         )}
                         {canPrepare && (
-                          <Button size="sm" variant={j.stage === 'shortlisted' ? 'primary' : 'secondary'} loading={busy} icon={<FileEdit size={13} />} onClick={() => void prepare(j)}>
+                          <Button size="sm" variant="secondary" loading={busy} icon={<FileEdit size={13} />} onClick={() => void prepare(j)}>
                             Prepare
                           </Button>
                         )}

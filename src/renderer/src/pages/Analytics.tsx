@@ -77,13 +77,13 @@ function Report({ r }: { r: AnalyticsReport }): React.JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-6 gap-3">
-        <Stat label="Submitted" value={sent.submitted} />
+      <div className="grid grid-cols-3 gap-3 xl:grid-cols-6">
+        <Stat label="Submitted" value={sent.submitted} hint="Sent in this period" />
         <Stat label="Reply rate" value={formatPercent(responseRate)} hint={`${plural(sent.responses, 'reply', 'replies')}`} />
         <Stat label="Interview rate" value={formatPercent(interviewRate)} hint={plural(sent.interviews, 'interview')} />
-        <Stat label="AI spend per application" value={formatUsd(r.averages.costPerApplicationUsd)} hint="All AI spend in the period, divided by applications sent" />
-        <Stat label="Discovery to apply" value={r.averages.hoursDiscoveryToApply == null ? '-' : `${r.averages.hoursDiscoveryToApply.toFixed(0)} h`} />
-        <Stat label="Days to first reply" value={r.averages.daysToFirstResponse == null ? '-' : r.averages.daysToFirstResponse.toFixed(1)} />
+        <Stat label="AI spend per application" value={formatUsd(r.averages.costPerApplicationUsd)} hint="Estimated spend in the period, divided by applications sent" />
+        <Stat label="Time to apply" value={r.averages.hoursDiscoveryToApply == null ? '-' : `${Math.round(r.averages.hoursDiscoveryToApply)} h`} hint="From finding a job to applying, on average" />
+        <Stat label="Time to first reply" value={r.averages.daysToFirstResponse == null ? '-' : `${r.averages.daysToFirstResponse.toFixed(1)} days`} hint="From applying to a reply, on average" />
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -123,7 +123,7 @@ function Report({ r }: { r: AnalyticsReport }): React.JSX.Element {
       <div className="grid grid-cols-3 gap-4">
         <TimeChart title="Jobs found per day" unit="Jobs" data={r.daily} dataKey="discovered" color={SERIES[0]} format={(n) => String(n)} />
         <TimeChart title="Applications submitted per day" unit="Applications" data={r.daily} dataKey="submitted" color={SERIES[2]} format={(n) => String(n)} />
-        <TimeChart title="Cost per day" unit="US dollars" data={r.daily} dataKey="costUsd" color={SERIES[1]} format={formatUsd} axisFormat={(n) => `$${n}`} extra={(d) => [{ label: 'Tokens', value: formatTokens(d.tokens) }]} />
+        <TimeChart title="Estimated cost per day" unit="US dollars" data={r.daily} dataKey="costUsd" color={SERIES[1]} format={formatUsd} axisFormat={(n) => `$${n}`} extra={(d) => [{ label: 'Tokens', value: formatTokens(d.tokens) }]} />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -132,19 +132,19 @@ function Report({ r }: { r: AnalyticsReport }): React.JSX.Element {
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <ChartCard title="Cost by task" hint="Where the money goes." table={{ columns: ['Task', 'Cost', 'Tokens', 'Calls'], rows: r.costByTask.map((t) => [TASK_LABELS[t.task] ?? t.task, formatUsd(t.costUsd), formatTokens(t.tokens), t.calls]) }}>
+        <ChartCard title="Cost by task" hint="Estimated spend for each task in this period." table={{ columns: ['Task', 'Estimated cost', 'Tokens', 'Calls'], rows: r.costByTask.map((t) => [TASK_LABELS[t.task] ?? t.task, formatUsd(t.costUsd), formatTokens(t.tokens), t.calls]) }}>
           <HBarChart
             data={r.costByTask.map((t) => ({ name: TASK_LABELS[t.task] ?? t.task, value: t.costUsd, tokens: t.tokens, calls: t.calls }))}
             format={formatUsd}
-            tooltipRows={(d) => [{ label: 'Cost', value: formatUsd(d.value), color: SERIES[0] }, { label: 'Tokens', value: formatTokens(d.tokens as number) }, { label: 'Calls', value: String(d.calls) }]}
+            tooltipRows={(d) => [{ label: 'Estimated cost', value: formatUsd(d.value), color: SERIES[0] }, { label: 'Tokens', value: formatTokens(d.tokens as number) }, { label: 'Calls', value: String(d.calls) }]}
           />
         </ChartCard>
-        <ChartCard title="Cost by model" hint="Cheap models do the high-volume work." table={{ columns: ['Model', 'Cost', 'Tokens', 'Calls'], rows: r.costByModel.map((t) => [t.model, formatUsd(t.costUsd), formatTokens(t.tokens), t.calls]) }}>
+        <ChartCard title="Cost by model" hint="Estimated spend for each model in this period." table={{ columns: ['Model', 'Estimated cost', 'Tokens', 'Calls'], rows: r.costByModel.map((t) => [t.model, formatUsd(t.costUsd), formatTokens(t.tokens), t.calls]) }}>
           <HBarChart
             data={r.costByModel.map((t) => ({ name: t.model, value: t.costUsd, tokens: t.tokens, calls: t.calls }))}
             labelWidth={160}
             format={formatUsd}
-            tooltipRows={(d) => [{ label: 'Cost', value: formatUsd(d.value), color: SERIES[0] }, { label: 'Tokens', value: formatTokens(d.tokens as number) }, { label: 'Calls', value: String(d.calls) }]}
+            tooltipRows={(d) => [{ label: 'Estimated cost', value: formatUsd(d.value), color: SERIES[0] }, { label: 'Tokens', value: formatTokens(d.tokens as number) }, { label: 'Calls', value: String(d.calls) }]}
           />
         </ChartCard>
       </div>
@@ -169,7 +169,7 @@ function Report({ r }: { r: AnalyticsReport }): React.JSX.Element {
         </ChartCard>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
         <ChartCard title="Top matches" hint="Your skills that good-fit jobs ask for most." table={{ columns: ['Skill', 'Jobs'], rows: r.topMatches.map((g) => [g.key, g.count]) }}>
           <HBarChart data={r.topMatches.map((g) => ({ name: g.key, value: g.count }))} labelWidth={110} tooltipRows={(d) => [{ label: 'Jobs', value: String(d.value), color: SERIES[0] }]} />
         </ChartCard>

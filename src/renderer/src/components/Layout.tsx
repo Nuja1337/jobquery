@@ -88,9 +88,9 @@ function TopBar(): React.JSX.Element {
         </span>
       )}
       {usage && (
-        <div className="w-44" title={noLimit ? `${formatUsd(usage.todayUsd)} spent today. No daily limit is set.` : `${formatUsd(usage.todayUsd)} spent today of a ${formatUsd(usage.dailyBudgetUsd)} daily budget`}>
-          <div className="mb-1 flex justify-between text-xs">
-            <span className="text-muted">Today</span>
+        <div className="w-52 shrink-0" title={`${noLimit ? `About ${formatUsd(usage.todayUsd)} spent today by JobPilot's estimate. No daily limit is set.` : `About ${formatUsd(usage.todayUsd)} spent today of a ${formatUsd(usage.dailyBudgetUsd)} daily budget, by JobPilot's estimate.`} The figure comes from the prices in Settings. Your provider's bill is the real cost.`}>
+          <div className="mb-1 flex justify-between gap-2 whitespace-nowrap text-xs">
+            <span className="text-muted">Today, estimated</span>
             <span className="tabular-nums text-fg">
               {formatUsd(usage.todayUsd)} <span className="text-faint">{noLimit ? 'No limit' : `of ${formatUsd(usage.dailyBudgetUsd)}`}</span>
             </span>

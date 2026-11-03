@@ -6,7 +6,7 @@ import type { Application, ApplicationOutcome, ApplicationSummary } from '@share
 import { api } from '@renderer/lib/api'
 import { useAsync, useDebounced } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
-import { basename, formatDate, formatDateTime, parseMulti, relativeTime } from '@renderer/lib/format'
+import { basename, formatDate, formatDateTime, parseMulti, plural, relativeTime } from '@renderer/lib/format'
 import { FitBadge, OUTCOME_LABELS, OUTCOME_ORDER, OutcomeBadge, SUBMIT_MODE_LABELS, StatusBadge } from '@renderer/components/badges'
 import { Badge, Button, Card, EmptyState, ErrorBlock, Field, Input, Loading, Modal, Page, PageHeader, Segmented, Select, TD, TH, Textarea } from '@renderer/components/ui'
 
@@ -56,7 +56,7 @@ export function Applications(): React.JSX.Element {
           <Search size={14} className="pointer-events-none absolute left-2.5 top-2.5 text-faint" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company or title" className="pl-8" aria-label="Search applications" />
         </div>
-        <span className="text-xs text-faint">{list.data ? `${list.data.total} applications` : ''}</span>
+        <span className="text-xs text-faint">{list.data ? plural(list.data.total, 'application') : ''}</span>
       </div>
 
       {list.error ? (

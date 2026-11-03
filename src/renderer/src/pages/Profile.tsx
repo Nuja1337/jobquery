@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useBlocker } from 'react-router'
 import { Wand2 } from 'lucide-react'
 import type { Profile, ProfileRecord } from '@shared/types'
 import { api } from '@renderer/lib/api'
@@ -31,6 +32,8 @@ export function ProfilePage(): React.JSX.Element {
 
   const saved: ProfileRecord | null = rec.data
   const dirty = !!(draft && saved && JSON.stringify(cleanProfile(draft)) !== JSON.stringify(saved.profile))
+  const leaving = useRef(false)
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname)
 
   async function save(): Promise<void> {
     if (!draft) return
@@ -84,16 +87,39 @@ export function ProfilePage(): React.JSX.Element {
         title="Profile and materials"
         intro="What JobPilot knows about you and writes from."
         actions={
-          tab === 'profile' && (
-            <>
-              <span className="text-xs text-faint">{dirty ? 'Unsaved changes' : saved.updatedAt ? `Saved ${relativeTime(saved.updatedAt)}` : 'Not saved yet'}</span>
-              <Button variant="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>
-                Save profile
-              </Button>
-            </>
-          )
+          tab === 'profile' && <span className="text-xs text-faint">{saved.updatedAt ? `Saved ${relativeTime(saved.updatedAt)}` : 'Not saved yet'}</span>
         }
       />
+
+      {tab === 'profile' && dirty && (
+        <div className="sticky top-0 z-20 -mx-2 mb-4 flex items-center justify-between rounded-lg border border-accent/50 bg-surface px-4 py-2.5 shadow-lg">
+          <p className="text-sm text-fg">You have unsaved changes.</p>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setDraft(saved.profile)}>
+              Discard
+            </Button>
+            <Button variant="primary" loading={saving} onClick={() => void save()}>
+              Save profile
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {blocker.state === 'blocked' && (
+        <ConfirmDialog
+          title="Leave without saving?"
+          message="Your changes on this page aren't saved. If you leave now, they're lost."
+          confirmLabel="Leave without saving"
+          danger
+          onClose={() => {
+            if (!leaving.current) blocker.reset?.()
+          }}
+          onConfirm={() => {
+            leaving.current = true
+            blocker.proceed?.()
+          }}
+        />
+      )}
       <div className="mb-4">
         <Tabs
           value={tab}
@@ -113,7 +139,7 @@ export function ProfilePage(): React.JSX.Element {
             <div className="min-w-0">
               <p className="text-sm font-medium text-fg">Fill this in from your resume</p>
               <p className="text-xs text-faint">
-                {resumeId ? 'Uses your extraction model and replaces the fields below with a draft. Nothing is saved until you press Save profile.' : 'Upload a resume on the Documents tab first.'}
+                {resumeId ? 'Uses your Reading model and replaces the fields below with a draft. Nothing is saved until you press Save profile.' : 'Upload a resume on the Documents tab first.'}
               </p>
             </div>
             <Button icon={<Wand2 size={14} />} loading={reading} disabled={!resumeId} onClick={() => (draft.fullName.trim() ? setConfirmRead(true) : void readResume())}>

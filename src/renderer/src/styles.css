@@ -11,7 +11,7 @@
   --line-strong: #333a4b;
   --fg: #e7e9ef;
   --muted: #a3aabb;
-  --faint: #727a8e;
+  --faint: #848ca0;
   --accent: #7b8cff;
   --accent-strong: #99a6ff;
   --accent-fg: #0b0d12;
@@ -36,7 +36,7 @@
   --c7: #9085e9;
   --c8: #e66767;
   --chart-grid: #232834;
-  --chart-axis: #727a8e;
+  --chart-axis: #848ca0;
 }
 
 :root[data-theme="light"] {
@@ -49,19 +49,19 @@
   --line-strong: #cdd1da;
   --fg: #14161c;
   --muted: #535a6b;
-  --faint: #7d8497;
+  --faint: #656c7f;
   --accent: #4a56d6;
   --accent-strong: #3a45bd;
   --accent-fg: #ffffff;
   --accent-soft: rgb(74 86 214 / 0.1);
-  --good: #17804d;
-  --good-soft: rgb(23 128 77 / 0.1);
-  --warn: #9a6a00;
-  --warn-soft: rgb(154 106 0 / 0.1);
+  --good: #147444;
+  --good-soft: rgb(20 116 68 / 0.1);
+  --warn: #855b00;
+  --warn-soft: rgb(133 91 0 / 0.1);
   --bad: #c13a33;
   --bad-soft: rgb(193 58 51 / 0.1);
-  --info: #1f6fc4;
-  --info-soft: rgb(31 111 196 / 0.1);
+  --info: #1c66b5;
+  --info-soft: rgb(28 102 181 / 0.1);
   --overlay: rgb(20 22 28 / 0.35);
   --c1: #2a78d6;
   --c2: #eb6834;
@@ -72,7 +72,7 @@
   --c7: #6250d6;
   --c8: #e34948;
   --chart-grid: #e8eaf0;
-  --chart-axis: #7d8497;
+  --chart-axis: #656c7f;
 }
 
 @theme inline {
@@ -178,4 +178,16 @@ input[type="radio"] {
 
 .animate-slide-in {
   animation: slide-in 0.15s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-in,
+  .animate-pulse {
+    animation: none;
+  }
+
+  * {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

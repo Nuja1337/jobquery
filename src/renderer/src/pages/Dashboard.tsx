@@ -83,7 +83,9 @@ export function Dashboard(): React.JSX.Element {
   const needCheck = ready.filter((a) => a.flaggedCount === 0 && a.guessCount > 0).length
   const readyNote =
     ready.length === 0
-      ? 'Nothing is waiting. Prepare an application from the shortlist.'
+      ? shortlist.data.total === 0
+        ? 'Nothing is waiting yet. Press Run now to look for jobs.'
+        : 'Nothing is waiting. Prepare an application from the shortlist.'
       : needAnswer > 0
         ? `${plural(needAnswer, 'application')} still ${needAnswer === 1 ? 'needs' : 'need'} an answer from you${needCheck > 0 ? `, and ${needCheck} ${needCheck === 1 ? 'has' : 'have'} guesses to check` : ''}.`
         : needCheck > 0
@@ -95,6 +97,7 @@ export function Dashboard(): React.JSX.Element {
   const thisWeek = sentApps.filter((a) => a.submittedAt && Date.now() - new Date(a.submittedAt).getTime() < WEEK).length
   const responded = sentApps.filter((a) => a.outcome !== 'none' && a.outcome !== 'ghosted').length
   const lastRun = runs.data?.[0]
+  const lastRunText = lastRun ? `Last run ${relativeTime(lastRun.startedAt)}.` : 'No runs yet.'
   const nextRun = settings?.autopilot.enabled ? nextRunAt.data : null
   const autoSends = !!settings && settings.autopilot.autoSubmit && !settings.autopilot.dryRun
 
@@ -118,6 +121,22 @@ export function Dashboard(): React.JSX.Element {
     <Page>
       <PageHeader title="Dashboard" intro="What needs you today and how the search is going." />
 
+      {settings && !settings.onboardingDone && (
+        <div className="mb-4">
+          <Notice
+            tone="info"
+            title="Setup isn't finished"
+            action={
+              <Button size="sm" onClick={() => navigate('/onboarding')}>
+                Open setup guide
+              </Button>
+            }
+          >
+            Finish the setup guide so JobPilot has an AI provider, your profile and places to look for jobs.
+          </Notice>
+        </div>
+      )}
+
       <div className="mb-4 grid grid-cols-3 gap-4">
         <Card className="col-span-1 flex flex-col justify-between p-4">
           <div>
@@ -138,7 +157,7 @@ export function Dashboard(): React.JSX.Element {
           <p className="text-xs text-muted">Shortlist</p>
           <div className="mt-2 grid grid-cols-3 gap-2">
             {BUCKETS.map((b) => (
-              <button key={b} onClick={() => navigate('/jobs')} className="rounded-md px-2 py-1.5 text-left hover:bg-hover">
+              <button key={b} onClick={() => navigate(`/jobs?fit=${b}`)} className="rounded-md px-2 py-1.5 text-left hover:bg-hover">
                 <p className={`text-2xl font-semibold tabular-nums ${BUCKET_COLOR[b]}`}>{counts[b]}</p>
                 <p className="text-xs text-muted">{BUCKET_LABELS[b]}</p>
               </button>
@@ -163,9 +182,9 @@ export function Dashboard(): React.JSX.Element {
               hint={
                 settings?.autopilot.enabled
                   ? nextRun
-                    ? `${new Date(nextRun).getTime() <= Date.now() ? 'The next run is due now' : `Next run ${relativeTime(nextRun)}`}. Last run ${relativeTime(lastRun?.startedAt)}.`
-                    : `Last run ${relativeTime(lastRun?.startedAt)}.`
-                  : `Last run ${relativeTime(lastRun?.startedAt)}.`
+                    ? `${new Date(nextRun).getTime() <= Date.now() ? 'The next run is due now' : `Next run ${relativeTime(nextRun)}`}. ${lastRunText}`
+                    : lastRunText
+                  : lastRunText
               }
             />
           </div>
@@ -187,9 +206,9 @@ export function Dashboard(): React.JSX.Element {
 
       <div className="mb-6 grid grid-cols-4 gap-4">
         <Stat label="Applied this week" value={thisWeek} hint={`${sentApps.length} in total`} />
-        <Stat label="Response rate" value={sentApps.length ? formatPercent(responded / sentApps.length) : '-'} hint={`${plural(responded, 'reply', 'replies')} to ${plural(sentApps.length, 'application')}`} />
-        <Stat label="Spent today" value={formatUsd(usage?.todayUsd)} hint={usage ? `${usage.dailyBudgetUsd > 0 ? `Budget ${formatUsd(usage.dailyBudgetUsd)} a day` : 'No daily limit'}${usage.freeCallsToday > 0 ? `. ${plural(usage.freeCallsToday, 'free call')} today` : ''}` : undefined} tone={usage && usage.dailyBudgetUsd > 0 && usage.todayUsd >= usage.dailyBudgetUsd ? 'bad' : undefined} />
-        <Stat label="Spent this month" value={formatUsd(usage?.monthUsd)} hint={usage ? (usage.monthlyBudgetUsd > 0 ? `Budget ${formatUsd(usage.monthlyBudgetUsd)} a month` : 'No monthly limit') : undefined} />
+        <Stat label="Reply rate" value={sentApps.length ? formatPercent(responded / sentApps.length) : '-'} hint={`${plural(responded, 'reply', 'replies')} to ${plural(sentApps.length, 'application')}`} />
+        <Stat label="Estimated spend today" value={formatUsd(usage?.todayUsd)} hint={usage ? `${usage.dailyBudgetUsd > 0 ? `Budget ${formatUsd(usage.dailyBudgetUsd)} a day` : 'No daily limit'}${usage.freeCallsToday > 0 ? `. ${plural(usage.freeCallsToday, 'free call')} today` : ''}` : undefined} tone={usage && usage.dailyBudgetUsd > 0 && usage.todayUsd >= usage.dailyBudgetUsd ? 'bad' : undefined} />
+        <Stat label="Estimated spend this month" value={formatUsd(usage?.monthUsd)} hint={usage ? (usage.monthlyBudgetUsd > 0 ? `Budget ${formatUsd(usage.monthlyBudgetUsd)} a month` : 'No monthly limit') : undefined} />
       </div>
 
       <div className="grid grid-cols-5 gap-4">
@@ -227,7 +246,7 @@ export function Dashboard(): React.JSX.Element {
                   <p className="text-sm text-fg">{s.message}</p>
                   <p className="mt-1 text-xs text-faint">Based on {plural(s.evidence, 'dismissed job')}.</p>
                   <div className="mt-2 flex gap-2">
-                    <Button size="sm" variant="primary" icon={<Check size={13} />} onClick={() => void applySuggestion(s.id, s.patch)}>
+                    <Button size="sm" variant="secondary" icon={<Check size={13} />} onClick={() => void applySuggestion(s.id, s.patch)}>
                       Apply
                     </Button>
                     <Button size="sm" variant="ghost" icon={<X size={13} />} onClick={() => void dismissSuggestion(s.id)}>

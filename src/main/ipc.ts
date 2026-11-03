@@ -42,7 +42,7 @@ const SAMPLE_KINDS: DocumentKind[] = ['cover_letter_sample', 'writing_sample']
 const OUTCOME_LABEL: Record<ApplicationOutcome, string> = {
   none: 'no reply yet',
   rejected: 'Rejected',
-  ghosted: 'No reply',
+  ghosted: 'Ghosted',
   screen: 'Screening call',
   interview: 'Interview',
   offer: 'Offer',

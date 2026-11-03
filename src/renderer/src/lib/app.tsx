@@ -4,6 +4,7 @@ import type { PipelineProgress, Settings, UsageSummary } from '@shared/types'
 import { api, onPush } from './api'
 import { useToast } from './toast'
 import { useAsync } from './hooks'
+import { plural } from './format'
 
 interface AppState {
   settings: Settings | null
@@ -73,7 +74,7 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
     setStarting(true)
     try {
       const stats = await api.runPipeline({ discover: true, triage: true, prepare: true, trigger: 'manual' })
-      toast.success(`Run finished. ${stats.newJobs} new jobs, ${stats.shortlisted} shortlisted.`)
+      toast.success(`Run finished. ${plural(stats.newJobs, 'new job')}, ${stats.shortlisted} shortlisted.`)
     } catch (e) {
       toast.error(e)
     } finally {

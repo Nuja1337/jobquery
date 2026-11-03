@@ -158,12 +158,15 @@ export function ErrorBlock({ message, onRetry }: { message: string; onRetry?: ()
   )
 }
 
-export function Notice({ tone = 'info', children, title }: { tone?: 'info' | 'warn' | 'bad' | 'good'; children: ReactNode; title?: string }): React.JSX.Element {
+export function Notice({ tone = 'info', children, title, action }: { tone?: 'info' | 'warn' | 'bad' | 'good'; children: ReactNode; title?: string; action?: ReactNode }): React.JSX.Element {
   const styles = { info: 'border-info/30 bg-info-soft', warn: 'border-warn/40 bg-warn-soft', bad: 'border-bad/40 bg-bad-soft', good: 'border-good/40 bg-good-soft' }
   return (
-    <div className={clsx('rounded-lg border px-3.5 py-2.5 text-sm', styles[tone])}>
-      {title && <p className="mb-0.5 font-medium text-fg">{title}</p>}
-      <div className="text-muted">{children}</div>
+    <div className={clsx('rounded-lg border px-3.5 py-2.5 text-sm', styles[tone], action && 'flex items-start justify-between gap-3')}>
+      <div className="min-w-0">
+        {title && <p className="mb-0.5 font-medium text-fg">{title}</p>}
+        <div className="text-muted">{children}</div>
+      </div>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   )
 }

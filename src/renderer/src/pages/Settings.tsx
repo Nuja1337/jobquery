@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useBlocker, useNavigate } from 'react-router'
 import { AlertTriangle, CheckCircle2, Download, FolderOpen, Pencil, Plus, TestTube2, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { BUILTIN_PRICES, PROVIDER_LABELS } from '@shared/defaults'
+import { BILLING_RESPONSIBILITY, BUILTIN_PRICES, PROVIDER_LABELS } from '@shared/defaults'
 import type { DeepPartial } from '@shared/api'
 import type { AppInfo } from '@shared/api'
 import type { BrowserChannel, CoverLetterLength, LlmStage, ModelPrice, ProviderInfo, RemotePreference, Seniority, Settings } from '@shared/types'
@@ -22,15 +22,15 @@ import { Badge, Button, Card, CardHeader, Checkbox, Chip, ErrorBlock, Field, Ico
 const SECTIONS = [
   ['providers', 'AI providers'],
   ['models', 'Models'],
-  ['prices', 'Prices'],
   ['budget', 'Budgets'],
+  ['prices', 'Prices'],
   ['preferences', 'Job preferences'],
   ['thresholds', 'Thresholds'],
   ['autopilot', 'Autopilot'],
   ['browser', 'Browser'],
   ['writing', 'Writing'],
   ['eeo', 'EEO answers'],
-  ['data', 'Data and app']
+  ['data', 'Theme and data']
 ] as const
 
 const STAGES: Array<{ id: LlmStage; label: string; hint: string }> = [
@@ -54,6 +54,7 @@ export function SettingsPage(): React.JSX.Element {
   const [draft, setDraft] = useState<Settings | null>(null)
   const [saving, setSaving] = useState(false)
   const providers = useAsync(() => api.listProviders(), [])
+  const leaving = useRef(false)
 
   useEffect(() => {
     if (settings) setDraft((cur) => cur ?? structuredClone(settings))
@@ -63,6 +64,8 @@ export function SettingsPage(): React.JSX.Element {
     if (!draft || !settings) return []
     return (Object.keys(draft) as SectionKey[]).filter((k) => k !== 'prices' && k !== 'onboardingDone' && JSON.stringify(draft[k]) !== JSON.stringify(settings[k]))
   }, [draft, settings])
+
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => changed.length > 0 && currentLocation.pathname !== nextLocation.pathname)
 
   if (!draft || !settings) return <Loading />
 
@@ -99,12 +102,28 @@ export function SettingsPage(): React.JSX.Element {
         </div>
       )}
 
+      {blocker.state === 'blocked' && (
+        <ConfirmDialog
+          title="Leave without saving?"
+          message="Your changes on this page aren't saved. If you leave now, they're lost."
+          confirmLabel="Leave without saving"
+          danger
+          onClose={() => {
+            if (!leaving.current) blocker.reset?.()
+          }}
+          onConfirm={() => {
+            leaving.current = true
+            blocker.proceed?.()
+          }}
+        />
+      )}
+
       <div className="grid grid-cols-[11rem_minmax(0,1fr)] gap-6">
         <nav className="sticky top-4 self-start" aria-label="Settings sections">
           <ul className="space-y-0.5">
             {SECTIONS.map(([id, label]) => (
               <li key={id}>
-                <a href={`#settings-${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} className="block rounded-md px-2.5 py-1.5 text-sm text-muted hover:bg-hover hover:text-fg">
+                <a href={`#settings-${id}`} onClick={(e) => { e.preventDefault(); document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' }) }} className="block rounded-md px-2.5 py-1.5 text-sm text-muted hover:bg-hover hover:text-fg">
                   {label}
                 </a>
               </li>
@@ -133,6 +152,7 @@ export function SettingsPage(): React.JSX.Element {
                 STAGES.map((s) => (
                   <Field key={s.id} label={s.label} hint={s.hint}>
                     <ModelPicker
+                      label={s.label}
                       providers={providers.data as ProviderInfo[]}
                       value={draft.routing[s.id]}
                       onChange={(ref) => set('routing', { [s.id]: ref })}
@@ -144,21 +164,8 @@ export function SettingsPage(): React.JSX.Element {
             </div>
           </Card>
 
-          <PricesCard
-            prices={settings.prices}
-            onSave={async (model, price) => (await updateSettings({ prices: { [model]: price } })) !== null}
-            onReset={async (model) => {
-              try {
-                await api.removePriceOverride(model)
-                await updateSettings({})
-              } catch (e) {
-                toast.error(e)
-              }
-            }}
-          />
-
           <Card id="settings-budget">
-            <CardHeader title="Budgets" hint="JobPilot stops spending when a budget runs out. A budget of 0 means no limit. Free and local providers never count toward these limits." />
+            <CardHeader title="Budgets" hint="JobPilot stops making paid AI calls when its estimate of your spend reaches a budget, and a call already running can go a little over. A budget of 0 means no limit, and free and local providers don't count. The estimate uses the prices below, so your real bill can differ. Set a spend limit with your provider too." />
             <div className="grid grid-cols-2 gap-4 p-4">
               <Field label="Daily budget (US dollars)" hint={draft.budget.dailyUsd === 0 ? 'No daily limit. The monthly budget still applies if you set one.' : 'Enter 0 for no limit.'}>
                 <BudgetInput value={draft.budget.dailyUsd} step={0.1} onChange={(v) => set('budget', { dailyUsd: v })} />
@@ -174,6 +181,19 @@ export function SettingsPage(): React.JSX.Element {
               </Field>
             </div>
           </Card>
+
+          <PricesCard
+            prices={settings.prices}
+            onSave={async (model, price) => (await updateSettings({ prices: { [model]: price } })) !== null}
+            onReset={async (model) => {
+              try {
+                await api.removePriceOverride(model)
+                await updateSettings({})
+              } catch (e) {
+                toast.error(e)
+              }
+            }}
+          />
 
           <Card id="settings-preferences">
             <CardHeader title="Job preferences" hint="Free filters. A job that fails one costs no tokens." />
@@ -205,7 +225,7 @@ export function SettingsPage(): React.JSX.Element {
                 <p className="mb-1.5 text-xs font-medium text-muted">Seniority</p>
                 <div className="flex flex-wrap gap-1.5">
                   {SENIORITY.map((s) => (
-                    <Chip key={s} selected={draft.preferences.seniority.includes(s)} onClick={() => set('preferences', { seniority: draft.preferences.seniority.includes(s) ? draft.preferences.seniority.filter((x) => x !== s) : [...draft.preferences.seniority, s] })}>
+                    <Chip key={s} className="capitalize" selected={draft.preferences.seniority.includes(s)} onClick={() => set('preferences', { seniority: draft.preferences.seniority.includes(s) ? draft.preferences.seniority.filter((x) => x !== s) : [...draft.preferences.seniority, s] })}>
                       {s}
                     </Chip>
                   ))}
@@ -363,7 +383,7 @@ function ProvidersCard({ providers, error, reload, onDeleted }: { providers: Pro
     <Card id="settings-providers">
       <CardHeader
         title="AI providers"
-        hint={keyStorageWeak ? 'Bring your own key. Keys are never shown again.' : `Bring your own key. ${KEY_STORAGE_NOTE} Keys are never shown again.`}
+        hint={`Bring your own key. ${keyStorageWeak ? '' : `${KEY_STORAGE_NOTE} `}Keys are never shown again. ${BILLING_RESPONSIBILITY}`}
         actions={
           <Button size="sm" icon={<Plus size={13} />} onClick={() => setEditing('new')}>
             Add provider
@@ -470,7 +490,7 @@ function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; o
 
   return (
     <Card id="settings-prices">
-      <CardHeader title="Prices" hint="Prices are in US dollars per million tokens, and the spend numbers and budgets use them. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Models on free providers are always $0." />
+      <CardHeader title="Prices" hint="Prices are in US dollars per million tokens, and the spend numbers and budgets use them. These are JobPilot's copy of published prices, and providers change their prices, so check them against your provider's price page. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Models on free providers are always $0." />
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr>
@@ -678,11 +698,12 @@ function EeoCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(
 }
 
 // ---------------------------------------------------------------------------
-// Data and app
+// Theme and data
 // ---------------------------------------------------------------------------
 
 function DataCard(): React.JSX.Element {
   const toast = useToast()
+  const navigate = useNavigate()
   const info = useAsync<AppInfo>(() => api.getAppInfo(), [])
   const [theme, setTheme] = useState<Theme>(getStoredTheme())
   const [busy, setBusy] = useState(false)
@@ -701,7 +722,7 @@ function DataCard(): React.JSX.Element {
 
   return (
     <Card id="settings-data">
-      <CardHeader title="Data and app" />
+      <CardHeader title="Theme and data" />
       <div className="space-y-4 p-4">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -731,9 +752,14 @@ function DataCard(): React.JSX.Element {
             <p className="text-sm text-fg">Setup guide</p>
             <p className="text-xs text-faint">Walk through the first-time setup again. Nothing you saved is erased.</p>
           </div>
-          <Link to="/onboarding" onClick={() => setOnboardingSkipped(false)}>
-            <Button>Open setup guide</Button>
-          </Link>
+          <Button
+            onClick={() => {
+              setOnboardingSkipped(false)
+              navigate('/onboarding')
+            }}
+          >
+            Open setup guide
+          </Button>
         </div>
         <div className="border-t border-line pt-4">
           {info.data ? (
@@ -759,6 +785,10 @@ function DataCard(): React.JSX.Element {
           ) : (
             <Loading />
           )}
+        </div>
+        <div className="border-t border-line pt-4">
+          <h3 className="text-sm font-medium text-fg">About</h3>
+          <p className="mt-1 text-xs text-faint">JobPilot is provided as is, without warranty. You&apos;re responsible for charges from your AI providers, for everything sent to employers in your name, and for following the terms of the job sites and AI providers you use.</p>
         </div>
       </div>
     </Card>

@@ -89,11 +89,9 @@ export function Review(): React.JSX.Element {
           title="Nothing to review"
           text="When JobPilot drafts an application, it shows up here. Prepare one from your shortlist, or turn on auto-prepare in Settings."
           action={
-            <Link to="/jobs">
-              <Button variant="primary" icon={<ArrowRight size={14} />}>
-                Go to the shortlist
-              </Button>
-            </Link>
+            <Button variant="primary" icon={<ArrowRight size={14} />} onClick={() => navigate('/jobs')}>
+              Go to the shortlist
+            </Button>
           }
         />
       </Page>
@@ -111,15 +109,15 @@ export function Review(): React.JSX.Element {
           </span>
         }
       />
-      <div className="grid grid-cols-[17rem_minmax(0,1fr)] items-start gap-5">
-        <nav aria-label="Applications to review" className="sticky top-4 max-h-[calc(100vh-8rem)] space-y-1.5 overflow-y-auto">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[17rem_minmax(0,1fr)]">
+        <nav aria-label="Applications to review" className="flex gap-1.5 overflow-x-auto pb-1 xl:sticky xl:top-4 xl:block xl:max-h-[calc(100vh-8rem)] xl:space-y-1.5 xl:overflow-y-auto xl:pb-0">
           {items.map((a) => (
             <button
               key={a.id}
               onClick={() => navigate(`/review/${a.id}`)}
               disabled={navLocked && a.id !== activeId}
               aria-current={a.id === activeId}
-              className={clsx('w-full rounded-lg border p-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50', a.id === activeId ? 'border-accent/60 bg-accent-soft' : 'border-line bg-surface hover:bg-hover')}
+              className={clsx('w-60 shrink-0 rounded-lg border p-2.5 text-left xl:w-full transition-colors disabled:cursor-not-allowed disabled:opacity-50', a.id === activeId ? 'border-accent/60 bg-accent-soft' : 'border-line bg-surface hover:bg-hover')}
             >
               <p className="truncate text-sm font-medium text-fg">{a.title}</p>
               <p className="truncate text-xs text-muted">{a.company}</p>
@@ -367,7 +365,7 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
   }
 
   function jumpToFlagged(): void {
-    document.querySelector('[data-flagged]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    document.querySelector('[data-flagged]')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' })
   }
 
   if (error) return <ErrorBlock message={error} onRetry={() => navigate(0)} />
@@ -393,14 +391,14 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
             <FitBadge bucket={app.fitBucket} score={app.fitScore} />
           </div>
           <p className="mt-0.5 text-sm text-muted">
-            {app.company} <span className="text-faint">, drafted {relativeTime(app.createdAt)}</span>
+            {app.company}<span className="text-faint">, drafted {relativeTime(app.createdAt)}</span>
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <span className="text-xs text-faint" aria-live="polite">
             {saveState === 'saving' ? 'Saving' : saveState === 'dirty' ? 'Unsaved changes' : saveState === 'saved' ? 'Saved' : ''}
           </span>
-          <StatusBadge status={app.status} />
+          {app.status === 'ready' && guesses.length > 0 ? <Badge tone="warn">{guesses.length} to check</Badge> : <StatusBadge status={app.status} />}
           <Link to={`/jobs/${app.jobId}`} className="text-sm text-accent-strong hover:underline">
             View job
           </Link>
@@ -430,11 +428,16 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
       <Card>
         <CardHeader
           title="Cover letter"
-          hint={`${letter.trim() ? letter.trim().split(/\s+/).length : 0} words`}
+          hint={plural(letter.trim() ? letter.trim().split(/\s+/).length : 0, 'word')}
           actions={
-            <Button size="sm" icon={<RefreshCw size={13} />} disabled={frozen || rewriteBlocked} onClick={() => setGuidanceOpen(!guidanceOpen)} aria-expanded={guidanceOpen}>
-              Regenerate
-            </Button>
+            <>
+              <Button size="sm" variant="ghost" icon={<Download size={13} />} loading={busy === 'pdf'} disabled={!letter.trim() || (locked && busy !== 'pdf')} onClick={() => void exportPdf()}>
+                Export PDF
+              </Button>
+              <Button size="sm" icon={<RefreshCw size={13} />} disabled={frozen || rewriteBlocked} onClick={() => setGuidanceOpen(!guidanceOpen)} aria-expanded={guidanceOpen}>
+                Regenerate
+              </Button>
+            </>
           }
         />
         {guidanceOpen && (
@@ -451,11 +454,11 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
             </Button>
           </form>
         )}
-        <div className="grid grid-cols-[minmax(0,1fr)_20rem] gap-0">
+        <div className="grid grid-cols-1 gap-0 xl:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="p-4">
             <Textarea rows={16} value={letter} onChange={(e) => onLetter(e.target.value)} aria-label="Cover letter" placeholder="No cover letter yet. Press Regenerate to write one." readOnly={frozen} />
           </div>
-          <aside className="border-l border-line p-4" aria-label="Writing check">
+          <aside className="border-t border-line p-4 xl:border-l xl:border-t-0" aria-label="Writing check">
             <LintPanel report={lint} min={minLint} busy={lintBusy} />
           </aside>
         </div>
@@ -471,7 +474,7 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
                 ? `All answers are filled in. ${plural(guesses.length, 'guess', 'guesses')} to check before the Submit button will send it.`
                 : 'All answers are filled in.'
           }
-          actions={needYou.length > 0 ? <Badge tone="warn">{needYou.length} flagged</Badge> : guesses.length > 0 ? <Badge tone="warn">{guesses.length} to check</Badge> : <Badge tone="good">Complete</Badge>}
+          actions={needYou.length > 0 ? <Badge tone="warn">{needYou.length} to fill</Badge> : guesses.length > 0 ? <Badge tone="warn">{guesses.length} to check</Badge> : <Badge tone="good">Complete</Badge>}
         />
         <div className="space-y-3 p-4">
           {answers.map((a) => (
@@ -516,15 +519,21 @@ function ReviewDetail({ id, onLeave, onSubmitting }: { id: string; onLeave: (id:
             </Button>
           </>
         )}
-        {dryRun && !done && !clickedNoConfirmation && <p className="basis-full text-xs text-muted">Dry run is on. Submit fills the form and stops before the final click. You can turn it off in Settings.</p>}
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="ghost" icon={<Download size={14} />} loading={busy === 'pdf'} disabled={!letter.trim() || (locked && busy !== 'pdf')} onClick={() => void exportPdf()}>
-            Export cover letter PDF
-          </Button>
           <Button variant="ghost" icon={<SkipForward size={14} />} disabled={locked || regenCount > 0} onClick={() => onLeave(id)}>
             Skip
           </Button>
         </div>
+        {!done && !clickedNoConfirmation && (needYou.length > 0 || guesses.length > 0) && (
+          <p className="basis-full text-xs text-muted">
+            {needYou.length > 1
+              ? 'Submit turns on once the flagged answers are filled in.'
+              : needYou.length === 1
+                ? 'Submit turns on once the flagged answer is filled in.'
+                : 'Submit turns on once you check each guess. Edit it or press Looks right.'}
+          </p>
+        )}
+        {dryRun && !done && !clickedNoConfirmation && <p className="basis-full text-xs text-muted">Dry run is on. Submit fills the form and stops before the final click. You can turn it off in Settings.</p>}
       </div>
     </div>
   )

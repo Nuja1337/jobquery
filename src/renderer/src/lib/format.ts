@@ -1,4 +1,6 @@
-import type { JobSummary, SourceKind } from '@shared/types'
+import type { JobSummary, RemoteType, SourceKind } from '@shared/types'
+
+export const REMOTE_LABELS: Record<RemoteType, string> = { remote: 'Remote', hybrid: 'Hybrid', onsite: 'On site', unknown: 'Not listed' }
 
 export function formatUsd(n: number | null | undefined): string {
   if (n == null) return '-'

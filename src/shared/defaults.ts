@@ -115,6 +115,12 @@ export interface ProviderPreset {
   needsKey: boolean
   /** Where to create a key, or null when none is needed. */
   keyUrl: string | null
+  /** The provider's price page, or null when there isn't one. */
+  pricingUrl: string | null
+  /** Where the user checks usage or sets a spend limit, or null when there isn't a page. */
+  spendUrl: string | null
+  /** One sentence on how to cap spending at the provider, or null when there is nothing to add. */
+  spendTip: string | null
   requestsPerMinute: number | null
   requestsPerDay: number | null
   /** Starting models per stage, or null to pick from the provider's list. */
@@ -125,6 +131,10 @@ export interface ProviderPreset {
   trainsOnData: boolean
 }
 
+/** Shown wherever a user adds or reviews a paid provider. */
+export const BILLING_RESPONSIBILITY =
+  "Your AI provider bills you directly. JobPilot's costs and budgets are estimates from published prices, so your bill can be higher. JobPilot isn't responsible for any charges from your provider."
+
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: 'gemini-free',
@@ -134,10 +144,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'free',
     needsKey: true,
     keyUrl: 'https://aistudio.google.com/apikey',
+    pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+    spendUrl: 'https://aistudio.google.com/usage',
+    spendTip: null,
     requestsPerMinute: 10,
     requestsPerDay: 250,
     models: { triage: 'gemini-2.5-flash-lite', writing: 'gemini-2.5-flash', extraction: 'gemini-2.5-flash' },
-    note: "You don't need a card. Use a key from a Google project without billing. If billing is on, Google charges for each call and JobPilot's budgets won't stop it. Google may use what you send on the free tier to improve its products, and people may read it, including your resume and answers.",
+    note: "You don't need a card. Use a key from a Google project without billing. If billing is on, Google charges for each call and JobPilot's budgets won't stop it. Google may use what you send on the free tier to improve its products, and people may read it, including your resume and answers. This doesn't apply if you're in the European Economic Area, Switzerland or the UK.",
     trainsOnData: true
   },
   {
@@ -148,6 +161,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'free',
     needsKey: true,
     keyUrl: 'https://console.groq.com/keys',
+    pricingUrl: 'https://groq.com/pricing',
+    spendUrl: 'https://console.groq.com/settings/limits',
+    spendTip: "On a paid Groq plan, you can set a spend limit under Settings, Billing, Limits in the Groq console.",
     requestsPerMinute: 30,
     requestsPerDay: 1000,
     models: null,
@@ -162,6 +178,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'free',
     needsKey: true,
     keyUrl: 'https://openrouter.ai/keys',
+    pricingUrl: 'https://openrouter.ai/models?max_price=0',
+    spendUrl: 'https://openrouter.ai/settings/keys',
+    spendTip: "If you buy credits, you can set a credit limit on the key so it can't spend more than you choose.",
     requestsPerMinute: 20,
     requestsPerDay: 50,
     models: null,
@@ -176,6 +195,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'free',
     needsKey: true,
     keyUrl: 'https://console.mistral.ai/api-keys',
+    pricingUrl: 'https://mistral.ai/pricing',
+    spendUrl: null,
+    spendTip: null,
     requestsPerMinute: 20,
     requestsPerDay: null,
     models: { triage: 'mistral-small-latest', writing: 'mistral-medium-latest', extraction: 'mistral-small-latest' },
@@ -190,6 +212,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'free',
     needsKey: false,
     keyUrl: 'https://ollama.com/download',
+    pricingUrl: null,
+    spendUrl: null,
+    spendTip: null,
     requestsPerMinute: null,
     requestsPerDay: null,
     models: null,
@@ -204,6 +229,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'free',
     needsKey: false,
     keyUrl: 'https://lmstudio.ai',
+    pricingUrl: null,
+    spendUrl: null,
+    spendTip: null,
     requestsPerMinute: null,
     requestsPerDay: null,
     models: null,
@@ -218,6 +246,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'paid',
     needsKey: true,
     keyUrl: 'https://platform.claude.com/settings/keys',
+    pricingUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
+    spendUrl: 'https://platform.claude.com/settings/limits',
+    spendTip: "Set a monthly spend limit on the Limits page of the Claude Console.",
     requestsPerMinute: null,
     requestsPerDay: null,
     models: { triage: 'claude-haiku-5-5', writing: 'claude-sonnet-5-5', extraction: 'claude-haiku-5-5' },
@@ -232,6 +263,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'paid',
     needsKey: true,
     keyUrl: 'https://platform.openai.com/api-keys',
+    pricingUrl: 'https://platform.openai.com/docs/pricing',
+    spendUrl: 'https://platform.openai.com/settings/organization/billing/overview',
+    spendTip: "OpenAI bills from credits you buy ahead. Auto recharge is on by default, so turn it off if you don't want OpenAI to buy more credits on its own.",
     requestsPerMinute: null,
     requestsPerDay: null,
     models: { triage: 'gpt-5-mini', writing: 'gpt-5', extraction: 'gpt-5-mini' },
@@ -246,6 +280,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'paid',
     needsKey: true,
     keyUrl: 'https://aistudio.google.com/apikey',
+    pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+    spendUrl: 'https://aistudio.google.com/spend',
+    spendTip: "Set a monthly spend cap on the Spend page in AI Studio. Google says spending can run past the cap for about 10 minutes.",
     requestsPerMinute: null,
     requestsPerDay: null,
     models: { triage: 'gemini-2.5-flash', writing: 'gemini-2.5-pro', extraction: 'gemini-2.5-flash' },
@@ -260,6 +297,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'paid',
     needsKey: true,
     keyUrl: 'https://openrouter.ai/keys',
+    pricingUrl: 'https://openrouter.ai/models',
+    spendUrl: 'https://openrouter.ai/settings/keys',
+    spendTip: "OpenRouter bills from credits you buy ahead. You can also set a credit limit on the key.",
     requestsPerMinute: null,
     requestsPerDay: null,
     models: null,
@@ -274,6 +314,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     billing: 'paid',
     needsKey: true,
     keyUrl: null,
+    pricingUrl: null,
+    spendUrl: null,
+    spendTip: null,
     requestsPerMinute: null,
     requestsPerDay: null,
     models: null,

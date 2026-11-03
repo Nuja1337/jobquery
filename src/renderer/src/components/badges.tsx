@@ -74,12 +74,12 @@ export function StatusBadge({ status }: { status: ApplicationStatus }): React.JS
 }
 
 export const OUTCOME_LABELS: Record<ApplicationOutcome, string> = {
-  none: 'No response',
-  screen: 'Screen',
+  none: 'No reply yet',
+  screen: 'Screening call',
   interview: 'Interview',
   offer: 'Offer',
   rejected: 'Rejected',
-  ghosted: 'No reply',
+  ghosted: 'Ghosted',
   accepted: 'Accepted',
   declined: 'Declined'
 }
@@ -96,7 +96,7 @@ export const SOURCE_BADGES: Record<AnswerSource, { label: string; tone: Tone }> 
   profile: { label: 'Profile', tone: 'info' },
   answer_bank: { label: 'Saved answer', tone: 'accent' },
   settings: { label: 'Settings', tone: 'neutral' },
-  ai: { label: 'AI', tone: 'warn' },
+  ai: { label: 'AI', tone: 'neutral' },
   user: { label: 'You', tone: 'good' },
   file: { label: 'File', tone: 'neutral' }
 }

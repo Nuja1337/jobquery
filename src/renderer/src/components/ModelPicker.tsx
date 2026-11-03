@@ -41,10 +41,12 @@ interface Props {
   onChange: (ref: ModelRef | null) => void
   /** Model to select when the user picks a provider. Gets the provider just picked. */
   suggested?: (provider: ProviderInfo) => string | undefined
+  /** Names the stage in the dropdowns' accessible labels, for example "Writing provider". */
+  label?: string
 }
 
 /** A provider dropdown and a model dropdown loaded from the provider. */
-export function ModelPicker({ providers, value, onChange, suggested }: Props): React.JSX.Element {
+export function ModelPicker({ providers, value, onChange, suggested, label }: Props): React.JSX.Element {
   const providerId = value?.providerId ?? null
   const { models, loading, failed } = useModels(providerId)
   const current = value?.model ?? ''
@@ -62,7 +64,7 @@ export function ModelPicker({ providers, value, onChange, suggested }: Props): R
     <div className="grid grid-cols-2 gap-2">
       <Select
         value={providerId ?? ''}
-        aria-label="Provider"
+        aria-label={label ? `${label} provider` : 'Provider'}
         onChange={(e) => {
           const id = e.target.value
           const picked = providers.find((p) => p.id === id)
@@ -77,7 +79,7 @@ export function ModelPicker({ providers, value, onChange, suggested }: Props): R
         ))}
       </Select>
       {providerId && (models.length > 0 || loading) ? (
-        <Select value={current} aria-label="Model" disabled={loading} onChange={(e) => onChange({ providerId, model: e.target.value })}>
+        <Select value={current} aria-label={label ? `${label} model` : 'Model'} disabled={loading} onChange={(e) => onChange({ providerId, model: e.target.value })}>
           {loading && <option>Loading models</option>}
           {!current && <option value="">Choose a model</option>}
           {options.map((m) => (
@@ -88,7 +90,7 @@ export function ModelPicker({ providers, value, onChange, suggested }: Props): R
         </Select>
       ) : (
         <Input
-          aria-label="Model"
+          aria-label={label ? `${label} model` : 'Model'}
           value={current}
           disabled={!providerId}
           placeholder={failed ? 'Could not load models. Type a model name.' : 'Model name'}

@@ -73,7 +73,7 @@ export function DocumentSection({ kind, title, hint, allowLink, allowPaste, empt
                 Paste text
               </Button>
             )}
-            <Button size="sm" variant="primary" icon={<Upload size={13} />} loading={busy} onClick={() => void upload()}>
+            <Button size="sm" variant="secondary" icon={<Upload size={13} />} loading={busy} onClick={() => void upload()}>
               Upload
             </Button>
           </>

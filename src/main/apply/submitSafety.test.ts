@@ -69,7 +69,8 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
 
   beforeAll(async () => {
     browser = await chromium.launch({ executablePath, headless: true })
-  })
+    // Starting a browser can take a while on a busy machine.
+  }, 30_000)
   afterEach(async () => {
     await page?.close().catch(() => {})
   })

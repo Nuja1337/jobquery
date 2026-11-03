@@ -503,7 +503,7 @@ export function flawedLint(): LintReport {
   return {
     score: 52,
     issues: [
-      { rule: 'banned-phrase', severity: 'high', message: '"thrilled" is a common AI giveaway.', match: 'thrilled', index: 22, suggestion: 'Say what you actually liked about the role.' },
+      { rule: 'banned-phrase', severity: 'high', message: '"thrilled" is a common AI giveaway.', match: 'thrilled', index: 22, suggestion: 'Say what you liked about the role.' },
       { rule: 'banned-phrase', severity: 'high', message: '"leveraging" is a common AI giveaway.', match: 'leveraging', index: 113, suggestion: 'Use "using".' },
       { rule: 'em-dash', severity: 'medium', message: 'Em dash used as a pause.', match: '—', index: 190, suggestion: 'Use a period or a comma.' },
       { rule: 'exclamation', severity: 'medium', message: 'Exclamation mark. Your voice profile avoids them.', match: '!', index: 62, suggestion: null },

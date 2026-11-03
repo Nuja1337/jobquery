@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { clsx } from 'clsx'
 import { CheckCircle2, ExternalLink, XCircle } from 'lucide-react'
-import { PROVIDER_DEFAULT_BASE_URL, PROVIDER_LABELS, PROVIDER_NEEDS_KEY, PROVIDER_PRESETS, isLocalUrl, type ProviderPreset } from '@shared/defaults'
+import { BILLING_RESPONSIBILITY, PROVIDER_DEFAULT_BASE_URL, PROVIDER_LABELS, PROVIDER_NEEDS_KEY, PROVIDER_PRESETS, isLocalUrl, type ProviderPreset } from '@shared/defaults'
 import type { ProviderBilling, ProviderInfo, ProviderKind } from '@shared/types'
 import type { ProviderTestResult } from '@shared/api'
 import { api } from '@renderer/lib/api'
@@ -29,6 +29,15 @@ export function KeyStorageWarning(): React.JSX.Element | null {
   ) : null
 }
 
+function ExternalButton({ url, label }: { url: string; label: string }): React.JSX.Element {
+  const toast = useToast()
+  return (
+    <button type="button" onClick={() => void api.openExternal(url).catch(toast.error)} className="inline-flex items-center gap-1 text-sm text-accent-strong hover:underline">
+      {label} <ExternalLink size={12} aria-hidden="true" />
+    </button>
+  )
+}
+
 const KINDS = Object.keys(PROVIDER_LABELS) as ProviderKind[]
 const FREE_PRESETS = PROVIDER_PRESETS.filter((p) => p.billing === 'free')
 const PAID_PRESETS = PROVIDER_PRESETS.filter((p) => p.billing === 'paid')
@@ -45,6 +54,27 @@ export function describeLimits(p: { requestsPerMinute: number | null; requestsPe
   if (p.requestsPerMinute) parts.push(`${plural(p.requestsPerMinute, 'request')} a minute`)
   if (p.requestsPerDay) parts.push(`${plural(p.requestsPerDay, 'request')} a day`)
   return parts.length > 0 ? parts.join(', ') : 'No request limits set'
+}
+
+function hostOf(url: string | null | undefined): string | null {
+  try {
+    return url ? new URL(url).hostname : null
+  } catch {
+    return null
+  }
+}
+
+/** The ready-made setup a saved provider most likely came from, so editing it still shows the price and usage links. */
+function presetFor(p: Pick<ProviderInfo, 'kind' | 'billing' | 'baseUrl'>): ProviderPreset | null {
+  return (
+    PROVIDER_PRESETS.find((x) => {
+      if (x.kind !== p.kind || x.id === CUSTOM_PRESET_ID) return false
+      if (x.baseUrl) return hostOf(x.baseUrl) === hostOf(p.baseUrl)
+      if (x.kind === 'gemini') return x.billing === p.billing
+      if (x.kind === 'openrouter') return x.billing === 'paid'
+      return true
+    }) ?? null
+  )
 }
 
 function validLimit(v: number | null): boolean {
@@ -72,9 +102,12 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
   const [perDay, setPerDay] = useState<number | null>(initial?.requestsPerDay ?? null)
   const [busy, setBusy] = useState<'save' | 'test' | null>(null)
   const [result, setResult] = useState<ProviderTestResult | null>(null)
+  const [understood, setUnderstood] = useState(false)
 
   const adding = !initial
   const preset = presetId ? (PROVIDER_PRESETS.find((p) => p.id === presetId) ?? null) : null
+  // When editing, the links come from the setup that matches what's in the form now.
+  const savedPreset = initial ? presetFor({ kind, billing, baseUrl }) : null
   const isCustom = presetId === CUSTOM_PRESET_ID
   // A new provider shows the rest of the form only after a setup is picked.
   const ready = !adding || preset !== null
@@ -89,7 +122,28 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
   const missingKey = showKey && needsKey && !apiKey && !hasStoredKey
   const missingUrl = kind === 'openai_compatible' && !baseUrl.trim()
   const badLimits = !validLimit(perMinute) || !validLimit(perDay)
-  const blocked = busy !== null || !ready || missingKey || missingUrl || badLimits
+  // Ollama, and a free provider on this computer, can't bill the user.
+  const isLocalProvider = kind === 'ollama' || (billing === 'free' && isLocalUrl(baseUrl))
+  const needsAck = adding ? !isLocalProvider : initial?.billing === 'free' && billing === 'paid'
+  const providerName = adding && preset && !isCustom ? preset.label.split(' (')[0] : label.trim() || PROVIDER_LABELS[kind]
+  const blocked = busy !== null || !ready || missingKey || missingUrl || badLimits || (needsAck && !understood)
+  // A ready-made setup already has sensible limits, so they start folded away.
+  const collapsibleLimits = adding && !isCustom
+  const limitFields = (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Requests per minute (optional)">
+          <NumberInput value={perMinute} min={1} step={1} placeholder="No limit" onChange={setPerMinute} />
+        </Field>
+        <Field label="Requests per day (optional)">
+          <NumberInput value={perDay} min={1} step={1} placeholder="No limit" onChange={setPerDay} />
+        </Field>
+      </div>
+      <p className={clsx('text-xs', !collapsibleLimits && '-mt-1', badLimits ? 'text-bad' : 'text-faint')}>
+        {badLimits ? 'Limits are whole numbers of 1 or more. Leave a box empty for no limit.' : 'Free tiers have limits. JobPilot paces itself to stay under the ones you enter.'}
+      </p>
+    </>
+  )
 
   function choosePreset(p: ProviderPreset): void {
     setPresetId(p.id)
@@ -101,6 +155,7 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
     setPerMinute(p.requestsPerMinute)
     setPerDay(p.requestsPerDay)
     setResult(null)
+    setUnderstood(false)
   }
 
   function changeKind(next: ProviderKind): void {
@@ -158,8 +213,8 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
         <fieldset className="space-y-2">
           <legend className="mb-1 text-xs font-medium text-muted">Pick a free or a paid setup</legend>
           <div className="grid grid-cols-2 gap-3">
-            <PresetGroup title="Free" caption="These cost nothing. Free tiers have limits, and local models need a capable computer." presets={FREE_PRESETS} selected={presetId} onPick={choosePreset} />
-            <PresetGroup title="Paid" caption="You pay the provider for each call. These usually write best." presets={PAID_PRESETS} selected={presetId} onPick={choosePreset} />
+            <PresetGroup title="Free" caption="These cost nothing while billing is off for the key. Free tiers have limits, and local models need a capable computer." presets={FREE_PRESETS} selected={presetId} onPick={choosePreset} />
+            <PresetGroup title="Paid" caption="The provider charges you for each call. These usually write best." presets={PAID_PRESETS} selected={presetId} onPick={choosePreset} />
           </div>
         </fieldset>
       )}
@@ -173,15 +228,24 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
           ) : (
             <p className="text-sm text-muted">{preset.note}</p>
           )}
-          {preset.keyUrl && (
-            <button
-              type="button"
-              onClick={() => void api.openExternal(preset.keyUrl as string).catch(toast.error)}
-              className="inline-flex items-center gap-1 text-sm text-accent-strong hover:underline"
-            >
-              {preset.needsKey ? 'Get a key' : `Download ${preset.label.split(' (')[0]}`} <ExternalLink size={12} aria-hidden="true" />
-            </button>
+          {(preset.keyUrl || preset.pricingUrl || preset.spendUrl) && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              {preset.keyUrl && <ExternalButton url={preset.keyUrl} label={preset.needsKey ? 'Get a key' : `Download ${preset.label.split(' (')[0]}`} />}
+              {preset.pricingUrl && <ExternalButton url={preset.pricingUrl} label="Prices" />}
+              {preset.spendUrl && <ExternalButton url={preset.spendUrl} label="Usage and limits" />}
+            </div>
           )}
+          {preset.spendTip && <p className="text-xs text-faint">{preset.spendTip}</p>}
+        </div>
+      )}
+
+      {savedPreset && (savedPreset.pricingUrl || savedPreset.spendUrl) && (
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            {savedPreset.pricingUrl && <ExternalButton url={savedPreset.pricingUrl} label="Prices" />}
+            {savedPreset.spendUrl && <ExternalButton url={savedPreset.spendUrl} label="Usage and limits" />}
+          </div>
+          {savedPreset.spendTip && <p className="text-xs text-faint">{savedPreset.spendTip}</p>}
         </div>
       )}
 
@@ -262,18 +326,18 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
             )}
           </fieldset>
           )}
+          {!isLocalProvider && <p className="text-xs text-faint">{BILLING_RESPONSIBILITY}</p>}
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Requests per minute (optional)">
-              <NumberInput value={perMinute} min={1} step={1} placeholder="No limit" onChange={setPerMinute} />
-            </Field>
-            <Field label="Requests per day (optional)">
-              <NumberInput value={perDay} min={1} step={1} placeholder="No limit" onChange={setPerDay} />
-            </Field>
-          </div>
-          <p className={clsx('-mt-1 text-xs', badLimits ? 'text-bad' : 'text-faint')}>
-            {badLimits ? 'Limits are whole numbers of 1 or more. Leave a box empty for no limit.' : 'Free tiers have limits. JobPilot paces itself to stay under the ones you enter.'}
-          </p>
+          {collapsibleLimits ? (
+            <details key={presetId} open={badLimits} className="rounded-md border border-line px-3 py-2">
+              <summary className="cursor-pointer text-sm text-fg">
+                Request limits <span className="ml-1 text-faint">{describeLimits({ requestsPerMinute: perMinute, requestsPerDay: perDay })}</span>
+              </summary>
+              <div className="mt-3 space-y-3">{limitFields}</div>
+            </details>
+          ) : (
+            limitFields
+          )}
         </>
       )}
 
@@ -283,13 +347,25 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
           {result.message}
         </p>
       )}
+      {ready && needsAck && (
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line px-3 py-2 text-sm text-muted has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent">
+          <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
+          <span>
+            I understand that {providerName} bills me directly for anything that isn&apos;t free, that JobPilot&apos;s cost figures are estimates, and that JobPilot isn&apos;t responsible for charges from {providerName}.
+          </span>
+        </label>
+      )}
       <div className="flex items-center gap-2 pt-1">
-        <Button type="submit" variant="primary" loading={busy === 'test'} disabled={blocked}>
-          Save and test
-        </Button>
-        <Button type="button" loading={busy === 'save'} disabled={blocked} onClick={() => void submit(false)}>
-          Save without testing
-        </Button>
+        {ready && (
+          <>
+            <Button type="submit" variant="primary" loading={busy === 'test'} disabled={blocked}>
+              Save and test
+            </Button>
+            <Button type="button" loading={busy === 'save'} disabled={blocked} onClick={() => void submit(false)}>
+              Save without testing
+            </Button>
+          </>
+        )}
         {onCancel && (
           <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel

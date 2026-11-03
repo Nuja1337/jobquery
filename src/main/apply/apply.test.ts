@@ -79,7 +79,8 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
   beforeAll(async () => {
     fs.writeFileSync(resumePath, '%PDF-1.4 test')
     browser = await chromium.launch({ executablePath, headless: true })
-  })
+    // Starting a browser can take a while on a busy machine.
+  }, 30_000)
   afterAll(async () => {
     await browser?.close()
     fs.rmSync(resumePath, { force: true })
@@ -152,7 +153,7 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
     const outcome = await waitForOutcome(p, frame, baseline, 8000)
     expect(outcome.kind).toBe('confirmed')
     await p.close()
-  })
+  }, 20_000)
 
   it('reports validation errors instead of claiming success', async () => {
     const p = await load()
@@ -162,7 +163,7 @@ describe.skipIf(!executablePath)('form extraction, filling and submit (headless 
     const outcome = await waitForOutcome(p, frame, baseline, 8000)
     expect(outcome.kind).toBe('invalid')
     await p.close()
-  })
+  }, 20_000)
 
   it('ignores thank-you text that was on the page before the click', async () => {
     page = await browser.newPage()

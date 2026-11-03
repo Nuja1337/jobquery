@@ -114,7 +114,7 @@ export function HBarChart({ data, color = SERIES[0], format = (n) => String(n), 
           <XAxis type="number" hide />
           <YAxis type="category" dataKey="name" width={labelWidth} tick={{ ...AXIS_TICK, fill: 'var(--muted)', fontSize: 12 }} axisLine={false} tickLine={false} interval={0} />
           <Tooltip cursor={{ fill: 'var(--hover)', opacity: 0.5 }} content={<ChartTooltip rows={(d: HBarDatum) => tooltipRows?.(d) ?? [{ label: 'Count', value: format(d.value), color }]} />} />
-          <Bar dataKey="value" fill={color} barSize={16} radius={[0, 4, 4, 0]} isAnimationActive={false}>
+          <Bar dataKey="value" fill={color} barSize={16} radius={[0, 4, 4, 0]} minPointSize={2} isAnimationActive={false}>
             <LabelList dataKey="value" position="right" formatter={(v: unknown) => format(Number(v))} fill="var(--muted)" fontSize={11} />
           </Bar>
         </BarChart>

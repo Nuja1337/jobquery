@@ -183,6 +183,9 @@ export function Onboarding(): React.JSX.Element {
                 <Notice tone="info" title="A ChatGPT or Claude subscription is not an API key">
                   Those subscriptions don't include API use, so JobPilot can't use them. If you don't have a card, start with a free option.
                 </Notice>
+                <Notice tone="info" title="Your provider bills you directly">
+                  Free tiers cost nothing while billing is off for the key. Paid providers charge you for each call. JobPilot's cost figures are estimates, and JobPilot isn't responsible for charges from your provider.
+                </Notice>
                 {list.length > 0 && (
                   <Card>
                     <ul className="divide-y divide-line">
@@ -201,6 +204,7 @@ export function Onboarding(): React.JSX.Element {
                     </ul>
                   </Card>
                 )}
+                {providers.loading && !providers.data && <Loading />}
                 <Card className="p-4">
                   <h2 className="mb-3 text-sm font-medium text-fg">{list.length > 0 ? 'Add another provider' : 'Add a provider'}</h2>
                   <ProviderForm
@@ -225,6 +229,7 @@ export function Onboarding(): React.JSX.Element {
                     {STAGES.map((s) => (
                       <Field key={s.id} label={s.label} hint={s.hint}>
                         <ModelPicker
+                          label={s.label}
                           providers={list}
                           value={routing[s.id]}
                           onChange={(ref) => setRouting({ ...routing, [s.id]: ref })}
@@ -245,7 +250,7 @@ export function Onboarding(): React.JSX.Element {
                   <Button variant="primary" icon={<Wand2 size={14} />} loading={reading} disabled={!resumeId} onClick={() => void readResume()}>
                     Read my resume
                   </Button>
-                  <span className="text-xs text-faint">{resumeId ? 'Uses your extraction model. This costs a few cents at most.' : 'Upload a resume first, or skip this step and fill in your profile by hand.'}</span>
+                  <span className="text-xs text-faint">{resumeId ? 'Uses your Reading model. On a paid provider this usually costs a few cents.' : 'Upload a resume first, or skip this step and fill in your profile by hand.'}</span>
                 </div>
               </>
             )}
@@ -316,7 +321,6 @@ export function Onboarding(): React.JSX.Element {
               )}
             </div>
           </div>
-          {providers.loading && step === 0 && !providers.data && <Loading />}
         </div>
       </main>
     </div>
@@ -343,7 +347,7 @@ function PreferencesStep({ prefs, onChange }: { prefs: JobPreferences; onChange:
         <p className="mb-1.5 text-xs font-medium text-muted">Seniority</p>
         <div className="flex flex-wrap gap-1.5">
           {SENIORITY.map((s) => (
-            <Chip key={s} selected={prefs.seniority.includes(s)} onClick={() => set({ seniority: prefs.seniority.includes(s) ? prefs.seniority.filter((x) => x !== s) : [...prefs.seniority, s] })}>
+            <Chip key={s} className="capitalize" selected={prefs.seniority.includes(s)} onClick={() => set({ seniority: prefs.seniority.includes(s) ? prefs.seniority.filter((x) => x !== s) : [...prefs.seniority, s] })}>
               {s}
             </Chip>
           ))}

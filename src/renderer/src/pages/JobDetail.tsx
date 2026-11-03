@@ -5,7 +5,7 @@ import type { Job } from '@shared/types'
 import { api } from '@renderer/lib/api'
 import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
-import { SOURCE_LABELS, formatDate, formatSalary, relativeTime } from '@renderer/lib/format'
+import { REMOTE_LABELS, SOURCE_LABELS, formatDate, formatSalary, relativeTime } from '@renderer/lib/format'
 import { FitBadge, StageBadge, StatusBadge } from '@renderer/components/badges'
 import { DismissDialog } from '@renderer/components/DismissDialog'
 import { Badge, Button, Card, CardHeader, Chip, ErrorBlock, Loading, Notice, Page, ProgressBar } from '@renderer/components/ui'
@@ -90,7 +90,7 @@ export function JobDetail(): React.JSX.Element {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="truncate text-xl font-semibold tracking-tight text-fg">{j.title}</h1>
-            <button aria-label={j.starred ? 'Remove star' : 'Star'} onClick={() => void api.starJob(j.id, !j.starred).then(job.reload, toast.error)} className={j.starred ? 'text-warn' : 'text-faint hover:text-fg'}>
+            <button aria-label={j.starred ? 'Remove star' : 'Star'} title={j.starred ? 'Remove star' : 'Star'} onClick={() => void api.starJob(j.id, !j.starred).then(job.reload, toast.error)} className={j.starred ? 'text-warn' : 'text-faint hover:text-fg'}>
               <Star size={16} className={j.starred ? 'fill-current' : ''} />
             </button>
           </div>
@@ -218,9 +218,7 @@ export function JobDetail(): React.JSX.Element {
             <dl className="divide-y divide-line px-4 py-1">
               <Meta label="Company">{j.company}</Meta>
               <Meta label="Location">{j.location ?? 'Not listed'}</Meta>
-              <Meta label="Work style">
-                <span className="capitalize">{j.remote}</span>
-              </Meta>
+              <Meta label="Work style">{REMOTE_LABELS[j.remote]}</Meta>
               <Meta label="Pay">{formatSalary(j) || 'Not listed'}</Meta>
               <Meta label="Type">{j.employmentType ?? 'Not listed'}</Meta>
               <Meta label="Source">{SOURCE_LABELS[j.source]}</Meta>

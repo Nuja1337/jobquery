@@ -1,5 +1,6 @@
 import { clsx } from 'clsx'
 import type { LintReport, LintSeverity } from '@shared/types'
+import { plural } from '@renderer/lib/format'
 import { Badge, Spinner, type Tone } from './ui'
 
 const SEVERITY_TONE: Record<LintSeverity, Tone> = { high: 'bad', medium: 'warn', low: 'neutral' }
@@ -30,7 +31,7 @@ export function LintPanel({ report, min, busy }: { report: LintReport | null; mi
         {busy && <Spinner />}
       </div>
       <p className="mt-1 text-xs text-faint">
-        {report.stats.words} words, {report.stats.sentences} sentences, {report.stats.avgSentenceWords} words per sentence on average
+        {plural(report.stats.words, 'word')}, {plural(report.stats.sentences, 'sentence')}, {report.stats.avgSentenceWords} words per sentence on average
       </p>
       {report.issues.length === 0 ? (
         <p className="mt-3 text-sm text-good">No AI-sounding patterns found.</p>
@@ -39,7 +40,7 @@ export function LintPanel({ report, min, busy }: { report: LintReport | null; mi
           {report.issues.map((issue, i) => (
             <li key={`${issue.rule}-${i}`} className="rounded-md border border-line bg-bg p-2.5">
               <div className="flex items-center gap-2">
-                <Badge tone={SEVERITY_TONE[issue.severity]}>{issue.severity}</Badge>
+                <Badge tone={SEVERITY_TONE[issue.severity]} className="capitalize">{issue.severity}</Badge>
                 <span className="text-sm text-fg">{issue.message}</span>
               </div>
               {issue.match && <p className="mt-1.5 break-words rounded bg-hover px-1.5 py-0.5 font-mono text-xs text-muted">{issue.match}</p>}

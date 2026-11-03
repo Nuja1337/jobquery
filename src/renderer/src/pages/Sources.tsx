@@ -116,7 +116,7 @@ export function Companies(): React.JSX.Element {
             if (url.trim()) void check()
           }}
         >
-          <Field label="Careers page address" className="flex-1" hint="Paste a link to a company job board. Greenhouse, Lever, Ashby and others are recognised.">
+          <Field label="Careers page address" className="flex-1" hint="Paste a link to a company job board. Greenhouse, Lever, Ashby and others are recognized.">
             <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://boards.greenhouse.io/company" />
           </Field>
           <Button type="submit" loading={checking} disabled={!url.trim()} icon={<Search size={14} />} className="mb-[1.35rem]">
@@ -126,10 +126,10 @@ export function Companies(): React.JSX.Element {
         {detected && (
           <div className="rounded-lg border border-line bg-bg p-3">
             {detected.ats === 'unknown' ? (
-              <p className="mb-3 text-sm text-warn">JobPilot could not recognise this job board. You can still save it, but it will not be checked automatically.</p>
+              <p className="mb-3 text-sm text-warn">JobPilot could not recognize this job board. You can still save it, but it will not be checked automatically.</p>
             ) : (
               <p className="mb-3 text-sm text-good">
-                Recognised a {SOURCE_LABELS[detected.ats as keyof typeof SOURCE_LABELS] ?? detected.ats} job board{detected.token ? ` (${detected.token})` : ''}.
+                Recognized a {SOURCE_LABELS[detected.ats as keyof typeof SOURCE_LABELS] ?? detected.ats} job board{detected.token ? ` (${detected.token})` : ''}.
               </p>
             )}
             <div className="flex items-end gap-2">
@@ -191,7 +191,7 @@ export function Companies(): React.JSX.Element {
                     </button>
                   )}
                 </td>
-                <td className={TD}>{c.ats === 'unknown' ? <Badge>Not recognised</Badge> : <Badge tone="info">{SOURCE_LABELS[c.ats as keyof typeof SOURCE_LABELS] ?? c.ats}</Badge>}</td>
+                <td className={TD}>{c.ats === 'unknown' ? <Badge>Not recognized</Badge> : <Badge tone="info">{SOURCE_LABELS[c.ats as keyof typeof SOURCE_LABELS] ?? c.ats}</Badge>}</td>
                 <td className={TD}>
                   <Toggle ariaLabel={`Watch ${c.name}`} checked={c.watch} disabled={c.blocked} onChange={(v) => void patch(c, { watch: v })} />
                 </td>
