@@ -1,0 +1,12 @@
+Hi Scopely team,
+
+When a Unity build I worked on lost progress on about 300 phones, we had no way to see it happening in the field. I added a small telemetry layer in C# that reported save failures and frame times from real devices. The fix shipped two days after the first report came in, and the same layer later caught a memory spike that testers had missed.
+
+That is why the Client Engineer role on your unannounced Strategy/MMO project appeals to me. It asks for monitoring and observability inside the Unity client, and for turning vague live issues into signals the team can act on. Those are the problems I have enjoyed most, because the answer usually comes from data nobody was collecting yet.
+
+Before the telemetry work I had guessed at causes for weeks. Real user monitoring would have shown me the pattern in an afternoon, which is the kind of tool I would want to help build for a cross-platform title.
+
+I would like to talk about what real user monitoring should cover on your project, and which signals the team asks for first.
+
+Thanks,
+Mara

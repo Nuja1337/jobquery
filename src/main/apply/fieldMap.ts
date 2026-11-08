@@ -1,10 +1,12 @@
-import type { AnswerSource, Education, FormField, Profile, Settings, SourceKind } from '@shared/types'
+import type { AnswerSource, Education, EducationLevel, FormField, Profile, RemoteType, Settings, SourceKind } from '@shared/types'
 import { normalizeCompany } from '../pipeline/dedupe'
 import { countryOf, isCountryName, jobCountry } from '../util/geo'
 import { jaccard, normalizeQuestion } from '../util/text'
 import { citizenshipAnswer, mapApplicationField } from './applicationFacts'
+import { mapAvailabilityField } from './availabilityFacts'
 import { employmentHistoryAnswer, unansweredHistoryAnswer } from './companyQuestions'
 import { namedCountries, namedCountry, sameCountryName } from './countries'
+import { declineOption, demographicAnswer, demographicFamily } from './demographics'
 
 // Answers that come straight from the profile or settings, with no model call.
 // Anything this can't answer with confidence is left for the answer bank or the AI.
@@ -16,8 +18,6 @@ export interface MappedAnswer {
   needsUser: boolean
   note: string | null
 }
-
-const DECLINE = /decline|prefer not|don'?t wish|do not wish|not to (?:say|disclose|answer|self.?identify)|rather not|choose not/i
 
 export const words = (text: string): string[] => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
 
@@ -61,7 +61,7 @@ function pickCore(options: string[], wanted: string): string | null {
     const re = w === 'yes' ? /^\s*yes\b/i : /^\s*no\b/i
     return only(options, (o) => re.test(o))
   }
-  if (w === 'decline') return options.find((o) => DECLINE.test(o)) ?? null
+  if (w === 'decline') return declineOption(options)
   const ww = words(wanted)
   const sameWords = only(options, (o) => words(o).join(' ') === ww.join(' '))
   if (sameWords) return sameWords
@@ -101,21 +101,59 @@ function contentWords(text: string): Set<string> {
 }
 
 /** Share of the shorter question's meaningful words found in the longer one, 0 to 1. */
-function overlap(a: string, b: string): number {
+function overlap(a: string, b: string, against: 'shorter' | 'longer' = 'shorter'): number {
   const wa = contentWords(a)
   const wb = contentWords(b)
   if (wa.size === 0 || wb.size === 0) return 0
   let shared = 0
   for (const w of wa) if (wb.has(w)) shared++
-  return shared / Math.min(wa.size, wb.size)
+  return shared / (against === 'shorter' ? Math.min(wa.size, wb.size) : Math.max(wa.size, wb.size))
 }
 
-/** Finds a fact the user gave ("Notice period: 2 weeks") that matches the question. */
+// Words that flip what a yes/no question asks. "Background check: Yes" must not answer
+// "Have you ever failed a background check?".
+const POLARITY = /\b(?:ever|failed|refused|not|never|unwilling|convicted|terminated|denied)\b|n['’]t\b/gi
+const polarityWords = (text: string): Set<string> => new Set((text.match(POLARITY) ?? []).map((w) => (/n['’]t$/i.test(w) ? "n't" : w.toLowerCase())))
+
+/** True when the question and the fact differ in a polarity word, in either direction. */
+function polarityDiffers(label: string, fact: string): boolean {
+  const a = polarityWords(label)
+  const b = polarityWords(fact)
+  if (a.size !== b.size) return true
+  for (const w of a) if (!b.has(w)) return true
+  return false
+}
+
+/**
+ * True when each side has a content word the other lacks ("onsite" against "weekends", "bachelor"
+ * against "master"). Those are different questions, whatever the overall overlap. A fact that only
+ * leaves words out, or a question that only adds some, is not caught here.
+ */
+function bothHaveOwnWords(a: string, b: string): boolean {
+  const wa = contentWords(a)
+  const wb = contentWords(b)
+  let aOnly = false
+  for (const w of wa) if (!wb.has(w)) aOnly = true
+  if (!aOnly) return false
+  for (const w of wb) if (!wa.has(w)) return true
+  return false
+}
+
+/**
+ * Finds a fact the user gave ("Notice period: 2 weeks") that matches the question. The two must be
+ * about the same length, and a fact never answers a question with the opposite polarity.
+ */
 export function matchFact(profile: Profile, label: string): string | null {
   let best: { answer: string; score: number } | null = null
+  const normalized = normalizeQuestion(label)
   for (const fact of profile.facts) {
-    const score = Math.max(overlap(label, fact.question), jaccard(normalizeQuestion(label), normalizeQuestion(fact.question)))
-    if (score >= 0.75 && (!best || score > best.score)) best = { answer: fact.answer, score }
+    if (polarityDiffers(label, fact.question)) continue
+    const similar = jaccard(normalized, normalizeQuestion(fact.question))
+    const longer = overlap(label, fact.question, 'longer')
+    if (similar < 0.75 && longer < 0.75) continue
+    if (bothHaveOwnWords(label, fact.question)) continue
+    const score = Math.max(similar, longer)
+    if (!best || score > best.score) best = { answer: fact.answer, score }
   }
   return best?.answer ?? null
 }
@@ -160,8 +198,13 @@ const LEGAL_TERMS = /arbitrat|non-?compete|non-?solicit|legal agreement|terms of
 // the form only when Settings allows it, like the other user-only questions.
 const LEGAL_HISTORY_TERMS = /\b(convicted|conviction|criminal|felony|felonies|misdemeanou?r|arrested|arrest record)\b/i
 
+// Accommodation and adjustment requests for a disability or health need. They go to the person and never get the disability setting.
+// "Can you perform the essential functions with or without reasonable accommodation?" is a standard ability question, not a request.
+const WITH_OR_WITHOUT_ACCOMMODATION = /\bwith(?:out)?\s+or\s+with(?:out)?\s+(?:an?\s+|any\s+)?(?:reasonable\s+)?(?:accommodations?|adjustments?)\b/gi
+const ACCOMMODATION = /\breasonable (?:accommodations?|adjustments?)\b|\b(?:require|requires|need|needs|request|requests)\s+(?:an?\s+|any\s+|some\s+)?(?:accommodations?|adjustments?)\b|\baccommodations?\b.{0,80}\b(?:disabilit\w*|medical|health|impair\w*|interview|assessment|hiring|application|recruit\w*|process|assist\w*)\b|\b(?:disabilit\w*|medical|health|impair\w*|interview|assessment|hiring|application|recruit\w*|process|assist\w*)\b.{0,80}\baccommodations?\b/i
+
 /**
- * Questions only the person can answer: how they used AI on the application, legal history, legal agreements,
+ * Questions only the person can answer: how they used AI on the application, legal history, accommodations, legal agreements,
  * attestations and consent. Returns a note for the user, or null. Checked before anything else,
  * including regenerate, and the AI is never asked. A saved answer of the user's own still applies.
  */
@@ -171,6 +214,7 @@ export function mustAskUser(field: { label: string; type: string }): string | nu
     return 'This employer asks about AI use in applications. Read their policy and answer this yourself.'
   }
   if (LEGAL_HISTORY_TERMS.test(label)) return 'This asks about legal history. Answer it yourself.'
+  if (ACCOMMODATION.test(label.replace(WITH_OR_WITHOUT_ACCOMMODATION, ' '))) return 'This asks about accommodations for a disability or health need. Answer it yourself.'
   if (LEGAL_TERMS.test(label)) {
     return field.type === 'checkbox'
       ? 'This box agrees to or confirms something on your behalf. Read it and tick it yourself.'
@@ -249,8 +293,13 @@ export function optInAnswer(field: FormField): MappedAnswer | null {
 
 // A box is ticked for the person only when every clause of its label is on this whitelist.
 // (a) Consent to the handling of the applicant's own data. GDPR or "data protection" alone is not enough.
+// Consent under China's PIPL on Riot forms, tied to the company's own privacy policy: "...processing of my sensitive
+// personal information according to Section 1 thereof". Sharing with others or third-party data stays with the person.
+const PIPL_CONSENT =
+  /\b(?:collection and processing|processing|(?:cross-border )?transfer) of my (?:sensitive )?personal information(?: to [^.]{0,80}?)? according to (?:its provisions|section \d+ thereof)\b/
 const PRIVACY_CONSENT = new RegExp(
   [
+    PIPL_CONSENT,
     /\b(?:(?:applicant|candidate|recruitment|job applicant) )?privacy (?:policy|notice|statement)s?\b/,
     /\b(?:processing|collect\w*|stor\w*|retain\w*|retention|handl\w*) (?:of )?(?:my|your) (?:\w+ ){0,2}(?:data|information)\b/,
     /\bmy (?:personal |demographic )?data\b/,
@@ -270,6 +319,7 @@ const ALLOWED_PHRASES = new RegExp(
     BEST_KNOWLEDGE,
     /in accordance with/,
     /as (?:described|set out|outlined) in/,
+    /according to (?:its|the) (?:provisions|privacy (?:policy|notice))/,
     /for recruitment purposes/,
     /for (?:up to )?\d+ (?:months?|years?)/,
     /for the purposes? of (?:my|this|reviewing|evaluating|processing)(?: \w+){0,2} applications?/,
@@ -287,7 +337,8 @@ const FILLER_WORDS = new Set(
   (
     'by checking ticking selecting clicking submitting on this the box checkbox form can you do please we i have has read understand acknowledge agree consent confirm accept certify attest declare yes ' +
     'following that and to is are be being with in of for as my your our me it its a an at part may will shall voluntarily disclosed provided ' +
-    'personal demographic application applications applicant candidate recruitment recruiting hiring data information company employer s'
+    'personal demographic application applications applicant candidate recruitment recruiting hiring data information company employer s ' +
+    'all am certifying acknowledging confirming agreeing consenting understood review reviewed carefully expressly specifically hereby following button thereof'
   ).split(' ')
 )
 const DATA_VERB = /^(?:collect\w*|stor\w*|process\w*|retain\w*|retention|handl\w*|use|using)$/
@@ -348,10 +399,12 @@ function checkClause(clause: string, companyWords: Set<string>): { known: boolea
  * True when the box only consents to the handling of the applicant's data or says the answers are
  * true, and agrees to nothing else. `company` is the employer's name, which may appear in the label.
  */
-export function isTickableConsent(label: string, company = ''): boolean {
+export function isTickableConsent(rawLabel: string, company = ''): boolean {
+  // Riot's China forms repeat each sentence in Chinese, and "Inc." would end a clause.
+  const label = rawLabel.replace(/[\p{Script=Han}\u3000-\u303f\uff00-\uffef][\p{Script=Han}\u3000-\u303f\uff00-\uffef\d\s]*/gu, ' ').replace(/\binc\./gi, 'inc').replace(/\s+/g, ' ').trim()
   if (!ASKS_AGREEMENT.test(label) || AI_TERMS.test(label) || isOptIn(label)) return false
   // "To the best of my knowledge" is fine. Any other mention of knowledge is a skill question.
-  if (NEVER_TICK.test(label.replace(BEST_KNOWLEDGE, ' '))) return false
+  if (NEVER_TICK.test(label.replace(BEST_KNOWLEDGE, ' ').replace(new RegExp(PIPL_CONSENT.source, 'gi'), ' '))) return false
   const companyWords = new Set(words(normalizeCompany(company)))
   const checked = label.split(CLAUSE_BREAK).map((c) => c.trim()).filter(Boolean).map((c) => checkClause(c, companyWords))
   return checked.some((c) => c.known) && checked.every((c) => c.clean)
@@ -364,15 +417,29 @@ export const AGREED_NOTE = 'Agreed because Settings allows it.'
  * a ticked checkbox, or "Yes". Returns null for anything else.
  */
 export function agreeAnswer(field: FormField, settings: Settings, company = ''): MappedAnswer | null {
-  if (!settings.autopilot.tickRequiredConsent || !field.required || !isTickableConsent(field.label, company)) return null
+  if (!settings.autopilot.tickRequiredConsent || !field.required) return null
   const agreed = (value: string): MappedAnswer => ({ value, source: 'settings', confidence: 1, needsUser: false, note: AGREED_NOTE })
-  if (field.type === 'checkbox') return agreed('true')
+  if (field.type === 'checkbox') return isTickableConsent(field.label, company) ? agreed('true') : null
   if (isChoiceWithOptions(field)) {
-    const yes = pickOption(field.options, 'Yes')
-    if (!yes) return null
-    return agreed(field.type === 'multiselect' || field.type === 'checkboxes' ? JSON.stringify([yes]) : yes)
+    const pick = agreeOption(field.options)
+    if (!pick) return null
+    // A lone option can carry the acknowledgment itself: "Airbnb Candidate Privacy Policy" with "I acknowledge that I have read ...".
+    const tickable = isTickableConsent(field.label, company) || (field.options.length === 1 && isTickableConsent(`${field.label}. ${pick}`, company))
+    if (!tickable) return null
+    return agreed(field.type === 'multiselect' || field.type === 'checkboxes' ? JSON.stringify([pick]) : pick)
   }
   return null
+}
+
+const AGREE_OPTION = /\b(?:acknowledg\w*|agree\w*|accept\w*|confirm\w*|certif\w*|consent\w*|yes)\b/i
+const DECLINE_OPTION = /\b(?:no|not|don'?t|decline\w*|disagree\w*|refuse\w*|reject\w*|den(?:y|ied)|unable|cannot|can'?t)\b/i
+
+/** The option that agrees: "Yes", a lone option, or the one that says acknowledge, agree, accept, confirm or certify. Never an option that declines. */
+function agreeOption(options: string[]): string | null {
+  const yes = pickOption(options, 'Yes')
+  if (yes) return yes
+  if (options.length === 1) return DECLINE_OPTION.test(options[0]) ? null : options[0]
+  return options.find((o) => AGREE_OPTION.test(o) && !DECLINE_OPTION.test(o)) ?? null
 }
 
 /** True for an answer that agreeAnswer filled in. */
@@ -393,6 +460,14 @@ const yearOf = (end: string | undefined): number => {
   if (/present|current|now|ongoing/.test(text)) return 9999
   const year = text.match(/\b(19|20)\d{2}\b/)
   return year ? Number(year[0]) : 0
+}
+
+/** True when the entry is still being studied for: it ends in the future, or says present or expected. */
+export function educationInProgress(ed: Education, now: Date = new Date()): boolean {
+  const end = (ed.end ?? '').trim().toLowerCase()
+  if (/\b(?:present|current|now|ongoing|expected|anticipated|in progress|pursuing|candidate)\b/.test(end)) return true
+  const year = end.match(/\b(19|20)\d{2}\b/)
+  return year !== null && Number(year[0]) > now.getFullYear()
 }
 
 /** The education entry with the latest end date, or the first one when none has a date. */
@@ -427,6 +502,15 @@ export function degreeCandidates(degree: string): string[] {
   if (/^(aa|as|aas)\b|\bassociates?\b/.test(t)) return [...long, "Associate's Degree", 'Associates Degree', "Associate's", 'Associate']
   if (/high school|secondary|\bged\b/.test(t)) return ['High School', 'High School Diploma', 'High school or equivalent', 'GED']
   return long
+}
+
+/** The degree text each highest-completed level answers with. Some college holds no degree. */
+const LEVEL_DEGREE: Record<Exclude<EducationLevel, 'some_college'>, string> = {
+  high_school: 'High School Diploma',
+  associate: "Associate's Degree",
+  bachelor: "Bachelor's Degree",
+  master: "Master's Degree",
+  doctorate: 'Doctorate'
 }
 
 function answerDegree(field: FormField, degree: string): MappedAnswer | null {
@@ -480,7 +564,7 @@ const RESIDENCE_SUBJECT = /^(are you|do you) (currently )?(located|based|living|
 const NOT_PLAIN_RESIDENCE = /\b(citizen\w*|permanent|green card|lawful|legal\w*|tax\w*|visa|national\w*|authori[sz]ed|resident|residents)\b/i
 
 /** Rank of a degree, 5 for a doctorate down to 1 for high school. 0 when the text isn't recognized. */
-function degreeRank(degree: string): number {
+export function degreeRank(degree: string): number {
   const t = degree.toLowerCase().replace(/[.']/g, '')
   if (/\b(phd|dphil|doctorate|doctoral)\b|doctor of philosophy/.test(t)) return 5
   if (/\bmba\b|master of business administration|\b(ms|msc|ma|meng|mfa|med|mph|mpa|master|masters)\b/.test(t)) return 4
@@ -490,12 +574,12 @@ function degreeRank(degree: string): number {
   return 0
 }
 
-/** The highest degree on the profile, or null when there is none or one of them isn't recognized. */
-export function highestDegree(profile: Profile): string | null {
+/** The highest earned degree on the profile, or null when there is none or one of them isn't recognized. Degrees in progress are skipped. */
+export function highestDegree(profile: Profile, now?: Date): string | null {
   let best: { degree: string; rank: number } | null = null
   for (const ed of profile.education) {
     const degree = (ed.degree ?? '').trim()
-    if (!degree) continue
+    if (!degree || educationInProgress(ed, now)) continue
     const rank = degreeRank(degree)
     if (rank === 0) return null
     if (!best || rank > best.rank) best = { degree, rank }
@@ -509,7 +593,8 @@ const PROSE = /\b(describe|tell us|explain|share|example|experiences?|skills?|ab
 /** Words of a "how many years of experience" question that don't name a skill. */
 const GENERIC_YEARS_WORDS = new Set([
   'how', 'many', 'years', 'year', 'of', 'total', 'overall', 'professional', 'relevant', 'work', 'working',
-  'industry', 'full', 'time', 'experience', 'do', 'you', 'have', 'in', 'the', 'your', 'number', 'yrs'
+  'industry', 'full', 'time', 'experience', 'do', 'you', 'have', 'in', 'the', 'your', 'number', 'yrs',
+  'a', 'an', 'minimum', 'maximum', 'at', 'least', 'combined', 'cumulative'
 ])
 
 type LinkKind = 'linkedin' | 'github' | 'portfolio' | 'website'
@@ -531,8 +616,13 @@ function linkKindOf(label: string): LinkKind | null {
 }
 
 const AUTHORIZATION =/authori[sz]ed to work|legally (authori[sz]ed|eligible|permitted)|right to work|eligible to work|work permit|legal authori[sz]ation|authori[sz]ation to work/
+const PERMANENT_AUTHORIZATION = /\bpermanent(?:ly)?\s+(?:work(?:ing)?\s+|employment\s+)?(?:authori[sz]ation|authori[sz]ed|eligibility|right to work|work status)\b/
 /** Wording that flips what a question means. An authorization or sponsorship question that has it is left to the person. */
 const NEGATED = /\bnot\b|n't\b|\bnever\b|\bno longer\b/
+/** Names of regions that hold several countries. A question about one has no single answer. */
+const REGION_NAME = /\b(?:(?:north|south|latin|central)[\s-]america(?:n)?|(?:the )?americas|europe(?:an)?|european union|emea|apac|latam|asia[\s-]pacific|scandinavia|nordics?|(?:the )?middle east|(?<!south )africa)\b/i
+/** True when a label names more than one country, or a region that holds several. */
+const namesSeveralCountries = (label: string): boolean => namedCountries(label).length > 1 || REGION_NAME.test(label)
 /** "Do you require a work permit?" asks the opposite of "Do you hold a work permit?". */
 const NEEDS_PERMIT = /\b(?:require|requires|required|need|needs|needed)\b[^?]{0,40}\b(?:work (?:permit|visa|authori[sz]ation)|authori[sz]ation to work|right to work|(?:a |an )?(?:visa|permit))\b/
 
@@ -546,6 +636,11 @@ export interface MapContext {
   jobCountry?: string | null
   /** The currency the job posting pays in, such as "EUR". */
   jobCurrency?: string | null
+  /** How the job works: remote, hybrid or onsite. Null or 'unknown' when the posting does not say. */
+  jobRemote?: RemoteType | null
+  /** The pay range the posting states, in its own currency. */
+  jobSalaryMin?: number | null
+  jobSalaryMax?: number | null
   /** The current time. Tests set it so dates are fixed. */
   now?: Date
 }
@@ -559,9 +654,11 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
   const label = field.label.toLowerCase()
   const key = field.key.toLowerCase()
   const both = `${label} ${key}`
+  // The name parts the person entered win. Without them the full name is split at the first space.
   const names = profile.fullName.trim().split(/\s+/)
-  const first = names[0] ?? ''
-  const last = names.length > 1 ? names.slice(1).join(' ') : ''
+  const first = profile.name?.first?.trim() || (names[0] ?? '')
+  const last = profile.name?.last?.trim() || (names.length > 1 ? names.slice(1).join(' ') : '')
+  const preferred = profile.name?.preferred?.trim() || first
 
   if (field.type === 'file') return null
 
@@ -571,6 +668,8 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
 
   const ask = mustAskUser(field)
   if (ask) return { value: '', source: 'settings', confidence: 0, needsUser: true, note: ask }
+  // Voluntary self-identification comes from the owner's settings or the decline option, never a guess.
+  if (demographicFamily(field)) return demographicAnswer(field, settings, null)
   const userOnly = (note: string): MappedAnswer => ({ value: '', source: 'profile', confidence: 0, needsUser: true, note })
   const linkAnswer = (kind: LinkKind, confidence: number): MappedAnswer | null => {
     const { linkedin, github, portfolio, website } = profile.links
@@ -591,7 +690,12 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
   // experience with GitHub Actions" or "Tell us about a mobile app you shipped" are questions.
   const contactField = field.type === 'email' || field.type === 'tel' || field.type === 'url' || (field.type === 'text' && !PROSE.test(label))
   if (contactField) {
-    if (/preferred (first )?name/.test(both)) return answer(field, first, 'profile', 0.9)
+    if (/preferred (first )?name/.test(both)) return answer(field, preferred, 'profile', 0.9)
+    if (/\bmiddle[\s_-]?(?:name|initial)\b/.test(both) && profile.name?.middle?.trim()) {
+      const middle = profile.name.middle.trim()
+      return answer(field, /initial/.test(both) ? middle.slice(0, 1).toUpperCase() : middle, 'profile', 0.95)
+    }
+    if (/\b(?:pronunciation|pronounce)\b/.test(both) && profile.name?.pronunciation?.trim()) return answer(field, profile.name.pronunciation.trim(), 'profile', 0.9)
     if (/\b(first[\s_-]?name|given name|fname)\b/.test(both)) return answer(field, first, 'profile', 0.98)
     if (/\b(last[\s_-]?name|surname|family name|lname)\b/.test(both)) return answer(field, last, 'profile', 0.98)
     if (/^(full |legal |your )?name\*?$|^full[\s_-]?name|legal name/.test(label.trim()) || key === 'name') return answer(field, profile.fullName, 'profile', 0.95)
@@ -657,11 +761,21 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
   }
   const { entry, authorizedHere } = lookup(asked)
   const notSure = "Couldn't tell which country this asks about. Answer it yourself."
+  const hasCountryEntries = countries.length > 0 || profile.application.authorization.length > 0
   if (/sponsor/.test(label)) {
+    // "Are you authorized to work in the US and will you require sponsorship?" is two questions.
+    // "Sponsorship for a work permit" is one question, so "work permit" alone does not make it two.
+    if (AUTHORIZATION.test(label.replace(/work permit/g, ' ')) && !/without\b.{0,40}\bsponsor/.test(label)) {
+      return userOnly('This asks about work authorization and sponsorship in one question. Answer it yourself.')
+    }
+    if (namesSeveralCountries(field.label)) return userOnly(notSure)
     // A country that only the longer list knows (China, Korea) counts only when the question is
     // plainly about needing sponsorship there. Other wording keeps the job's country, as before.
     const plainlyNeeds = /\b(?:require|requires|required|need|needs|needed)\b[^?]{0,60}\bsponsor|\bsponsor\w*\b[^?]{0,40}\b(?:required|needed)\b/.test(label)
-    const sponsorFor = named && countryOf(field.label.replace(/\bus\b/g, '')) === null && !plainlyNeeds ? lookup(inJobCountry) : { entry, authorizedHere }
+    const jobCountryOnly = named && countryOf(field.label.replace(/\bus\b/g, '')) === null && !plainlyNeeds
+    const sponsorFor = jobCountryOnly ? lookup(inJobCountry) : { entry, authorizedHere }
+    // With no country to go on, the global summary would answer for every country at once.
+    if ((jobCountryOnly ? inJobCountry : asked) === null && hasCountryEntries) return userOnly(notSure)
     // Someone who doesn't need sponsorship at home still needs it in a country they aren't
     // authorized to work in.
     const needs = sponsorFor.entry ? sponsorFor.entry.status === 'none' || (sponsorFor.entry.status === 'visa' && sponsorFor.entry.needsSponsorship) : profile.workAuthorization.needsSponsorship || sponsorFor.authorizedHere() === false
@@ -677,12 +791,19 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
     }
     return answer(field, needs ? 'Yes' : 'No', 'profile', 0.9)
   }
-  const asksPermit = NEEDS_PERMIT.test(label) && /\b(?:work|working|employment)\b/.test(label)
+  // "Do you have permanent work authorization in the US?" is Yes for a citizen or a permanent resident of that country.
+  if (PERMANENT_AUTHORIZATION.test(label)) {
+    if (NEGATED.test(label)) return userOnly('This work authorization question is worded in a way the app could misread. Answer it yourself.')
+    if (namesSeveralCountries(field.label) || asked === null) return userOnly(notSure)
+    if (!entry) return userOnly('Add your work authorization for this country in Profile.')
+    return answer(field, entry.status === 'citizen' || entry.status === 'permanent_resident' ? 'Yes' : 'No', 'profile', 0.9)
+  }
+  const asksPermit = NEEDS_PERMIT.test(label) &&/\b(?:work|working|employment)\b/.test(label)
   if (asksPermit || AUTHORIZATION.test(label)) {
     if (!authorizedAnywhere && !entry) return null
     if (NEGATED.test(label)) return userOnly('This work authorization question is worded in a way the app could misread. Answer it yourself.')
     // A question about two countries ("China or Japan") has no single answer.
-    if (namedCountries(field.label).length > 1) return userOnly(notSure)
+    if (namesSeveralCountries(field.label)) return userOnly(notSure)
     // Needing a permit is the reverse of being authorized. A person with no authorization there, or
     // one who needs sponsorship, needs a permit.
     if (asksPermit) {
@@ -697,27 +818,6 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
 
   const citizen = citizenshipAnswer(field, asked, profile.application)
   if (citizen) return citizen
-
-  // Voluntary self-identification. Defaults to declining. When the form has no decline option, an
-  // optional question stays blank and a required one is left for the person.
-  const needsYou: MappedAnswer = { value: '', source: 'settings', confidence: 0, needsUser: true, note: 'This asks about your background and has no option to decline. Answer it yourself.' }
-  const eeo = (pref: string): MappedAnswer | null => {
-    if (pref !== 'decline') return answer(field, pref, 'settings', 0.9)
-    if (field.type === 'checkbox') {
-      return field.required ? needsYou : { value: 'false', source: 'settings', confidence: 0.95, needsUser: false, note: null }
-    }
-    if (isChoiceWithOptions(field)) {
-      const declined = answer(field, 'decline', 'settings', 0.95)
-      if (declined) return declined
-    }
-    return field.required ? needsYou : { value: '', source: 'settings', confidence: 0, needsUser: false, note: null }
-  }
-  if (/sexual orientation|\blgbt|\bqueer\b|transgender/.test(label)) return eeo('decline')
-  if (/\bgender\b|\bsex\b/.test(label)) return eeo(settings.eeo.gender)
-  if (/\brace\b|ethnic|hispanic|latino/.test(label)) return eeo(settings.eeo.race)
-  if (/veteran/.test(label)) return eeo(settings.eeo.veteran)
-  if (/disabilit/.test(label)) return eeo(settings.eeo.disability)
-  if (/pronoun/.test(label)) return settings.eeo.pronouns ? answer(field, settings.eeo.pronouns, 'settings', 0.9) : null
 
   // Source of the application.
   if (/how did you (hear|find|learn)|where did you (hear|find|see)|referral source|source of application/.test(label)) {
@@ -739,6 +839,10 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
   const fact = matchFact(profile, field.label)
   if (fact) return answer(field, fact, 'profile', 0.85)
 
+  // Work and availability facts: on site, commuting, hours, shifts, background checks and the like.
+  const availability = mapAvailabilityField(field, ctx)
+  if (availability) return availability
+
   // Things the app must never guess.
   if (/salary|compensation|pay expectation|desired pay|expected pay/.test(label)) {
     return { value: '', source: 'profile', confidence: 0, needsUser: true, note: 'Add your salary expectation to your profile facts to fill this automatically.' }
@@ -746,8 +850,12 @@ export function mapKnownField(field: FormField, ctx: MapContext): MappedAnswer |
   if (/start date|notice period|when can you start|earliest (start|availability)/.test(label)) {
     return { value: '', source: 'profile', confidence: 0, needsUser: true, note: 'Add your notice period or start date to your profile facts to fill this automatically.' }
   }
-  if (/convicted|criminal|felony|background check/.test(label)) {
+  if (/convicted|criminal|felony/.test(label)) {
     return { value: '', source: 'profile', confidence: 0, needsUser: true, note: 'The app never answers legal history questions for you.' }
+  }
+  // A background, drug or credit check question the availability facts did not answer goes to the owner.
+  if (/background[- ]check|drug[- ](?:test|screen)\w*|credit[- ]check/.test(label)) {
+    return { value: '', source: 'profile', confidence: 0, needsUser: true, note: 'The app does not answer background, drug or credit check questions it has no fact for. Answer it yourself.' }
   }
 
   return null
@@ -792,6 +900,14 @@ export function mapInferredField(field: FormField, ctx: MapContext): MappedAnswe
     }
   }
 
+  // The highest level given in the interview comes before the education entries.
+  const given = profile.application.education?.highestCompleted
+  if (given && DEGREE_LABEL.test(plain) && /\b(highest|earned|completed|obtained)\b/.test(plain)) {
+    const picked = given === 'some_college' ? (isChoiceWithOptions(field) ? pickOption(field.options, 'Some college') : null) : answerDegree(field, LEVEL_DEGREE[given])
+    if (typeof picked === 'string') return answer(field, picked, 'profile', 0.8)
+    return picked ?? { value: '', source: 'profile', confidence: 0, needsUser: true, note: 'None of the options match your highest completed education. Choose it yourself.' }
+  }
+
   // Education, from the most recent entry on the profile.
   const school = latestEducation(profile)
   if (school) {
@@ -805,8 +921,19 @@ export function mapInferredField(field: FormField, ctx: MapContext): MappedAnswe
     if (SCHOOL_LABEL.test(plain)) return typed(school.school)
     if (DISCIPLINE_LABEL.test(plain)) return typed(school.field)
     if (DEGREE_LABEL.test(plain)) {
-      const degree = /\bhighest\b/.test(plain) ? highestDegree(profile) : school.degree
-      if (degree) return answerDegree(field, degree)
+      const earned = /\b(highest|earned|completed|obtained)\b/.test(plain)
+      if (earned) {
+        const degree = highestDegree(profile, ctx.now)
+        if (degree) return answerDegree(field, degree)
+        // Only degrees still in progress: none of them is earned yet.
+        if (profile.education.some((e) => e.degree?.trim() && educationInProgress(e, ctx.now))) {
+          return { value: '', source: 'profile', confidence: 0, needsUser: true, note: 'Your degree on file is still in progress. Answer this yourself.' }
+        }
+      } else if (educationInProgress(school, ctx.now) && school.degree) {
+        return { value: '', source: 'profile', confidence: 0, needsUser: true, note: 'Your latest degree is still in progress. Say which degree this form wants and answer it yourself.' }
+      } else if (school.degree) {
+        return answerDegree(field, school.degree)
+      }
     }
   }
 
@@ -832,6 +959,21 @@ export function isLongAnswer(field: FormField): boolean {
   if (field.type === 'textarea') return true
   if (field.type !== 'text') return false
   return /\b(why|describe|tell us|explain|what (excites|interests|draws)|share|example|how would you)\b/i.test(field.label)
+}
+
+/**
+ * An open catch-all box: "Anything else you'd like us to know?", "Additional information", "Other comments", "Notes".
+ * It is not a question with an answer. An optional one is left blank unless a saved answer fits.
+ */
+const CATCH_ALL: readonly RegExp[] = [
+  /\b(is there )?anything (else|more|further|additional)\b/i,
+  /\badditional (information|info|comments?|notes?|details?|remarks?)\b/i,
+  /\b(other|any|further|general) (comments?|remarks?|notes?|information|info)\b/i,
+  /^\s*(notes?|comments?|remarks?|message)\s*(\(optional\))?\s*[:*?]?\s*$/i
+]
+
+export function isCatchAllField(field: FormField): boolean {
+  return (field.type === 'text' || field.type === 'textarea') && CATCH_ALL.some((re) => re.test(field.label))
 }
 
 export function isCoverLetterField(field: FormField): boolean {

@@ -268,6 +268,33 @@ export const MIGRATIONS: Migration[] = [
 
   /* 10: who started the last submit attempt, so a form a person had open is never put back in the queue */ `
   ALTER TABLE applications ADD COLUMN last_attempt_by TEXT;
+  `,
+
+  /* 11: levels and minimum years the source states, and a one-time rescore of jobs scored on cut-down postings */ `
+  ALTER TABLE jobs ADD COLUMN seniority TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE jobs ADD COLUMN min_years INTEGER;
+  -- A job marked here is scored again by the normal score step, and the mark is cleared when the new score is saved.
+  -- Only shortlisted jobs and jobs with a ready application that was not sent are marked. Sent, closed and dismissed jobs are left alone.
+  ALTER TABLE jobs ADD COLUMN rescore_pending INTEGER NOT NULL DEFAULT 0;
+  UPDATE jobs SET rescore_pending = 1
+    WHERE fit_score IS NOT NULL
+      AND (
+        stage = 'shortlisted'
+        OR (
+          stage = 'ready'
+          AND EXISTS (
+            SELECT 1 FROM applications a
+            WHERE a.job_id = jobs.id AND a.status = 'ready'
+              AND a.submit_clicked_at IS NULL AND a.submit_mode IS NULL AND a.submitted_at IS NULL
+          )
+        )
+      );
+  CREATE INDEX idx_jobs_rescore ON jobs(rescore_pending) WHERE rescore_pending = 1;
+  `,
+
+  /* 12: indexes for the day's counts and the sent-since counts */ `
+  CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at);
+  CREATE INDEX IF NOT EXISTS idx_applications_submit_clicked ON applications(submit_clicked_at);
   `
 ]
 

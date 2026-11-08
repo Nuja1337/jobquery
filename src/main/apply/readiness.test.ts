@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { FormField, PreparedAnswer } from '@shared/types'
 import { COVER_LETTER_PDF } from './answers'
-import { statusAfterEdit } from './readiness'
+import { lintText } from '../writing/lint'
+import { heldLetterNote, letterHeld, letterInUse, statusAfterEdit } from './readiness'
 
 const answer = (patch: Partial<PreparedAnswer> = {}): PreparedAnswer => ({
   fieldKey: 'q',
@@ -81,5 +82,58 @@ describe('statusAfterEdit', () => {
   it('still moves a ready draft to needs_attention when it lacks the cover letter and an answer needs the person', () => {
     const upload = answer({ type: 'file', value: COVER_LETTER_PDF, required: false })
     expect(statusAfterEdit(app({ status: 'ready' }), [answer({ value: '' }), upload], null)).toBe('needs_attention')
+  })
+})
+
+describe('a letter the style check holds back', () => {
+  const upload = answer({ type: 'file', value: COVER_LETTER_PDF, required: false })
+  const clean = lintText('I rebuilt the billing system at Ledgerly after a weekend of double charges. The retry fix cut failed payments by 40 percent, and I wrote the nightly check that still runs.')
+  const opener = lintText('I am writing to express my interest in this role. I rebuilt the billing system at Ledgerly after a weekend of double charges. The retry fix cut failed payments by 40 percent, and I wrote the nightly check that still runs.')
+  const pass = { lint: clean, minLintScore: 80 }
+  const held = { lint: opener, minLintScore: 80 }
+
+  it('has a score that passes on its own, so only the blocking rule holds it', () => {
+    expect(opener.score).toBeGreaterThanOrEqual(80)
+    expect(letterHeld(held)).toBe(true)
+    expect(letterHeld(pass)).toBe(false)
+    expect(letterHeld({ lint: { ...clean, score: 70 }, minLintScore: 80 })).toBe(true)
+    expect(letterHeld({ lint: null, minLintScore: 80 })).toBe(false)
+    expect(letterHeld(null)).toBe(false)
+  })
+
+  it('keeps a draft in needs_attention while the letter fails the check', () => {
+    expect(statusAfterEdit(app(), [answer(), upload], 'Dear team', held)).toBeNull()
+    expect(statusAfterEdit(app({ status: 'ready' }), [answer(), upload], 'Dear team', held)).toBe('needs_attention')
+  })
+
+  it('frees the draft once the letter passes', () => {
+    expect(statusAfterEdit(app(), [answer(), upload], 'Dear team', pass)).toBe('ready')
+    expect(statusAfterEdit(app({ status: 'ready' }), [answer(), upload], 'Dear team', pass)).toBeNull()
+  })
+
+  it('holds a letter pasted into a cover letter box too', () => {
+    const box = { key: 'cover_letter', label: 'Cover letter', type: 'textarea' as const, required: true, options: [], placeholder: null, maxLength: null, fileHint: null }
+    const pasted = answer({ fieldKey: 'cover_letter', label: 'Cover letter', type: 'textarea', value: 'Dear team' })
+    expect(statusAfterEdit(app({ formFields: [box] }), [pasted], 'Dear team', held)).toBeNull()
+    expect(statusAfterEdit(app({ status: 'ready', formFields: [box] }), [pasted], 'Dear team', held)).toBe('needs_attention')
+  })
+
+  it('does not hold a letter the form never takes', () => {
+    expect(letterInUse(form, [answer()])).toBe(false)
+    expect(statusAfterEdit(app(), [answer()], 'Dear team', held)).toBe('ready')
+  })
+
+  it('holds nothing when there is no letter text or no check', () => {
+    expect(statusAfterEdit(app(), [answer()], null, held)).toBe('ready')
+    expect(statusAfterEdit(app(), [answer(), upload], 'Dear team', { lint: null, minLintScore: 80 })).toBe('ready')
+    expect(statusAfterEdit(app(), [answer(), upload], 'Dear team')).toBe('ready')
+  })
+
+  it('names the top issue in a note that follows the writing rules', () => {
+    const note = heldLetterNote(held)
+    expect(note).toContain('I am writing to express my interest')
+    expect(note).toContain('send this application yourself from Review')
+    expect(note).not.toMatch(/[—–]/)
+    expect(heldLetterNote({ lint: { ...clean, score: 70 }, minLintScore: 80 })).toContain('Its score is 70 and the minimum is 80.')
   })
 })

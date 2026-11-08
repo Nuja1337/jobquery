@@ -80,7 +80,9 @@ export interface ModelPrice {
 // Settings
 // ---------------------------------------------------------------------------
 
-export type RemotePreference = 'remote' | 'hybrid' | 'onsite'
+/** Ids are stored in the profile and settings, so they never change once shipped. */
+export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'contract_to_hire' | 'temporary' | 'internship' | 'freelance'
+export type RemotePreference ='remote' | 'hybrid' | 'onsite'
 export type Seniority = 'intern' | 'junior' | 'mid' | 'senior' | 'staff' | 'principal' | 'manager' | 'director' | 'executive'
 
 export interface JobPreferences {
@@ -107,6 +109,8 @@ export interface JobPreferences {
   companyCooldownDays: number
   /** How many applications one company may get within the cooldown. At least 1. */
   perCompanyLimit: number
+  /** Employment types the user wants. An empty list means any. */
+  employmentTypes: EmploymentType[]
 }
 
 export interface Thresholds {
@@ -184,14 +188,95 @@ export interface WritingSettings {
   maxRevisions: number
 }
 
-export type EeoAnswer = 'decline' | string
+export type YesNoDecline = 'yes' | 'no' | 'decline'
+export type GenderId = 'man' | 'woman' | 'non_binary' | 'self_describe' | 'decline'
+export type RaceId = 'american_indian' | 'asian' | 'asian_east' | 'asian_south' | 'asian_southeast' | 'black' | 'mena' | 'pacific_islander' | 'white'
+export type VeteranId = 'not_protected' | 'protected' | 'decline'
+export type VeteranCategoryId = 'disabled' | 'recently_separated' | 'active_wartime' | 'service_medal'
+export type SexualOrientationId = 'asexual' | 'bisexual_pansexual' | 'gay' | 'heterosexual' | 'lesbian' | 'queer' | 'self_describe'
+export type PronounsId = 'he' | 'she' | 'they' | 'name_only' | 'custom' | 'decline'
+/** The 19 subgroups of the 2021 ONS ethnic groups. The group is the part before the first underscore. */
+export type UkEthnicityId =
+  | 'asian_bangladeshi'
+  | 'asian_chinese'
+  | 'asian_indian'
+  | 'asian_pakistani'
+  | 'asian_other'
+  | 'black_african'
+  | 'black_caribbean'
+  | 'black_other'
+  | 'mixed_white_asian'
+  | 'mixed_white_black_african'
+  | 'mixed_white_black_caribbean'
+  | 'mixed_other'
+  | 'white_british'
+  | 'white_irish'
+  | 'white_gypsy_traveller'
+  | 'white_roma'
+  | 'white_other'
+  | 'other_arab'
+  | 'other_any'
+  | 'decline'
+export type ReligionId = 'none' | 'christian' | 'buddhist' | 'hindu' | 'jewish' | 'muslim' | 'sikh' | 'other' | 'decline'
+/** The Social Mobility Commission's occupation groups for the main household earner at age 14. */
+export type HouseholdOccupationId =
+  | 'modern_professional'
+  | 'clerical_intermediate'
+  | 'senior_manager'
+  | 'technical_craft'
+  | 'semi_routine'
+  | 'routine'
+  | 'middle_manager'
+  | 'traditional_professional'
+  | 'long_term_unemployed'
+  | 'retired'
+  | 'not_applicable'
+  | 'decline'
+export type SchoolTypeId = 'state_non_selective' | 'state_selective' | 'independent' | 'independent_bursary' | 'outside_uk' | 'decline'
 
+/** The four Social Mobility Commission questions. */
+export interface SocioeconomicSettings {
+  householdOccupation: HouseholdOccupationId
+  schoolType: SchoolTypeId
+  freeSchoolMeals: YesNoDecline
+  parentDegree: YesNoDecline
+}
+
+/**
+ * Voluntary self-identification answers, version 2. Values are stable ids, never option text. An empty
+ * list or 'decline' means the form's decline option. Rows saved before version 2 hold free text and
+ * are converted by normalizeEeo in shared/eeo.ts. New families are added as new keys without a
+ * version bump, since normalizeEeo fills missing keys with defaults.
+ */
 export interface EeoSettings {
-  gender: EeoAnswer
-  race: EeoAnswer
-  veteran: EeoAnswer
-  disability: EeoAnswer
-  pronouns: string
+  version: 2
+  gender: GenderId
+  /** Used only when gender is self_describe. */
+  genderText: string
+  transgender: YesNoDecline
+  hispanicLatino: YesNoDecline
+  race: RaceId[]
+  veteran: VeteranId
+  /** Used only when veteran is protected. */
+  veteranCategories: VeteranCategoryId[]
+  militaryService: YesNoDecline
+  militarySpouse: YesNoDecline
+  disability: YesNoDecline
+  sexualOrientation: SexualOrientationId[]
+  /** Used only when sexualOrientation includes self_describe. */
+  sexualOrientationText: string
+  lgbtq: YesNoDecline
+  pronouns: PronounsId
+  /** Used only when pronouns is custom. */
+  pronounsText: string
+  /** Empty by default, which declines age questions. */
+  birthYear: number | null
+  /** UK and EU forms. Marital status and pregnancy have no setting and always decline. */
+  ukEthnicity: UkEthnicityId
+  religion: ReligionId
+  caring: YesNoDecline
+  socioeconomic: SocioeconomicSettings
+  neurodivergent: YesNoDecline
 }
 
 export interface UpdateSettings {
@@ -324,8 +409,20 @@ export interface WorkAuthorization {
   notes: string
 }
 
+/** The name split the way forms ask for it. The resume carries first and last, never the preferred name. */
+export interface ProfileName {
+  first: string
+  middle: string
+  last: string
+  preferred: string
+  /** How to say the name. */
+  pronunciation: string
+}
+
 export interface Profile {
   fullName: string
+  /** A profile saved before this existed reads with first and last split from fullName when that is safe. */
+  name: ProfileName
   email: string
   phone: string
   location: string
@@ -355,6 +452,25 @@ export interface Profile {
 }
 
 export type AuthorizationStatus = 'citizen' | 'permanent_resident' | 'visa' | 'none'
+/** null means not answered, and the question then waits for the person. */
+export type YesNo = boolean | null
+export type EducationLevel = 'high_school' | 'some_college' | 'associate' | 'bachelor' | 'master' | 'doctorate'
+export type VisaType = '' | 'f1_opt' | 'stem_opt' | 'h1b' | 'tn' | 'other'
+export type PlatformKind = 'pc' | 'console' | 'mobile' | 'vr' | 'web'
+export type CurrentPayStance = '' | 'decline' | 'amount'
+
+export interface AuthorizationEntry {
+  country: string
+  status: AuthorizationStatus
+  needsSponsorship: boolean
+  notes: string
+  // The three fields below are filled with defaults when a profile is read. Optional so older code can build an entry.
+  visaType?: VisaType
+  /** ISO date the permit ends, or null. */
+  expires?: string | null
+  /** Whether the permit lets the person work for any employer. */
+  anyEmployer?: YesNo
+}
 export type SalaryPeriod = 'year' | 'month' | 'hour'
 export type SalaryAnswerStyle = 'number' | 'range' | 'negotiable'
 export type TravelWillingness = 'none' | 'some' | 'frequent'
@@ -369,7 +485,7 @@ export interface ApplicationFacts {
   /** Dial code such as "+1". */
   phoneCountryCode: string
   /** Work authorization per country. The older profile.workAuthorization stays as the summary. */
-  authorization: Array<{ country: string; status: AuthorizationStatus; needsSponsorship: boolean; notes: string }>
+  authorization: AuthorizationEntry[]
   /** Expected pay per currency, used with the job's currency or country. */
   salary: Array<{ currency: string; min: number | null; target: number | null; period: SalaryPeriod; answerStyle: SalaryAnswerStyle }>
   noticeWeeks: number | null
@@ -387,6 +503,45 @@ export interface ApplicationFacts {
   over18: boolean | null
   references: string
   gpa: string
+  workArrangement: {
+    remote: YesNo
+    hybrid: YesNo
+    onsite: YesNo
+    maxOfficeDaysPerWeek: number | null
+    /** Cities the person can commute to. */
+    commutableCities: string[]
+  }
+  employment: {
+    types: EmploymentType[]
+    hoursPerWeek: number | null
+    currentlyEmployed: YesNo
+    desiredTitle: string
+    currentPay: { stance: CurrentPayStance; amount: number | null; currency: string; period: SalaryPeriod }
+  }
+  schedule: { evenings: YesNo; weekends: YesNo; nights: YesNo; onCall: YesNo; overtime: YesNo; timeZones: string[] }
+  /** Willingness to go through a check. These never answer "have you ever" questions. */
+  screening: { backgroundCheck: YesNo; drugTest: YesNo; creditCheck: YesNo }
+  education: {
+    highestCompleted: EducationLevel | null
+    currentlyEnrolled: YesNo
+    /** ISO month or date. */
+    expectedGraduation: string | null
+    fields: string[]
+    relatedFields: string[]
+  }
+  /** Years per area, or a count of titles. 0 is an answer. null means not answered. */
+  experience: {
+    professionalSoftware: number | null
+    gamesIndustry: number | null
+    teamLead: number | null
+    peopleManagement: number | null
+    shippedTitles: number | null
+    aaaTitles: number | null
+    platforms: PlatformKind[]
+  }
+  citizenships: string[]
+  exportControlUsPerson: YesNo
+  clearanceEligible: YesNo
   /** The answer to "how did you hear about us" when the source gives no better one. */
   heardAbout: string
   /**
@@ -597,6 +752,10 @@ export interface Job extends JobSummary {
   atsJobId?: string | null
   description: string
   employmentType: string | null
+  /** Levels the source states, as the app's seniority ids. Empty when the source gives none. */
+  seniority?: Seniority[]
+  /** Years of experience the source states as a minimum, or null. */
+  minYears?: number | null
   fit: FitAssessment | null
   dismissReason: string | null
   dismissTags: string[]
@@ -635,6 +794,10 @@ export interface RawJob {
   atsToken: string | null
   /** The posting's id on the application system when the source knows it. */
   atsJobId?: string | null
+  /** Levels the source states (Himalayas, Personio, The Muse), as the app's seniority ids. */
+  seniority?: Seniority[]
+  /** Years of experience the source states as a minimum, or null. */
+  minYears?: number | null
   description: string // plain text
   postedAt: string | null
 }
@@ -685,6 +848,11 @@ export interface FormField {
   maxLength: number | null
   /** Short hint about what the file input wants, such as "resume" or "cover letter". */
   fileHint: 'resume' | 'cover_letter' | 'other' | null
+  /**
+   * The form's own instruction for this question, such as "In 100 words or less" or "Include a link to your portfolio".
+   * It is text from the employer's page, kept short. Absent or null when the form gives none.
+   */
+  hint?: string | null
 }
 
 export type AnswerSource =
@@ -717,7 +885,7 @@ export interface PreparedAnswer {
    */
   liveOnly?: boolean
   /** Set when the answer comes from a rule over the log of earlier applications, so it is worked out again at fill time. */
-  rule?: 'previously_applied'
+  rule?: 'previously_applied' | 'demographic'
 }
 
 export type ApplicationStatus =

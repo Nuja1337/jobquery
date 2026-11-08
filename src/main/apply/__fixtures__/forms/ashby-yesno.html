@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Ashby yes/no questions</title></head>
+<body>
+<!-- Markup follows Ashby's application form. The script is a stand-in that presses one button at a time. -->
+<form>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="q_exp">Do you have at least 2 years of mobile engineering experience?</label>
+    <div class="ashby-application-form-input-yesno">
+      <button type="button" aria-pressed="false" data-option="yes">Yes</button>
+      <button type="button" aria-pressed="false" data-option="no">No</button>
+      <input type="checkbox" id="q_exp" name="q_exp" style="display:none" tabindex="-1">
+    </div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading_f7cvd_52 ashby-application-form-question-title" for="q_visa">Will you now or in the future require visa sponsorship?</label>
+    <div class="ashby-application-form-input-yesno" role="group" aria-required="true">
+      <button type="button" aria-pressed="false" data-option="yes">Yes</button>
+      <button type="button" aria-pressed="false" data-option="no">No</button>
+      <input type="checkbox" id="q_visa" name="q_visa" style="display:none" tabindex="-1">
+    </div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading_f7cvd_52 ashby-application-form-question-title" for="q_ref">Were you referred by a current employee?</label>
+    <div class="ashby-application-form-input-yesno">
+      <button type="button" aria-pressed="false" data-option="yes">Yes</button>
+      <button type="button" aria-pressed="false" data-option="no">No</button>
+      <input type="checkbox" id="q_ref" name="q_ref" style="display:none" tabindex="-1">
+    </div>
+  </div>
+</form>
+<script>
+  document.querySelectorAll('button[data-option]').forEach((b) => {
+    b.addEventListener('click', () => {
+      b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    });
+  });
+</script>
+</body>
+</html>

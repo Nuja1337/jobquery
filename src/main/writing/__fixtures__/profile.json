@@ -1,0 +1,28 @@
+{
+  "fullName": "Mara Quinn",
+  "location": "Leeds, UK",
+  "headline": "Gameplay and tools programmer",
+  "summary": "Gameplay programmer who builds tools for designers and keeps live mobile games stable.",
+  "yearsExperience": 4,
+  "skills": ["C#", "C++", "Unity", "Unreal Engine", "Python", "Lua", "Git"],
+  "experience": [
+    {
+      "company": "Hollow Lantern Studio",
+      "title": "Gameplay Programmer",
+      "start": "2021",
+      "highlights": [
+        "Rebuilt the save system for a mobile puzzle game after it lost progress on about 300 phones",
+        "Wrote a Unity frame-time overlay that cut hitches on low-end Android phones by 35 percent",
+        "Built a nightly smoke test that plays 40 levels on real devices and posts failures to Slack"
+      ]
+    }
+  ],
+  "education": [{ "school": "University of Leeds", "degree": "BSc", "field": "Computer Science", "start": "2018", "end": "2021" }],
+  "projects": [
+    {
+      "name": "Tidepool",
+      "description": "A 2D roguelike in Godot with a reward table editor written in Python. Drops are tuned from a spreadsheet and the loot odds show in an in-game debug panel.",
+      "highlights": ["Designed the drop curve so a run feels rewarding by minute ten"]
+    }
+  ]
+}

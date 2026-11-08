@@ -135,7 +135,7 @@ export function createMockBridge(): Bridge {
   let settings: Settings = initialSettings(!startOnboarding)
   let providers: ProviderInfo[] = startOnboarding ? [] : initialProviders()
   let profile: ProfileRecord = startOnboarding
-    ? { profile: merge(demoProfile(), { fullName: '', email: '', phone: '', location: '', headline: '', summary: '', experience: [], education: [], skills: [], facts: [], voice: null, links: { linkedin: '', github: '', portfolio: '', website: '', other: [] } }), version: 0, updatedAt: null }
+    ? { profile: merge(demoProfile(), { fullName: '', name: { first: '', middle: '', last: '', preferred: '', pronunciation: '' }, email: '', phone: '', location: '', headline: '', summary: '', experience: [], education: [], skills: [], facts: [], voice: null, links: { linkedin: '', github: '', portfolio: '', website: '', other: [] } }), version: 0, updatedAt: null }
     : { profile: demoProfile(), version: 3, updatedAt: iso(2 * 86_400_000) }
   let documents = startOnboarding ? [] : initialDocuments()
   let bank: AnswerBankEntry[] = startOnboarding ? [] : initialBank()
@@ -262,6 +262,9 @@ export function createMockBridge(): Bridge {
     async exportData() {
       return 'C:\\Users\\Demo\\Documents\\jobpls-export.json'
     },
+    async exportDatabase() {
+      return 'C:\Users\Demo\Documents\jobpls-backup.sqlite'
+    },
 
     async getSettings() {
       return structuredClone(settings)
@@ -327,6 +330,9 @@ export function createMockBridge(): Bridge {
     },
     async importDocument(input) {
       await sleep(400)
+      if (input.kind === 'resume' && !/\.(pdf|docx)$/i.test(input.filePath ?? '')) {
+        throw new Error('A resume has to be a PDF or Word (.docx) file, because it is attached to applications. Choose a file.')
+      }
       const name = input.name ?? (input.filePath ? (input.filePath.split(/[\\/]/).pop() as string) : (input.url ?? 'Pasted text'))
       const text = input.text ?? `Demo text extracted from ${name}.`
       const doc: DocumentRecord & { text: string } = {
@@ -334,6 +340,10 @@ export function createMockBridge(): Bridge {
         textPreview: text.slice(0, 240), textLength: text.length, isPrimary: input.kind === 'resume' && !documents.some((d) => d.kind === 'resume'), createdAt: iso(0), text
       }
       documents = [...documents, doc]
+      // The first portfolio link fills an empty portfolio field in the profile.
+      if (input.kind === 'portfolio' && input.url && !profile.profile.links.portfolio.trim()) {
+        profile = { ...profile, profile: { ...profile.profile, links: { ...profile.profile.links, portfolio: input.url } }, version: profile.version + 1, updatedAt: iso(0) }
+      }
       const { text: _t, ...record } = doc
       return record
     },

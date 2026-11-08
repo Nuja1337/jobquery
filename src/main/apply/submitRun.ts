@@ -3,11 +3,11 @@ import type { Frame, Page } from 'playwright-core'
 import { AUTO_SUBMIT_MIN_CONFIDENCE, answerNeedsUser, isGuess, isUnreviewedLive } from '@shared/answers'
 import type { Application, ApplicationStatus, FormField, Job, PreparedAnswer, Settings } from '@shared/types'
 import { answerFields, COVER_LETTER_PDF, type AnswerDeps } from './answers'
-import { type BrowserManager, readForm } from './browser'
+import { type BrowserManager, type FormSnapshot, readForm } from './browser'
 import { previouslyAppliedAnswer } from './companyQuestions'
 import type { ExtractedField } from './extractScript'
 import { mustAskUser, wasAgreedBySettings } from './fieldMap'
-import { fillForm, matchAnswers, readComboboxOptions, toFormField } from './fill'
+import { fillForm, matchAnswers, readComboboxOptions, resumeFileName, toFormField } from './fill'
 import { isJobBoardUrl } from './jobBoards'
 import { applyUrlFor } from './prepare'
 import { captureBaseline, clickSubmit, hasMorePages, waitForOutcome, waitForUserToFinish } from './submit'
@@ -71,6 +71,8 @@ interface PageFill {
   /** The frame the form was read from. */
   frame: Frame
   fieldCount: number
+  /** Fields on this read that no earlier pass had seen. */
+  newFields: number
   /** Required fields with no answer, and any answer flagged for the user. */
   flagged: string[]
   /** AI answers below the auto-submit confidence line. */
@@ -85,6 +87,35 @@ interface PageFill {
   userOnly: string[]
   failures: string[]
 }
+
+/** True when a text box, text area or editable region has the keyboard focus. */
+async function editableFocused(frame: Frame): Promise<boolean> {
+  return frame
+    .evaluate(() => {
+      const el = document.activeElement as HTMLElement | null
+      if (!el || el === document.body) return false
+      if (el.tagName === 'TEXTAREA') return true
+      if (el.tagName === 'INPUT') return !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file'].includes((el.getAttribute('type') || 'text').toLowerCase())
+      return el.isContentEditable
+    })
+    .catch(() => true)
+}
+
+/** Takes the focus off whatever the last fill left it on. */
+async function blurFocused(frame: Frame): Promise<void> {
+  await frame.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.()).catch(() => {})
+}
+
+/**
+ * True for an answer that came from the owner's own settings or profile rules. A field that showed
+ * up only after an earlier answer was filled can go out with one of these without a review.
+ */
+function fromOwnerSettings(a: Pick<PreparedAnswer, 'source' | 'rule'>): boolean {
+  return a.source === 'profile' || a.source === 'settings' || a.rule === 'demographic'
+}
+
+/** Passes run after the first fill to pick up fields that an earlier answer revealed. */
+const REVEAL_PASSES = 2
 
 /**
  * Opens the application in the visible browser, fills it and, in auto mode, submits it.
@@ -156,22 +187,42 @@ async function fillAndSubmit(
   let coverPdf: string | null = null
   /** The letter on the draft, or one written during the fill when the live form asked for it. */
   let letterText: string | null = app.coverLetter
+  // The resume carries the legal name: first and last, never the preferred name. The full name is the fallback.
+  const resumeName = () => {
+    const { name, fullName } = deps.answerDeps.profile
+    const legal = name?.first?.trim() && name.last?.trim() ? `${name.first.trim()} ${name.last.trim()}` : fullName
+    return resumeFileName(legal, deps.answerDeps.resumePath ?? '')
+  }
   const files = async () => {
     if (!coverPdf && letterText) coverPdf = await deps.renderCoverLetter(letterText)
-    return { resume: deps.answerDeps.resumePath, coverLetter: coverPdf }
+    return { resume: deps.answerDeps.resumePath, coverLetter: coverPdf, resumeName: resumeName() }
   }
 
   // Fills every field on the current page that has an answer, writing answers for new fields first.
   // Later passes (a new step of a multi-page form, or the user going back a step) leave fields that
   // already hold something alone, so the user's own edits are never overwritten.
   const filledIds = new Set<string>()
-  const fillCurrentPage = async (pass: { clickApply: boolean; keepExisting: boolean }): Promise<PageFill> => {
+  /** Comboboxes this run filled and checked. Their text box can stay empty while the page shows the choice. */
+  const comboboxFilled = new Set<string>()
+  const fillCurrentPage = async (pass: {
+    clickApply: boolean
+    keepExisting: boolean
+    /** Dropdown options are read only where the run owns the page. A watcher pass never opens a menu. */
+    readOptions: boolean
+    /** A pass after the first fill, so the fields it finds were revealed by an earlier answer. */
+    revealed?: boolean
+  }): Promise<PageFill> => {
     const snap = await readForm(page, { clickApply: pass.clickApply })
-    await readComboboxOptions(snap.frame, snap.fields)
     const fresh: ExtractedField[] = snap.fields.filter((f) => !filledIds.has(f.jpId))
     for (const f of fresh) filledIds.add(f.jpId)
     const toFill = pass.keepExisting ? fresh.filter((f) => !f.hasValue) : fresh
     const { matched, unmatched } = matchAnswers(toFill, answers)
+    // Only fields with no answer need their options, and opening a menu moves the focus, so it is skipped
+    // while a text box has it.
+    if (pass.readOptions && unmatched.some((f) => f.type === 'combobox' && f.options.length === 0)) {
+      if (pass.revealed) await blurFocused(snap.frame)
+      if (!(await editableFocused(snap.frame))) await readComboboxOptions(snap.frame, unmatched)
+    }
     // "Have you applied to us before?" depends on the log of applications, which changes between the
     // draft and the fill. An earlier application may have been sent since, so the answer is worked out again.
     for (const m of matched) {
@@ -197,7 +248,8 @@ async function fillAndSubmit(
       costUsd += res.costUsd
       // Whatever filled these (the profile, a saved answer or the AI), nobody saw them before now. The flag
       // stays until a person saves the application, so a later run does not take them for reviewed answers.
-      const written = res.answers.map((a) => ({ ...a, liveOnly: true }))
+      // A field that only the live form has is the exception when the owner's settings or profile wrote the answer.
+      const written = res.answers.map((a) => (fromOwnerSettings(a) ? a : { ...a, liveOnly: true }))
       answers.push(...written)
       formFields.push(...newFields)
       for (const field of unmatched) {
@@ -207,7 +259,7 @@ async function fillAndSubmit(
     }
     const unreviewed = matched.filter((m) => isUnreviewedLive(m.answer)).map((m) => m.field.label || m.field.key)
     const usesCoverPdf = matched.some((m) => m.answer.value === COVER_LETTER_PDF || m.field.fileHint === 'cover_letter')
-    const fileSet = usesCoverPdf ? await files() : { resume: deps.answerDeps.resumePath, coverLetter: null }
+    const fileSet = usesCoverPdf ? await files() : { resume: deps.answerDeps.resumePath, coverLetter: null, resumeName: resumeName() }
     const failures = await fillForm(page, snap.frame, matched, fileSet)
     const label = (m: { field: ExtractedField }) => m.field.label || m.field.key
     const flagged = matched
@@ -223,10 +275,14 @@ async function fillAndSubmit(
       // The person wrote these themselves, in the answer bank or on the draft, and Settings lets autopilot send them.
       .filter((m) => !(sendSavedUserAnswers && (m.answer.source === 'answer_bank' || m.answer.source === 'user')))
       .map(label)
+    for (const m of matched) {
+      if (m.field.type === 'combobox' && m.answer.value !== '' && !m.answer.needsUser && !failures.some((f) => f.label === label(m))) comboboxFilled.add(m.field.jpId)
+    }
     const missingFiles = matched.filter((m) => m.field.type === 'file' && m.field.required && failures.some((f) => f.label === label(m))).map(label)
     return {
       frame: snap.frame,
       fieldCount: snap.fields.length,
+      newFields: fresh.length,
       flagged: [...flagged, ...missingFiles],
       unsure,
       unreviewed,
@@ -235,7 +291,7 @@ async function fillAndSubmit(
     }
   }
 
-  const first = await fillCurrentPage({ clickApply: true, keepExisting: false })
+  const first = await fillCurrentPage({ clickApply: true, keepExisting: false, readOptions: true })
 
   if (first.fieldCount === 0) {
     const text = await page.locator('body').innerText().catch(() => '')
@@ -243,6 +299,18 @@ async function fillAndSubmit(
       ? 'This site wants you to sign in first. Sign in in the browser window, then press Fill again. The browser remembers the login next time.'
       : 'No form fields were found on this page. Open the application in the browser window and click its Apply button, then press Fill again.'
     return leave({ ok: false, status: 'needs_attention', message, screenshotPath: null, confirmation: null, answers, formFields, costUsd }, null)
+  }
+
+  // An answer can reveal more fields (choosing "Other" asks what is meant). Auto and dry-run modes read the
+  // form again, at most twice more, and fill what showed up. Assist mode leaves that to the person and the watcher.
+  const passes: PageFill[] = [first]
+  if (mode === 'auto') {
+    for (let i = 0; i < REVEAL_PASSES; i++) {
+      const next = await fillCurrentPage({ clickApply: false, keepExisting: true, readOptions: true, revealed: true }).catch(() => null)
+      if (!next) break
+      passes.push(next)
+      if (next.newFields === 0) break
+    }
   }
 
   // Everything on the page now (descriptions included) is the baseline. Only a confirmation that
@@ -267,17 +335,33 @@ async function fillAndSubmit(
           return done(true, await screenshot(page, deps.screenshotsDir, app.id))
         }
         // A new step of a multi-page form shows fields that haven't been filled yet.
-        if (round < 12 && !page.isClosed()) await fillCurrentPage({ clickApply: false, keepExisting: true }).catch(() => null)
+        if (round < 12 && !page.isClosed()) await fillCurrentPage({ clickApply: false, keepExisting: true, readOptions: false }).catch(() => null)
       }
       return done(false, null)
     })()
 
   const problems = [
-    ...first.flagged.map((l) => `"${l}" needs your answer`),
-    ...first.unsure.map((l) => `"${l}" is a guess, check it`),
-    ...first.unreviewed.map((l) => `"${l}" wasn't on the form you reviewed`),
-    ...first.failures
+    ...passes.flatMap((p) => p.flagged).map((l) => `"${l}" needs your answer`),
+    ...passes.flatMap((p) => p.unsure).map((l) => `"${l}" is a guess, check it`),
+    ...passes.flatMap((p) => p.unreviewed).map((l) => `"${l}" wasn't on the form you reviewed`),
+    ...passes.flatMap((p) => p.failures)
   ]
+
+  // The last look before the click. A required field that is still empty, whether the form never showed
+  // it before or a fill did not take, is a problem, and a problem means no click.
+  let last: FormSnapshot | null = null
+  if (mode === 'auto') {
+    last = await readForm(page, { clickApply: false })
+    const known = [...passes.flatMap((p) => p.flagged), ...passes.flatMap((p) => p.failures.map((f) => f.split(': ')[0]))]
+    for (const f of last.fields) {
+      if (!f.required || f.hasValue) continue
+      // The text box of a dropdown the run filled and checked can stay empty while the page shows the choice.
+      if (f.type === 'combobox' && comboboxFilled.has(f.jpId)) continue
+      const name = f.label || f.key
+      if (known.includes(name)) continue
+      problems.push(`"${name}" is required and still empty`)
+    }
+  }
 
   if (mode === 'assist') {
     const message = problems.length
@@ -290,7 +374,7 @@ async function fillAndSubmit(
   // answer. Autopilot leaves them. When the user presses Submit on the Review page, they have seen
   // the answer on the draft and it's their call.
   if (by === 'autopilot') {
-    problems.push(...first.userOnly.map((l) => `"${l}" is a question you answer yourself, so autopilot won't send it unless Settings allows it. Check it and press Submit on the Review page`))
+    problems.push(...[...new Set(passes.flatMap((p) => p.userOnly))].map((l) => `"${l}" is a question you answer yourself, so autopilot won't send it unless Settings allows it. Check it and press Submit on the Review page`))
   }
 
   if (deps.settings.autopilot.dryRun) {
@@ -343,7 +427,7 @@ async function fillAndSubmit(
     )
   }
 
-  const snap = await readForm(page, { clickApply: false })
+  const snap = last ?? (await readForm(page, { clickApply: false }))
   // A job board lists other companies' jobs. A button there belongs to a search or a newsletter.
   if (isJobBoardUrl(page.url())) {
     return leave(

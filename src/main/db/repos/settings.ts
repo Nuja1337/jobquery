@@ -1,5 +1,6 @@
 import type { DeepPartial } from '@shared/api'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { normalizeEeo } from '@shared/eeo'
 import type { Settings } from '@shared/types'
 import { type Db, parseJson } from '../database'
 
@@ -27,7 +28,9 @@ export class SettingsRepo {
     let settings: Settings = structuredClone(DEFAULT_SETTINGS)
     for (const row of rows) {
       if (!(row.key in DEFAULT_SETTINGS)) continue
-      const stored = parseJson<unknown>(row.value, undefined)
+      let stored = parseJson<unknown>(row.value, undefined)
+      // Read the raw eeo row before merging. Merged over the defaults, an old row would look current.
+      if (row.key === 'eeo') stored = normalizeEeo(stored)
       settings = deepMerge<Settings>(settings, { [row.key]: stored } as DeepPartial<Settings>)
     }
     this.cache = settings
@@ -36,6 +39,7 @@ export class SettingsRepo {
 
   update(patch: DeepPartial<Settings>): Settings {
     const next = deepMerge<Settings>(this.get(), patch)
+    if (patch.eeo !== undefined) next.eeo = normalizeEeo(next.eeo)
     this.db.transaction(() => {
       for (const key of Object.keys(patch) as Array<keyof Settings>) {
         this.db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (:key, :value)', {

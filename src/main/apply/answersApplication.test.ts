@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS, EMPTY_PROFILE } from '@shared/defaults'
+import { DEFAULT_SETTINGS, EMPTY_APPLICATION_FACTS, EMPTY_PROFILE } from '@shared/defaults'
 import type { ApplicationFacts, Profile } from '@shared/types'
 import { Db } from '../db/database'
 import { AnswerBankRepo } from '../db/repos/answers'
@@ -15,6 +15,7 @@ import { greenhouseFields } from './greenhouseForm'
 // With the interview done, a Greenhouse form needs the person only for AI use, consent and legal questions.
 
 const application: ApplicationFacts = {
+  ...EMPTY_APPLICATION_FACTS,
   address: { street: '221 Baker Street', city: 'Austin', region: 'TX', postalCode: '78701', country: 'United States' },
   phoneCountryCode: '+1',
   authorization: [{ country: 'United States', status: 'citizen', needsSponsorship: false, notes: '' }],
@@ -106,7 +107,8 @@ describe('answerFields with the application facts filled in', () => {
     const { answers } = await answerFields(deps, job, fields, null)
 
     const needing = answers.filter((a) => a.needsUser).map((a) => a.label)
-    expect(needing.sort()).toEqual(['AI Policy for Application', 'Agreement to Arbitrate', 'Please read the arbitration agreement below'].sort())
+    // The in-person question is a willingness question. No fact answers it yet, so it waits for the person.
+    expect(needing.sort()).toEqual(['AI Policy for Application', 'Agreement to Arbitrate', 'Are you open to working in-person in one of our offices 25% of the time?', 'Please read the arbitration agreement below'].sort())
 
     const by = (re: RegExp) => answers.find((a) => re.test(a.label))!
     expect(by(/^Do you require visa sponsorship/)).toMatchObject({ value: 'No', source: 'profile' })

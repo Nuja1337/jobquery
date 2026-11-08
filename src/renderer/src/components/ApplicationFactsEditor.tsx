@@ -1,8 +1,10 @@
 import { useId, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
-import type { ApplicationFacts, AuthorizationStatus, LanguageLevel, Profile, SalaryAnswerStyle, SalaryPeriod, TravelWillingness } from '@shared/types'
+import type { ApplicationFacts, AuthorizationStatus, LanguageLevel, Profile, SalaryAnswerStyle, SalaryPeriod, TravelWillingness, VisaType } from '@shared/types'
 import { CLEARANCES, COUNTRIES, CURRENCIES, LANGUAGE_LEVELS, languageRows, skillRows, withLanguageLevel, withSkillYears } from './applicationFactsHelpers'
 import { Block } from './ProfileEditor'
+import { EducationBlock, ExperienceBlock, TriState, WorkAndAvailabilityEditor, WorkArrangementBlock } from './WorkFactsEditor'
+import { PAY_PERIODS, VISA_TYPES, isUnnamedOtherClearance } from './workFactsHelpers'
 import { Button, Checkbox, Field, IconButton, Input, NumberInput, Select, TagInput, Textarea } from './ui'
 
 // The interview: what application forms ask again and again, collected once.
@@ -19,12 +21,6 @@ const STATUS: Array<{ id: AuthorizationStatus; label: string }> = [
   { id: 'none', label: 'No right to work' }
 ]
 
-const PERIODS: Array<{ id: SalaryPeriod; label: string }> = [
-  { id: 'year', label: 'Per year' },
-  { id: 'month', label: 'Per month' },
-  { id: 'hour', label: 'Per hour' }
-]
-
 const STYLES: Array<{ id: SalaryAnswerStyle; label: string }> = [
   { id: 'number', label: 'One number' },
   { id: 'range', label: 'A range' },
@@ -36,21 +32,6 @@ const TRAVEL: Array<{ id: TravelWillingness; label: string }> = [
   { id: 'some', label: 'Some, up to 25 percent' },
   { id: 'frequent', label: 'Frequent, up to 75 percent' }
 ]
-
-const triValue = (v: boolean | null): string => (v === null ? '' : v ? 'yes' : 'no')
-const triParse = (s: string): boolean | null => (s === '' ? null : s === 'yes')
-
-function TriState({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean | null; onChange: (v: boolean | null) => void }): React.JSX.Element {
-  return (
-    <Field label={label} hint={hint}>
-      <Select value={triValue(value)} onChange={(e) => onChange(triParse(e.target.value))}>
-        <option value="">Not answered</option>
-        <option value="yes">Yes</option>
-        <option value="no">No</option>
-      </Select>
-    </Field>
-  )
-}
 
 /** The first step: where you live, where you may work, what you expect and when you can start. */
 export function ApplyingEditor({
@@ -122,7 +103,8 @@ export function ApplyingEditor({
           </div>
         )}
         {facts.authorization.map((a, i) => (
-          <div key={i} className="grid grid-cols-[1.2fr_1fr_auto_1.2fr_auto] items-end gap-2">
+          <div key={i} className="space-y-2">
+          <div className="grid grid-cols-[1.2fr_1fr_auto_1.2fr_auto] items-end gap-2">
             <Field label={i === 0 ? 'Country' : undefined}>
               <Input list={listId} value={a.country} onChange={(e) => set('authorization', replace(facts.authorization, i, { ...a, country: e.target.value }))} aria-label="Country" />
             </Field>
@@ -132,7 +114,7 @@ export function ApplyingEditor({
                 aria-label="Status"
                 onChange={(e) => {
                   const status = e.target.value as AuthorizationStatus
-                  set('authorization', replace(facts.authorization, i, { ...a, status, needsSponsorship: status === 'none' ? true : status === 'visa' ? a.needsSponsorship : false }))
+                  set('authorization', replace(facts.authorization, i, { ...a, status, needsSponsorship: status === 'none' ? true : status === 'visa' ? a.needsSponsorship : false, ...(status === 'visa' ? {} : { visaType: '' as VisaType, expires: null, anyEmployer: null }) }))
                 }}
               >
                 {STATUS.map((s) => (
@@ -157,7 +139,42 @@ export function ApplyingEditor({
               <Trash2 size={14} />
             </IconButton>
           </div>
+          {a.status === 'visa' && (
+            <div className="grid grid-cols-3 gap-2">
+              <Field label="Visa type">
+                <Select value={a.visaType ?? ''} onChange={(e) => set('authorization', replace(facts.authorization, i, { ...a, visaType: e.target.value as VisaType }))} aria-label="Visa type">
+                  <option value="">Not answered</option>
+                  {VISA_TYPES.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Permit ends">
+                <Input type="date" value={a.expires ?? ''} onChange={(e) => set('authorization', replace(facts.authorization, i, { ...a, expires: e.target.value || null }))} aria-label="Permit ends" />
+              </Field>
+              <TriState
+                label="Any employer"
+                hint="Yes if the permit lets you work for any employer. No if it ties you to one."
+                value={a.anyEmployer ?? null}
+                onChange={(v) => set('authorization', replace(facts.authorization, i, { ...a, anyEmployer: v }))}
+              />
+            </div>
+          )}
+          </div>
         ))}
+        <div className="grid grid-cols-2 gap-3 border-t border-line pt-3">
+          <Field label="Citizenships" hint="Every country you hold citizenship in. Press Enter after each one.">
+            <TagInput value={facts.citizenships} onChange={(v) => set('citizenships', v)} suggestions={COUNTRIES} placeholder="Add a country" />
+          </Field>
+          <TriState
+            label="U.S. person for export control"
+            hint="Yes for a U.S. citizen, permanent resident or protected individual. Forms for export-controlled jobs ask this."
+            value={facts.exportControlUsPerson}
+            onChange={(v) => set('exportControlUsPerson', v)}
+          />
+        </div>
       </Block>
 
       <Block
@@ -188,7 +205,7 @@ export function ApplyingEditor({
             </Field>
             <Field label={i === 0 ? 'Period' : undefined}>
               <Select value={s.period} aria-label="Period" onChange={(e) => set('salary', replace(facts.salary, i, { ...s, period: e.target.value as SalaryPeriod }))}>
-                {PERIODS.map((p) => (
+                {PAY_PERIODS.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
                   </option>
@@ -247,6 +264,8 @@ export function ApplyingEditor({
           </Field>
         )}
       </Block>
+
+      <WorkArrangementBlock facts={facts} onChange={onChange} />
     </div>
   )
 }
@@ -289,7 +308,10 @@ export function QuestionFormsEditor({ facts, onChange, skills, languages }: Fact
   const rows = (base: string[], extra: string[]): string[] => [...base, ...extra.filter((e) => !base.some((b) => b.toLowerCase() === e.toLowerCase()))]
   const skillList = rows(skillRows(skills, facts.skillYears), extraSkills)
   const languageList = rows(languageRows(languages, facts.languageLevels), extraLanguages)
-  const clearanceChoice = facts.clearance === '' ? '' : CLEARANCES.includes(facts.clearance) ? facts.clearance : 'other'
+  // An "Other" with no name is not saved. The choice stays on screen until the person names the clearance or picks another.
+  const [otherText, setOtherText] = useState<string | null>(null)
+  const unnamedOther = isUnnamedOtherClearance(facts.clearance)
+  const clearanceChoice = otherText !== null || (facts.clearance !== '' && !CLEARANCES.includes(facts.clearance)) ? 'other' : facts.clearance
 
   return (
     <div>
@@ -330,12 +352,19 @@ export function QuestionFormsEditor({ facts, onChange, skills, languages }: Fact
         <AddName label="Add language" placeholder="Another language" onAdd={(name) => setExtraLanguages([...extraLanguages, name])} />
       </Block>
 
+      <EducationBlock facts={facts} onChange={onChange} />
+
+      <ExperienceBlock facts={facts} onChange={onChange} />
+
       <Block title="Other questions forms ask">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Security clearance" hint="Choose None if you hold no clearance.">
             <Select
               value={clearanceChoice}
-              onChange={(e) => set('clearance', e.target.value === 'other' ? 'Other' : e.target.value)}
+              onChange={(e) => {
+                setOtherText(e.target.value === 'other' ? '' : null)
+                set('clearance', e.target.value === 'other' ? '' : e.target.value)
+              }}
             >
               <option value="">Not answered</option>
               {CLEARANCES.map((c) => (
@@ -345,10 +374,17 @@ export function QuestionFormsEditor({ facts, onChange, skills, languages }: Fact
             </Select>
           </Field>
           {clearanceChoice === 'other' && (
-            <Field label="Clearance name">
-              <Input value={facts.clearance === 'Other' ? '' : facts.clearance} onChange={(e) => set('clearance', e.target.value.trim() === '' ? 'Other' : e.target.value)} />
+            <Field label="Clearance name" hint="Without a name, the clearance stays not answered.">
+              <Input
+                value={otherText ?? (unnamedOther ? '' : facts.clearance)}
+                onChange={(e) => {
+                  setOtherText(e.target.value)
+                  set('clearance', e.target.value.trim())
+                }}
+              />
             </Field>
           )}
+          <TriState label="Able to obtain a clearance" hint={'Answers questions like "Are you eligible for a security clearance?"'} value={facts.clearanceEligible} onChange={(v) => set('clearanceEligible', v)} />
           <TriState label="Driver's license" value={facts.driversLicense} onChange={(v) => set('driversLicense', v)} />
           <TriState label="Over 18" value={facts.over18} onChange={(v) => set('over18', v)} />
           <Field label="GPA" hint="Leave empty if you would rather not say.">
@@ -380,12 +416,13 @@ export function QuestionFormsEditor({ facts, onChange, skills, languages }: Fact
   )
 }
 
-/** Both sections together, for the Applying tab on the Profile page. */
+/** Every section together, for the Applying tab on the Profile page. Onboarding shows them as separate steps. */
 export function ApplicationFactsEditor({ profile, onChange, defaultCurrency }: { profile: Profile; onChange: (next: Profile) => void; defaultCurrency?: string }): React.JSX.Element {
   const setFacts = (application: ApplicationFacts): void => onChange({ ...profile, application })
   return (
     <div>
       <ApplyingEditor facts={profile.application} onChange={setFacts} defaultCurrency={defaultCurrency} authorizedCountries={profile.workAuthorization.authorizedCountries} />
+      <WorkAndAvailabilityEditor facts={profile.application} onChange={setFacts} defaultCurrency={defaultCurrency} />
       <QuestionFormsEditor facts={profile.application} onChange={setFacts} skills={profile.skills} languages={profile.languages} />
     </div>
   )

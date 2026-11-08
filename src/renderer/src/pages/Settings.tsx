@@ -16,10 +16,12 @@ import { autopilotConfirmMessage } from '@renderer/lib/autopilot'
 import { suggestedModel } from '@renderer/lib/providers'
 import { ProviderBillingBadge } from '@renderer/components/badges'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
+import { DiversityCard } from '@renderer/components/DiversityCard'
 import { ModelPicker } from '@renderer/components/ModelPicker'
 import { PresetDialog } from '@renderer/components/PresetDialog'
 import { thresholdContext } from '@renderer/components/volumeHelpers'
 import { RestartToUpdateDialog } from '@renderer/components/RestartToUpdateDialog'
+import { EmploymentTypeChips } from '@renderer/components/WorkFactsEditor'
 import { KEY_STORAGE_NOTE, KeyStorageWarning, ProviderForm, describeLimits, useKeyStorageWeak } from '@renderer/components/ProviderForm'
 import { Badge, Button, Card, CardHeader, Checkbox, Chip, ErrorBlock, Field, IconButton, Input, Loading, Modal, NumberInput, Page, PageHeader, ProgressBar, Segmented, Select, TD, TH, TagInput, Textarea, Toggle } from '@renderer/components/ui'
 
@@ -35,7 +37,7 @@ const SECTIONS = [
   ['system', 'Running in the background'],
   ['browser', 'Browser'],
   ['writing', 'Writing'],
-  ['eeo', 'EEO answers'],
+  ['eeo', 'Self-identification'],
   ['updates', 'Updates'],
   ['data', 'Theme and data']
 ] as const
@@ -250,6 +252,11 @@ export function SettingsPage(): React.JSX.Element {
                 ))}
               </div>
               <div>
+                <p className="mb-1.5 text-xs font-medium text-muted">Employment type</p>
+                <EmploymentTypeChips value={draft.preferences.employmentTypes} onChange={(v) => set('preferences', { employmentTypes: v })} />
+                <p className="mt-1 text-xs text-faint">Select none to see every type. Your answers to employment questions on forms are under Profile, then Applying.</p>
+              </div>
+              <div>
                 <p className="mb-1.5 text-xs font-medium text-muted">Seniority</p>
                 <div className="flex flex-wrap gap-1.5">
                   {SENIORITY.map((s) => (
@@ -350,7 +357,7 @@ export function SettingsPage(): React.JSX.Element {
             </div>
           </Card>
 
-          <EeoCard draft={draft} set={set} />
+          <DiversityCard eeo={draft.eeo} onChange={(patch) => set('eeo', patch)} />
           <UpdatesCard draft={draft} set={set} />
           <DataCard />
         </div>
@@ -798,41 +805,6 @@ function BackgroundCard({ draft, set }: { draft: Settings; set: <K extends Secti
 }
 
 // ---------------------------------------------------------------------------
-// EEO
-// ---------------------------------------------------------------------------
-
-function EeoCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(key: K, patch: Partial<Settings[K]>) => void }): React.JSX.Element {
-  const fields: Array<{ key: 'gender' | 'race' | 'veteran' | 'disability'; label: string }> = [
-    { key: 'gender', label: 'Gender' },
-    { key: 'race', label: 'Race or ethnicity' },
-    { key: 'veteran', label: 'Veteran status' },
-    { key: 'disability', label: 'Disability status' }
-  ]
-  return (
-    <Card id="settings-eeo">
-      <CardHeader title="EEO answers" hint="Voluntary questions on US forms. jobpls declines to answer unless you say otherwise." />
-      <div className="grid grid-cols-2 gap-4 p-4">
-        {fields.map((f) => {
-          const v = draft.eeo[f.key]
-          return (
-            <Field key={f.key} label={f.label}>
-              <Select value={v === 'decline' ? 'decline' : 'custom'} onChange={(e) => set('eeo', { [f.key]: e.target.value === 'decline' ? 'decline' : ' ' })}>
-                <option value="decline">Decline to answer</option>
-                <option value="custom">Answer with my own text</option>
-              </Select>
-              {v !== 'decline' && <Input className="mt-2" value={v.trim() === '' ? '' : v} placeholder="Your answer" onChange={(e) => set('eeo', { [f.key]: e.target.value || ' ' })} />}
-            </Field>
-          )
-        })}
-        <Field label="Pronouns" hint="Used only when a form asks.">
-          <Input value={draft.eeo.pronouns} onChange={(e) => set('eeo', { pronouns: e.target.value })} placeholder="she/her" />
-        </Field>
-      </div>
-    </Card>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Updates
 // ---------------------------------------------------------------------------
 
@@ -926,6 +898,7 @@ function DataCard(): React.JSX.Element {
   const info = useAsync<AppInfo>(() => api.getAppInfo(), [])
   const [theme, setTheme] = useState<Theme>(getStoredTheme())
   const [busy, setBusy] = useState(false)
+  const [copying, setCopying] = useState(false)
 
   async function exportData(): Promise<void> {
     setBusy(true)
@@ -936,6 +909,18 @@ function DataCard(): React.JSX.Element {
       toast.error(e)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function exportDatabase(): Promise<void> {
+    setCopying(true)
+    try {
+      const path = await api.exportDatabase()
+      if (path) toast.success(`Database copy saved to ${path}`)
+    } catch (e) {
+      toast.error(e)
+    } finally {
+      setCopying(false)
     }
   }
 
@@ -950,6 +935,15 @@ function DataCard(): React.JSX.Element {
           </div>
           <Button icon={<Download size={14} />} loading={busy} onClick={() => void exportData()}>
             Export data
+          </Button>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm text-fg">Save a copy of the database</p>
+            <p className="text-xs text-faint">Saves a full copy you can keep as a backup, even while jobpls runs. Stored API keys and job board logins are removed from the copy.</p>
+          </div>
+          <Button icon={<Download size={14} />} loading={copying} onClick={() => void exportDatabase()}>
+            Save copy
           </Button>
         </div>
         <div className="flex items-center justify-between gap-4">

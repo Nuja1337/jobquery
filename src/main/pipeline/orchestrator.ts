@@ -13,6 +13,7 @@ import type { AppContext } from '../context'
 import { SEARCH_SOURCES } from '../db/repos/jobs'
 import { emptyStats } from '../db/repos/runs'
 import { applyUrlFor } from '../apply/prepare'
+import { heldLetterNote, letterHeld, letterInUse, recheckLetter, syncOptionalLetterUploads } from '../apply/readiness'
 import { BudgetExceededError, NoModelConfiguredError, RateLimitedError, isProviderError } from '../llm/errors'
 import { type DiscoveryTask, type TaskProvider, defaultTasks } from '../sources'
 import { HttpError, hostPauseUntil, mapLimit } from '../sources/http'
@@ -510,7 +511,8 @@ export class Pipeline {
     const stats = emptyStats()
     if (limit <= 0) return outcome(stats, 0)
     // A job whose scoring failed three times with this profile waits for a profile change or "Score now".
-    const jobs = ctx.jobs.listByStage('new', { orderBy: 'prescore', limit, skipRepeatedTriageFailures: true })
+    // Jobs marked for the one-time rescore (migration 11) share the same limit as new jobs.
+    const jobs = ctx.jobs.listToScore(limit)
     if (jobs.length === 0) return outcome(stats, 0)
 
     // The budget limits money spent. A free or local scoring model is not held back by it.
@@ -712,6 +714,9 @@ export class Pipeline {
     let sent = 0
     let skipped = 0
     let pause: PauseHint | null = null
+    // Today's sends, read once. The loop has no await between candidates, so nothing can change it there.
+    // It is read again after each attempt, since another slot or a manual submit may have sent meanwhile.
+    let sentToday = ctx.applications.countSubmittedSince(startOfToday())
     for (const app of ready) {
       if (signal.aborted || sent >= limit || attempts.length >= maxAttempts) break
       // Check again right before sending. The user may have edited, withdrawn or dismissed it,
@@ -719,7 +724,6 @@ export class Pipeline {
       const now = ctx.settings.get()
       const current = ctx.applications.get(app.id)
       const job = current ? ctx.jobs.get(current.jobId) : null
-      const sentToday = ctx.applications.countSubmittedSince(startOfToday())
       if (
         this.claims.has(app.id) ||
         !now.autopilot.enabled ||
@@ -732,11 +736,26 @@ export class Pipeline {
         current.submitClickedAt !== null ||
         (now.autopilot.dryRun && current.dryRunAt !== null) ||
         job.stage !== 'ready' ||
+        ctx.jobs.needsRescore(job.id) ||
         current.flaggedCount > 0 ||
         current.guessCount > 0 ||
         (job.fit?.score ?? 0) < now.thresholds.autoSubmitScore
       ) {
         continue
+      }
+      // An application made ready before the grounding hold existed may carry a letter the check holds back now.
+      // A required upload or a letter box then holds the application. An optional upload just loses the letter.
+      const check = recheckLetter(current, job, ctx.profile.get().profile, now)
+      if (check) {
+        const held = letterHeld(check)
+        const answers = syncOptionalLetterUploads(current.formFields, current.answers, current.coverLetter, held)
+        if (held && letterInUse(current.formFields, answers)) {
+          ctx.applications.update(app.id, { status: 'needs_attention', error: heldLetterNote(check), coverLetterLint: check.lint, answers })
+          ctx.events.add('submitted', `Held ${app.title} at ${app.company} because its cover letter failed the style check.`, app.jobId)
+          ctx.emit('applications:changed', { applicationIds: [app.id] })
+          continue
+        }
+        if (answers !== current.answers) ctx.applications.update(app.id, { answers })
       }
       const family = job.ats
       if (options.skipFamilies?.has(family)) continue
@@ -828,6 +847,7 @@ export class Pipeline {
         }
       } finally {
         this.claims.delete(app.id)
+        sentToday = ctx.applications.countSubmittedSince(startOfToday())
       }
       this.setProgress('submitting', `Submitted ${sent} of up to ${limit}`, sent, limit)
     }

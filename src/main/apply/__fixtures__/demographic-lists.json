@@ -1,0 +1,911 @@
+{
+ "lists": [
+  {
+   "source": "Ashby, Notion",
+   "label": "Gender",
+   "type": "select",
+   "options": [
+    "Male",
+    "Female",
+    "Decline to self-identify"
+   ]
+  },
+  {
+   "source": "Ashby, Notion",
+   "label": "Race",
+   "type": "select",
+   "options": [
+    "Hispanic or Latino",
+    "White (Not Hispanic or Latino)",
+    "Black or African American (Not Hispanic or Latino)",
+    "Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)",
+    "Asian (Not Hispanic or Latino)",
+    "American Indian or Alaska Native (Not Hispanic or Latino)",
+    "Two or More Races (Not Hispanic or Latino)",
+    "Decline to self-identify"
+   ]
+  },
+  {
+   "source": "Ashby, Notion",
+   "label": "Veteran Status",
+   "type": "select",
+   "options": [
+    "I identify as one or more of the classifications of protected veteran listed above",
+    "I am not a protected veteran",
+    "I decline to self-identify for protected veteran status"
+   ]
+  },
+  {
+   "source": "Greenhouse, Anthropic",
+   "label": "VeteranStatus",
+   "type": "select",
+   "options": [
+    "I don't wish to answer",
+    "I identify as one or more of the classifications of a protected veteran",
+    "I am not a protected veteran"
+   ]
+  },
+  {
+   "source": "Greenhouse, Anthropic",
+   "label": "Race",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Two or More Races",
+    "Native Hawaiian or Other Pacific Islander",
+    "White",
+    "Hispanic or Latino",
+    "Black or African American",
+    "Asian",
+    "American Indian or Alaskan Native"
+   ]
+  },
+  {
+   "source": "Greenhouse, Anthropic",
+   "label": "Gender",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Female",
+    "Male"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "Gender",
+   "type": "select",
+   "options": [
+    "Female",
+    "Male",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "Gender Identity",
+   "type": "select",
+   "options": [
+    "Agender",
+    "Cisgender/Female",
+    "Cisgender/Male",
+    "Female",
+    "Genderqueer",
+    "Intersex",
+    "Male",
+    "Non-binary/Gender Non-Conforming/Gender Variant",
+    "Gender Identity Not Listed",
+    "Transgender",
+    "Two-Spirit",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "What are your personal pronouns?",
+   "type": "select",
+   "options": [
+    "He/Him",
+    "He/They",
+    "She/Her",
+    "She/They",
+    "They/Them",
+    "Xe/Xem",
+    "Ze/Zir",
+    "Pronouns Not Listed",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "Sexual Orientation",
+   "type": "select",
+   "options": [
+    "Asexual",
+    "Bisexual",
+    "Gay/Lesbian",
+    "Heterosexual",
+    "Sexual Orientation Not Listed",
+    "Pansexual",
+    "Queer",
+    "Questioning",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "Are you Hispanic/Latinx?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "Please identify your race/ethnicity",
+   "type": "select",
+   "options": [
+    "American Indian or Alaskan Native",
+    "Asian",
+    "Black or African American",
+    "Native Hawaiian or Other Pacific Islander",
+    "Two or More Races",
+    "White",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "Are you a protected veteran?",
+   "type": "select",
+   "options": [
+    "I identify as one or more of the above categories of “protected veteran”",
+    "I do not fall into one of the above categories of “protected veteran”",
+    "I previously served in the military (US), but none of the above apply to me.",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Bungie",
+   "label": "Do you have a disability?",
+   "type": "select",
+   "options": [
+    "Yes, I have a disability, or have a history/record of having a disability",
+    "No, I don’t have a disability, or a history/record of having a disability ",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Databricks",
+   "label": "VeteranStatus",
+   "type": "select",
+   "options": [
+    "I don't wish to answer",
+    "I identify as one or more of the classifications of a protected veteran",
+    "I am not a protected veteran"
+   ]
+  },
+  {
+   "source": "Greenhouse, Databricks",
+   "label": "Race",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Two or More Races",
+    "Native Hawaiian or Other Pacific Islander",
+    "White",
+    "Hispanic or Latino",
+    "Black or African American",
+    "Asian",
+    "American Indian or Alaskan Native"
+   ]
+  },
+  {
+   "source": "Greenhouse, Databricks",
+   "label": "Gender",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Female",
+    "Male"
+   ]
+  },
+  {
+   "source": "Greenhouse, Discord",
+   "label": "Gender",
+   "type": "select",
+   "options": [
+    "Male",
+    "Female",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Discord",
+   "label": "Race and Ethnicity",
+   "type": "select",
+   "options": [
+    "American Indian or Alaska Native",
+    "I don't wish to answer",
+    "Asian",
+    "Black or African American",
+    "Hispanic or Latino",
+    "Native Hawaiian or Other Pacific Islander",
+    "Two or More Races",
+    "White"
+   ]
+  },
+  {
+   "source": "Greenhouse, Discord",
+   "label": "Veteran Status",
+   "type": "select",
+   "options": [
+    "I am not a protected veteran",
+    "I identify as one or more of the classifications of a protected veteran",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Discord",
+   "label": "Disability Status",
+   "type": "select",
+   "options": [
+    "Yes, I have a disability, or have had one in the past",
+    "No, I do not have a disability and have not had one in the past",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Discord",
+   "label": "Gender Identity (optional)",
+   "type": "select",
+   "options": [
+    "Man",
+    "Woman",
+    "Non-binary or third gender",
+    "Genderqueer",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Discord",
+   "label": "Race or Ethnicity (optional)",
+   "type": "multiselect",
+   "options": [
+    "Black or of African descent",
+    "East Asian",
+    "Hispanic, Latine or of Spanish Origin",
+    "Indigenous, American Indian or Alaska Native",
+    "Middle Eastern or North African Native",
+    "Hawaiian or Pacific Islander",
+    "South Asian",
+    "Southeast Asian",
+    "White or European",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Discord",
+   "label": "I consider myself a member of the LGBTQ+ community. (optional)",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Epic Games",
+   "label": "Gender Identity",
+   "type": "select",
+   "options": [
+    "Man",
+    "Woman",
+    "Non-Binary",
+    "Intersex",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Epic Games",
+   "label": "Transgender Status",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Epic Games",
+   "label": "Race/Ethnicity",
+   "type": "select",
+   "options": [
+    "Hispanic or Latino",
+    "American Indian or Alaska Native (Not Hispanic or Latino)",
+    "Asian (Not Hispanic or Latino)",
+    "Black or African American (Not Hispanic or Latino)",
+    "Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)",
+    "Two or More Races (Not Hispanic or Latino)",
+    "White (Not Hispanic or Latino)",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Epic Games",
+   "label": "Veteran Status",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Figma",
+   "label": "VeteranStatus",
+   "type": "select",
+   "options": [
+    "I don't wish to answer",
+    "I identify as one or more of the classifications of a protected veteran",
+    "I am not a protected veteran"
+   ]
+  },
+  {
+   "source": "Greenhouse, Figma",
+   "label": "Race",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Two or More Races",
+    "Native Hawaiian or Other Pacific Islander",
+    "White",
+    "Hispanic or Latino",
+    "Black or African American",
+    "Asian",
+    "American Indian or Alaskan Native"
+   ]
+  },
+  {
+   "source": "Greenhouse, Figma",
+   "label": "Gender",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Female",
+    "Male"
+   ]
+  },
+  {
+   "source": "Greenhouse, Figma",
+   "label": "Pronouns",
+   "type": "select",
+   "options": [
+    "she/her/hers",
+    "he/him/his",
+    "they/them/theirs",
+    "self-describe"
+   ]
+  },
+  {
+   "source": "Greenhouse, GitLab",
+   "label": "VeteranStatus",
+   "type": "select",
+   "options": [
+    "I don't wish to answer",
+    "I identify as one or more of the classifications of a protected veteran",
+    "I am not a protected veteran"
+   ]
+  },
+  {
+   "source": "Greenhouse, GitLab",
+   "label": "Race",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Two or More Races",
+    "Native Hawaiian or Other Pacific Islander",
+    "White",
+    "Hispanic or Latino",
+    "Black or African American",
+    "Asian",
+    "American Indian or Alaskan Native"
+   ]
+  },
+  {
+   "source": "Greenhouse, GitLab",
+   "label": "Gender",
+   "type": "select",
+   "options": [
+    "Decline To Self Identify",
+    "Female",
+    "Male"
+   ]
+  },
+  {
+   "source": "Greenhouse, Roblox",
+   "label": "How would you describe your gender identity?",
+   "type": "select",
+   "options": [
+    "Man",
+    "Non-binary",
+    "Woman",
+    "I prefer to self-describe",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Roblox",
+   "label": "How would you describe your racial/ethnic background? (mark all that apply)",
+   "type": "multiselect",
+   "options": [
+    "Black or of African descent",
+    "East Asian",
+    "Hispanic, Latinx or of Spanish Origin",
+    "Indigenous, American Indian or Alaska Native",
+    "Middle Eastern or North African",
+    "Native Hawaiian or Pacific Islander",
+    "South Asian",
+    "Southeast Asian",
+    "White or European",
+    "I prefer to self-describe",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Roblox",
+   "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, other) that substantially limits 1 or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "I prefer to self-describe",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "Greenhouse, Roblox",
+   "label": "Are you a veteran, active member or reservist of the United States Armed Forces?",
+   "type": "select",
+   "options": [
+    "Yes, I am a veteran, active member or reservist",
+    "No, I am not a veteran, active member or reservist",
+    "I prefer to self-describe",
+    "I don't wish to answer"
+   ]
+  },
+  {
+   "source": "OFCCP CC-305 (2020 form)",
+   "label": "Disability Status",
+   "type": "select",
+   "options": [
+    "Yes, I have a disability (or previously had a disability)",
+    "No, I do not have a disability",
+    "I do not want to answer"
+   ]
+  },
+  {
+   "source": "OFCCP CC-305 (2023 form)",
+   "label": "Disability Status",
+   "type": "select",
+   "options": [
+    "Yes, I have a disability, or have had one in the past",
+    "No, I do not have a disability and have not had one in the past",
+    "I do not want to answer"
+   ]
+  },
+  {
+   "source": "Lever, Spotify (UK survey)",
+   "label": "What best describes your ethnicity?",
+   "type": "select",
+   "options": [
+    "Any other ethnic group",
+    "Arab",
+    "Asian/Asian British: Any other Asian background",
+    "Asian/Asian British: Bangladeshi ",
+    "Asian/Asian British: Chinese ",
+    "Asian/Asian British: Indian",
+    "Asian/Asian British: Pakistani ",
+    "Black/Black British: African",
+    "Black/Black British: Any other Black/ African / Caribbean background",
+    "Black/Black British: Caribbean",
+    "Mixed: Any other mixed background",
+    "Mixed: White and Asian",
+    "Mixed: White and Black African",
+    "Mixed: White and Black Caribbean",
+    "Prefer not to disclose",
+    "White: Any other White background",
+    "White: English/Welsh/Scottish/Northern Irish/British",
+    "White: Irish",
+    "White: Irish Traveller / Minkiers / Pavees (Previously known as Gypsy) 3"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "What is your ethnic group? (group, then subgroup)",
+   "type": "select",
+   "options": [
+    "Asian, Asian British or Asian Welsh - Bangladeshi",
+    "Asian, Asian British or Asian Welsh - Chinese",
+    "Asian, Asian British or Asian Welsh - Indian",
+    "Asian, Asian British or Asian Welsh - Pakistani",
+    "Asian, Asian British or Asian Welsh - Any other Asian background",
+    "Black, Black British, Black Welsh, Caribbean or African - African",
+    "Black, Black British, Black Welsh, Caribbean or African - Caribbean",
+    "Black, Black British, Black Welsh, Caribbean or African - Any other Black, Black British or Caribbean background",
+    "Mixed or Multiple ethnic groups - White and Asian",
+    "Mixed or Multiple ethnic groups - White and Black African",
+    "Mixed or Multiple ethnic groups - White and Black Caribbean",
+    "Mixed or Multiple ethnic groups - Any other Mixed or Multiple ethnic background",
+    "White - English, Welsh, Scottish, Northern Irish or British",
+    "White - Irish",
+    "White - Gypsy or Irish Traveller",
+    "White - Roma",
+    "White - Any other White background",
+    "Other ethnic group - Arab",
+    "Other ethnic group - Any other ethnic group",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "What is your ethnic group? (slash)",
+   "type": "select",
+   "options": [
+    "Asian, Asian British or Asian Welsh / Bangladeshi",
+    "Asian, Asian British or Asian Welsh / Chinese",
+    "Asian, Asian British or Asian Welsh / Indian",
+    "Asian, Asian British or Asian Welsh / Pakistani",
+    "Asian, Asian British or Asian Welsh / Any other Asian background",
+    "Black, Black British, Black Welsh, Caribbean or African / African",
+    "Black, Black British, Black Welsh, Caribbean or African / Caribbean",
+    "Black, Black British, Black Welsh, Caribbean or African / Any other Black, Black British or Caribbean background",
+    "Mixed or Multiple ethnic groups / White and Asian",
+    "Mixed or Multiple ethnic groups / White and Black African",
+    "Mixed or Multiple ethnic groups / White and Black Caribbean",
+    "Mixed or Multiple ethnic groups / Any other Mixed or Multiple ethnic background",
+    "White / English, Welsh, Scottish, Northern Irish or British",
+    "White / Irish",
+    "White / Gypsy or Irish Traveller",
+    "White / Roma",
+    "White / Any other White background",
+    "Other ethnic group / Arab",
+    "Other ethnic group / Any other ethnic group",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "What is your ethnic group? (colon)",
+   "type": "select",
+   "options": [
+    "Asian, Asian British or Asian Welsh: Bangladeshi",
+    "Asian, Asian British or Asian Welsh: Chinese",
+    "Asian, Asian British or Asian Welsh: Indian",
+    "Asian, Asian British or Asian Welsh: Pakistani",
+    "Asian, Asian British or Asian Welsh: Any other Asian background",
+    "Black, Black British, Black Welsh, Caribbean or African: African",
+    "Black, Black British, Black Welsh, Caribbean or African: Caribbean",
+    "Black, Black British, Black Welsh, Caribbean or African: Any other Black, Black British or Caribbean background",
+    "Mixed or Multiple ethnic groups: White and Asian",
+    "Mixed or Multiple ethnic groups: White and Black African",
+    "Mixed or Multiple ethnic groups: White and Black Caribbean",
+    "Mixed or Multiple ethnic groups: Any other Mixed or Multiple ethnic background",
+    "White: English, Welsh, Scottish, Northern Irish or British",
+    "White: Irish",
+    "White: Gypsy or Irish Traveller",
+    "White: Roma",
+    "White: Any other White background",
+    "Other ethnic group: Arab",
+    "Other ethnic group: Any other ethnic group",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "What is your ethnic group? (subgroups only)",
+   "type": "select",
+   "options": [
+    "Bangladeshi",
+    "Chinese",
+    "Indian",
+    "Pakistani",
+    "Any other Asian background",
+    "African",
+    "Caribbean",
+    "Any other Black, Black British or Caribbean background",
+    "White and Asian",
+    "White and Black African",
+    "White and Black Caribbean",
+    "Any other Mixed or Multiple ethnic background",
+    "English, Welsh, Scottish, Northern Irish or British",
+    "Irish",
+    "Gypsy or Irish Traveller",
+    "Roma",
+    "Any other White background",
+    "Arab",
+    "Any other ethnic group",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "Which of the following best describes your ethnic group?",
+   "type": "select",
+   "options": [
+    "Asian, Asian British or Asian Welsh",
+    "Black, Black British, Black Welsh, Caribbean or African",
+    "Mixed or Multiple ethnic groups",
+    "White",
+    "Other ethnic group",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "Please select your Asian background",
+   "type": "select",
+   "options": [
+    "Bangladeshi",
+    "Chinese",
+    "Indian",
+    "Pakistani",
+    "Any other Asian background",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "Please select your Black background",
+   "type": "select",
+   "options": [
+    "African",
+    "Caribbean",
+    "Any other Black, Black British or Caribbean background",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "Please select your Mixed background",
+   "type": "select",
+   "options": [
+    "White and Asian",
+    "White and Black African",
+    "White and Black Caribbean",
+    "Any other Mixed or Multiple ethnic background",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "Please select your White background",
+   "type": "select",
+   "options": [
+    "English, Welsh, Scottish, Northern Irish or British",
+    "Irish",
+    "Gypsy or Irish Traveller",
+    "Roma",
+    "Any other White background",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "Please select your other ethnic background",
+   "type": "select",
+   "options": [
+    "Arab",
+    "Any other ethnic group",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "What is your religion?",
+   "type": "select",
+   "options": [
+    "No religion",
+    "Christian (including Church of England, Catholic, Protestant and all other Christian denominations)",
+    "Buddhist",
+    "Hindu",
+    "Jewish",
+    "Muslim",
+    "Sikh",
+    "Any other religion",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "What is your religion or belief?",
+   "type": "select",
+   "options": [
+    "No religion or belief",
+    "Buddhist",
+    "Christian",
+    "Hindu",
+    "Jewish",
+    "Muslim",
+    "Sikh",
+    "Other",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "ONS 2021 wording (reference, not seen on a live form)",
+   "label": "Do you follow a religion?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "Social Mobility Commission wording (reference, not seen on a live form)",
+   "label": "What was the occupation of your main household earner when you were aged about 14?",
+   "type": "select",
+   "options": [
+    "Modern professional occupations (e.g. teacher, nurse, physiotherapist, social worker, musician, police officer (sergeant or above), software designer)",
+    "Clerical and intermediate occupations (e.g. secretary, personal assistant, call center agent, clerical worker, nursery nurse)",
+    "Senior managers or administrators (usually responsible for planning, organizing and co-ordinating work and for finance) e.g. finance manager, chief executive",
+    "Technical and craft occupations (e.g. motor mechanic, plumber, printer, electrician, gardener, train driver)",
+    "Semi-routine manual and service occupations (e.g. postal worker, retail assistant, security guard, machine operative, care assistant)",
+    "Routine manual and service occupations (e.g. HGV driver, van driver, cleaner, porter, packer, sewing machinist, messenger, laborer, waiter/waitress, bar staff)",
+    "Middle or junior managers (e.g. office manager, retail manager, bank manager, restaurant manager, warehouse manager)",
+    "Traditional professional occupations (e.g. accountant, solicitor, medical practitioner, scientist, civil/mechanical engineer)",
+    "Long-term unemployed (claimed Jobseeker's Allowance or earlier unemployment benefit for more than a year)",
+    "Retired",
+    "This question does not apply to me",
+    "I don't know",
+    "I prefer not to say"
+   ]
+  },
+  {
+   "source": "Social Mobility Commission wording (reference, not seen on a live form)",
+   "label": "What type of school did you attend for most of your time between the ages of 11 and 16?",
+   "type": "select",
+   "options": [
+    "A state-run or state-funded school (non-selective)",
+    "A state-run or state-funded school (selective on academic, faith or other grounds)",
+    "Independent or fee-paying school",
+    "Independent or fee-paying school, with a bursary covering 90% or more of the tuition fees",
+    "Attended school outside the UK",
+    "I don't know",
+    "I prefer not to say"
+   ]
+  },
+  {
+   "source": "Social Mobility Commission wording (reference, not seen on a live form)",
+   "label": "Were you eligible for free school meals at any point during your school years?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "I don't know",
+    "I prefer not to say"
+   ]
+  },
+  {
+   "source": "Social Mobility Commission wording (reference, not seen on a live form)",
+   "label": "Did either of your parents attend university and complete a degree, such as a BA or BSc, by the time you were 18?",
+   "type": "select",
+   "options": [
+    "Yes, one or both of my parents completed a university degree",
+    "No, neither of my parents completed a university degree",
+    "I don't know",
+    "I prefer not to say"
+   ]
+  },
+  {
+   "source": "Social Mobility Commission wording (reference, not seen on a live form)",
+   "label": "Are you the first in your family to go to university?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Do you have caring responsibilities?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Do you have any caring responsibilities?",
+   "type": "select",
+   "options": [
+    "Yes, primary carer of a child or children (under 18)",
+    "Yes, primary carer of a disabled adult (18 and over)",
+    "Yes, secondary carer",
+    "No",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Do you consider yourself to be neurodivergent?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Neurodiversity",
+   "type": "select",
+   "options": [
+    "Neurodivergent",
+    "Neurotypical",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Are you neurotypical?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Do you have dyslexia?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "What is your age band?",
+   "type": "select",
+   "options": [
+    "16-24",
+    "25-34",
+    "35-44",
+    "45-54",
+    "55-64",
+    "65+",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Marital status",
+   "type": "select",
+   "options": [
+    "Single",
+    "Married or in a civil partnership",
+    "Divorced or dissolved civil partnership",
+    "Widowed",
+    "Prefer not to say"
+   ]
+  },
+  {
+   "source": "UK reference wording (not seen on a live form)",
+   "label": "Are you pregnant or on maternity leave?",
+   "type": "select",
+   "options": [
+    "Yes",
+    "No",
+    "Prefer not to say"
+   ]
+  }
+ ]
+}

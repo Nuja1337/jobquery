@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Profile, VoiceProfile } from '@shared/types'
 import type { LlmService } from '../llm/service'
 import { lintText } from '../writing/lint'
+import { passingSignaturePhrases } from '../writing/prompts'
 
 const ResumeSchema = z.object({
   fullName: z.string(),
@@ -116,7 +117,7 @@ Describe how they write, not what they wrote about:
 - summary: 2 to 4 plain sentences on their tone, how directly they get to the point, how technical they are, whether they use contractions or humor, how they open and close.
 - formality: casual, neutral or formal.
 - traits: 4 to 8 short, specific observations a writer could follow, such as "uses first names, not titles" or "states numbers without hedging".
-- signaturePhrases: 3 to 6 short phrases copied word for word from the samples that sound like them. Skip generic phrases.
+- signaturePhrases: 3 to 6 short phrases copied word for word from the samples that sound like them. Skip generic phrases, stock cover letter lines and anything about loving games or being passionate.
 - avoid: 3 to 6 things that would sound wrong coming from them, such as "exclamation marks" or "corporate words like synergy".
 
 Base every point on the samples. Don't invent traits the samples don't show.`
@@ -138,7 +139,7 @@ export async function buildVoice(llm: LlmService, samples: Array<{ id: string; n
   const res = await llm.json({
     task: 'voice',
     stage: 'extraction',
-    promptVersion: 'voice-v1',
+    promptVersion: 'voice-v2',
     system: VOICE_SYSTEM,
     prompt: `WRITING SAMPLES\n${parts.join('\n\n')}`,
     schema: VoiceSchema,
@@ -151,6 +152,8 @@ export async function buildVoice(llm: LlmService, samples: Array<{ id: string; n
   const avgSentenceWords = measured.length ? measured.reduce((a, b) => a + b, 0) / measured.length : 16
   return {
     ...res.value,
+    // A phrase the style check would flag is not kept, so the writer is never told to use it.
+    signaturePhrases: passingSignaturePhrases(res.value.signaturePhrases),
     avgSentenceWords: Math.round(avgSentenceWords * 10) / 10,
     builtFrom: usable.map((s) => s.id),
     builtAt: new Date().toISOString()

@@ -22,7 +22,7 @@ describe('applyPreset', () => {
     })
     expect(out.preferences).toMatchObject({ perCompanyLimit: 2, companyCooldownDays: 30, maxPostingAgeDays: 21 })
     expect(out.browser.slowMoMs).toBe(25)
-    expect(out.writing).toMatchObject({ coverLetterLength: 'short', minLintScore: 75, maxRevisions: 1 })
+    expect(out.writing).toMatchObject({ coverLetterLength: 'short', minLintScore: 80, maxRevisions: 2 })
     expect(out.discovery).toEqual({ autoWatchBoards: true, maxWatchedBoards: 5000, boardsPerRun: 2000 })
     expect(out.system).toMatchObject({ keepAwake: true, closeToTray: true, notifications: true })
   })

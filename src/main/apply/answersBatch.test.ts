@@ -39,29 +39,54 @@ const field = (key: string, label: string, extra: Partial<FormField> = {}): Form
   ...extra
 })
 
+/** Open boxes that are optional stay blank, so the tests that need written answers make them required. */
+const req = { required: true }
+
 interface Seen {
   kind: 'json' | 'text'
   req: LlmRequest
 }
 
-async function setup(options: { saved?: Record<string, SavedAnswer>; writing?: Partial<Settings['writing']>; adapted?: string } = {}) {
+interface SetupOptions {
+  saved?: Record<string, SavedAnswer>
+  writing?: Partial<Settings['writing']>
+  adapted?: string
+  /** What the batch call and the single call write for a plain question. */
+  answer?: string
+  letter?: string
+  /** What the revision call returns for each draft id. */
+  revise?: (id: string) => string | undefined
+  /** What the short-field call returns. */
+  form?: Array<{ key: string; value: string; confidence: number; needsUser: boolean; note: string }>
+}
+
+async function setup(options: SetupOptions = {}) {
   const seen: Seen[] = []
   const used: string[] = []
   const client: LlmClient = {
     kind: 'anthropic',
     async complete(model, req) {
       seen.push({ kind: 'text', req })
-      return { text: WRITTEN, usage, model, truncated: false }
+      return { text: options.answer ?? WRITTEN, usage, model, truncated: false }
     },
-    async completeJson(model, req, schema) {
+    async completeJson(model, req, schema, schemaName) {
       seen.push({ kind: 'json', req })
+      if (schemaName === 'form_answers') return { text: '', value: schema.parse({ answers: options.form ?? [] }), usage, model, truncated: false }
+      if (schemaName === 'revised_answers') {
+        const ids = [...req.prompt.matchAll(/^DRAFT (\S+)/gm)].map((m) => m[1])
+        const revised = ids.flatMap((key) => {
+          const answer = options.revise?.(key)
+          return answer === undefined ? [] : [{ key, answer }]
+        })
+        return { text: '', value: schema.parse({ answers: revised }), usage, model, truncated: false }
+      }
       const keys = [...req.prompt.matchAll(/^QUESTION (q\d+)$/gm)].map((m) => m[1])
       // The saved answer for a general question comes back adapted. Other questions get a plain answer.
       const answers = keys.map((key) => {
         const block = req.prompt.split(`QUESTION ${key}\n`)[1].split('\n\nQUESTION')[0]
-        return { key, answer: block.includes('Base answer') ? (options.adapted ?? ADAPTED) : WRITTEN }
+        return { key, answer: block.includes('Base answer') ? (options.adapted ?? ADAPTED) : (options.answer ?? WRITTEN) }
       })
-      const raw = req.prompt.includes('COVER LETTER\n') ? { answers, letter: LETTER } : { answers }
+      const raw = req.prompt.includes('COVER LETTER\n') ? { answers, letter: options.letter ?? LETTER } : { answers }
       return { text: '', value: schema.parse(raw), usage, model, truncated: false }
     },
     async listModels() {
@@ -90,7 +115,7 @@ const saved = (answer: string, kind: SavedAnswer['kind'] = 'fact'): SavedAnswer 
 describe('answerFields writes open questions together', () => {
   it('sends three open questions in one call', async () => {
     const env = await setup()
-    const fields = [field('a', 'Describe a hard bug you fixed.'), field('b', 'What would you build first here?'), field('c', 'Tell us about a time you disagreed with a teammate.')]
+    const fields = [field('a', 'Describe a hard bug you fixed.', req), field('b', 'What would you build first here?', req), field('c', 'Tell us about a time you disagreed with a teammate.', req)]
     const { answers } = await answerFields(env.deps, job, fields, null)
     expect(env.seen).toHaveLength(1)
     expect(env.seen[0].kind).toBe('json')
@@ -100,7 +125,7 @@ describe('answerFields writes open questions together', () => {
 
   it('never sends a question that must go to the user', async () => {
     const env = await setup()
-    const fields = [field('a', 'Describe a hard bug you fixed.'), field('b', 'Did you use AI to write this application?', { required: true }), field('c', 'What would you build first here?')]
+    const fields = [field('a', 'Describe a hard bug you fixed.', req), field('b', 'Did you use AI to write this application?', { required: true }), field('c', 'What would you build first here?', req)]
     const { answers } = await answerFields(env.deps, job, fields, null)
     expect(env.seen).toHaveLength(1)
     expect(env.seen[0].req.prompt).not.toContain('Did you use AI')
@@ -110,7 +135,7 @@ describe('answerFields writes open questions together', () => {
 
 describe('saved answers to general questions', () => {
   const why = field('why', 'Why do you want to work at Acme?', { required: true })
-  const other = field('bug', 'Describe a hard bug you fixed.')
+  const other = field('bug', 'Describe a hard bug you fixed.', req)
 
   it('recognizes the general questions and not the factual ones', () => {
     expect(GENERIC_QUESTION.length).toBeGreaterThan(3)
@@ -168,7 +193,7 @@ describe('saved answers to general questions', () => {
 
 describe('cover letter fields', () => {
   const upload = (required: boolean) => field('cl', 'Cover Letter', { type: 'file', fileHint: 'cover_letter', required })
-  const questions = [field('a', 'Describe a hard bug you fixed.'), field('b', 'What would you build first here?')]
+  const questions = [field('a', 'Describe a hard bug you fixed.', req), field('b', 'What would you build first here?', req)]
 
   it('writes a required letter in the same call as the answers', async () => {
     const env = await setup()
@@ -210,6 +235,209 @@ describe('cover letter fields', () => {
     const { answers } = await answerFields(env.deps, job, [upload(true)], LETTER, { writeCoverLetter: true })
     expect(env.seen).toHaveLength(0)
     expect(answers[0].value).toBe(COVER_LETTER_PDF)
+  })
+})
+
+describe('answers that fit their box', () => {
+  const req = { required: true }
+  const SENTENCES = [
+    'At Ledgerly I rebuilt billing after a weekend of double charges.',
+    'The retry fix cut failed payments by 40 percent across every region we sell in.',
+    'I also wrote the nightly check that compares our ledger with the payment provider.',
+    'It still runs today and pages the on-call engineer when totals drift by more than a cent.',
+    'Before that I spent two years on the invoicing service and learned how finance teams close their books.',
+    'That work shaped how I split services later, and it is why I like small, boring migrations.'
+  ]
+  const LONG = SENTENCES.join(' ')
+  const two = (limit: number | null) => [field('a', 'Describe a hard bug you fixed.', { required: true, maxLength: limit }), field('b', 'What would you build first here?', req)]
+
+  it('keeps a revision that fits the box even when it is much shorter than the draft', async () => {
+    expect(LONG.length).toBeGreaterThan(400)
+    const env = await setup({ answer: LONG, revise: (id) => (id === 'q1' ? WRITTEN : undefined), writing: { maxRevisions: 2 } })
+    const { answers } = await answerFields(env.deps, job, two(200), null)
+    expect(WRITTEN.length).toBeLessThan(200)
+    expect(WRITTEN.length).toBeLessThan(LONG.length * 0.4)
+    expect(answers[0].value).toBe(WRITTEN)
+    expect(env.seen[1].req.prompt).toContain('Shorten to under 200 characters. Keep the sentence that answers the question.')
+    expect(env.seen[1].req.prompt).toContain('Describe a hard bug you fixed.')
+  })
+
+  it('cuts a draft that stays too long at a sentence end, never mid-word', async () => {
+    const env = await setup({ answer: LONG, writing: { maxRevisions: 1 } })
+    const { answers } = await answerFields(env.deps, job, two(150), null)
+    const value = answers[0].value
+    expect(value.length).toBeLessThanOrEqual(150)
+    expect(value).toMatch(/[.!?]$/)
+    expect(LONG.startsWith(value)).toBe(true)
+    expect(answers[0].needsUser).toBe(false)
+  })
+
+  it('flags the field instead of sending a fragment when not even one sentence fits', async () => {
+    const env = await setup({ answer: LONG, writing: { maxRevisions: 1 } })
+    const { answers } = await answerFields(env.deps, job, two(40), null)
+    expect(answers[0]).toMatchObject({ value: '', needsUser: true })
+    expect(answers[0].note).toContain('this box takes 40')
+  })
+
+  it('tells the writer the size of the box', async () => {
+    const env = await setup()
+    await answerFields(env.deps, job, two(300), null)
+    const prompt = env.seen[0].req.prompt
+    expect(prompt).toContain('About 46 words, under 270 characters.')
+    // The question with a limit gets the size line. The one without keeps the usual range.
+    const [limited, open] = prompt.split('QUESTION q2')
+    expect(limited).not.toContain('60 to 150 words')
+    expect(open).toContain('usually 60 to 150 words')
+  })
+
+  it('flags a model reply that says NEEDS INPUT in any spelling', async () => {
+    const env = await setup({ answer: 'NEEDS INPUT: your visa status' })
+    const { answers } = await answerFields(env.deps, job, two(null), null)
+    expect(answers[0]).toMatchObject({ value: '', needsUser: true })
+    expect(answers[0].note).toBe('Needs your input: your visa status')
+  })
+
+  it('shortens a saved answer that is too long to whole sentences and says so', async () => {
+    const env = await setup({ saved: { 'favorite project': saved(LONG) } })
+    const box = field('p', 'Tell us about your favorite project.', { type: 'text', required: true, maxLength: 150 })
+    const { answers } = await answerFields(env.deps, job, [box], null)
+    expect(answers[0].value.length).toBeLessThanOrEqual(150)
+    expect(answers[0].value).toMatch(/[.!?]$/)
+    expect(answers[0]).toMatchObject({ source: 'answer_bank', needsUser: false })
+    expect(answers[0].note).toBe('Shortened to fit the 150 character limit.')
+  })
+
+  it('flags a saved answer when no whole sentence fits', async () => {
+    const env = await setup({ saved: { 'favorite project': saved(LONG) } })
+    const box = field('p', 'Tell us about your favorite project.', { type: 'text', required: true, maxLength: 30 })
+    const { answers } = await answerFields(env.deps, job, [box], null)
+    expect(answers[0]).toMatchObject({ value: '', needsUser: true, source: 'answer_bank' })
+    expect(env.used).toEqual([])
+  })
+
+  it('flags a short model answer that is longer than its box', async () => {
+    const env = await setup({ form: [{ key: 's', value: 'Senior Engineer', confidence: 0.9, needsUser: false, note: '' }] })
+    const box = field('s', 'What is your favorite database?', { type: 'text', required: true, maxLength: 5 })
+    const { answers } = await answerFields(env.deps, job, [box], null)
+    expect(env.seen.some((s) => s.kind === 'json')).toBe(true)
+    expect(answers[0]).toMatchObject({ value: '', needsUser: true })
+  })
+})
+
+describe('optional open boxes', () => {
+  const optional = field('add', 'Additional information')
+  const anything = field('any', 'Anything else you would like us to know?')
+
+  it('leaves them blank and makes no model call', async () => {
+    const env = await setup()
+    const { answers, costUsd } = await answerFields(env.deps, job, [optional, anything], null)
+    expect(env.seen).toHaveLength(0)
+    expect(costUsd).toBe(0)
+    expect(answers.map((a) => a.value)).toEqual(['', ''])
+    expect(answers.every((a) => !a.needsUser && a.note === 'Optional, so jobpls leaves it blank.')).toBe(true)
+  })
+
+  it('writes the required ones and skips the optional ones in the same form', async () => {
+    const env = await setup()
+    const required = field('why', 'Describe a hard bug you fixed.', { required: true })
+    const { answers } = await answerFields(env.deps, job, [optional, required], null)
+    expect(answers[0].value).toBe('')
+    expect(answers[1].value).toBe(WRITTEN)
+    expect(env.seen).toHaveLength(1)
+    expect(env.seen[0].req.prompt).not.toContain('Additional information')
+  })
+
+  it('uses a saved answer that fits an optional box', async () => {
+    const env = await setup({ saved: { 'Additional information': saved('I can start in two weeks.') } })
+    const { answers } = await answerFields(env.deps, job, [optional], null)
+    expect(answers[0]).toMatchObject({ value: 'I can start in two weeks.', source: 'answer_bank' })
+    expect(env.seen).toHaveLength(0)
+  })
+
+  it('writes an optional box when the person presses Regenerate on it', async () => {
+    const env = await setup()
+    const { answers } = await answerFields(env.deps, job, [optional], null, { regenerateKeys: new Set(['add']) })
+    expect(answers[0].value).toBe(WRITTEN)
+  })
+
+  it('leaves one-line catch-all boxes blank too', async () => {
+    const env = await setup()
+    const labels = ["Anything else you'd like us to know?", 'Additional information', 'Is there anything else we should know?', 'Other comments', 'Notes']
+    const { answers } = await answerFields(env.deps, job, labels.map((l, i) => field(`c${i}`, l, { type: 'text' })), null)
+    expect(env.seen).toHaveLength(0)
+    expect(answers.every((a) => a.value === '' && !a.needsUser && a.note === 'Optional, so jobpls leaves it blank.')).toBe(true)
+  })
+
+  it('keeps required catch-all boxes on their usual path and short factual boxes untouched', async () => {
+    const env = await setup({ form: [{ key: 'req', value: 'Nothing more.', confidence: 0.9, needsUser: false, note: '' }, { key: 'title', value: 'Engineer', confidence: 0.9, needsUser: false, note: '' }] })
+    const { answers } = await answerFields(env.deps, job, [field('req', 'Additional information', { type: 'text', required: true }), field('title', 'What is your favorite database?', { type: 'text' })], null)
+    expect(answers[0].value).toBe('Nothing more.')
+    expect(answers[1].value).toBe('Engineer')
+  })
+
+  it('uses a saved answer for an optional one-line catch-all box', async () => {
+    const env = await setup({ saved: { 'Additional information': saved('I can start in two weeks.') } })
+    const { answers } = await answerFields(env.deps, job, [field('c', 'Additional information', { type: 'text' })], null)
+    expect(answers[0]).toMatchObject({ value: 'I can start in two weeks.', source: 'answer_bank' })
+  })
+
+  it('keeps the cover letter rules for an optional letter box', async () => {
+    const env = await setup()
+    const box = field('clb', 'Cover letter (optional)')
+    const { answers } = await answerFields(env.deps, job, [box], LETTER)
+    expect(answers[0].value).toBe(LETTER)
+  })
+})
+
+describe('cover letters in a box with a character limit', () => {
+  const para = (n: number) => `Paragraph ${n} says that I rebuilt the billing pipeline at Ledgerly and cut failed payments by 40 percent over six months.`
+  const SHORT_LETTER = `Hi Acme team,\n\nLast spring I rebuilt the billing pipeline at Ledgerly after it double-charged about 300 customers. The fix took three weeks.\n\nYour posting mentions payment tools. I have spent four years on that kind of work, and the last two were mostly migrations. The old system kept running the whole time, which taught me to split services in small steps.\n\nI would like to hear how far along your own migration is and where you expect the hard parts to be. I can talk any time next week.\n\nThanks,\nSam`
+  const BIG_LETTER = `Hi Acme team,\n\n${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(para).join(' ')}\n\nThanks,\nSam`
+  const box = (required: boolean, maxLength: number | null) => field('cl', 'Cover letter', { required, maxLength })
+  const questions = [field('a', 'Describe a hard bug you fixed.', { required: true }), field('b', 'What would you build first here?', { required: true })]
+
+  it('asks for a letter that fits a 1000 character box', async () => {
+    expect(SHORT_LETTER.length).toBeLessThan(1000)
+    const env = await setup({ letter: SHORT_LETTER })
+    const { answers, letter } = await answerFields(env.deps, job, [...questions, box(true, 1000)], null, { writeCoverLetter: true })
+    expect(env.seen[0].req.prompt).toContain('About 153 words, under 900 characters.')
+    expect(letter?.text).toBe(SHORT_LETTER)
+    expect(answers[2]).toMatchObject({ value: SHORT_LETTER, needsUser: false })
+  })
+
+  it('revises a letter that is too long for the box and keeps the one that fits', async () => {
+    expect(BIG_LETTER.length).toBeGreaterThan(1000)
+    const env = await setup({ letter: BIG_LETTER, revise: (id) => (id === 'letter' ? SHORT_LETTER : undefined), writing: { maxRevisions: 2 } })
+    const { answers } = await answerFields(env.deps, job, [...questions, box(true, 1000)], null, { writeCoverLetter: true })
+    expect(answers[2].value).toBe(SHORT_LETTER)
+  })
+
+  it('flags the box and never cuts the letter when it will not fit', async () => {
+    const env = await setup({ letter: BIG_LETTER, writing: { maxRevisions: 1 } })
+    const { answers, letter } = await answerFields(env.deps, job, [...questions, box(true, 1000)], null, { writeCoverLetter: true })
+    expect(letter?.text).toBe(BIG_LETTER)
+    expect(answers[2]).toMatchObject({ value: '', needsUser: true })
+    expect(answers[2].note).toContain('this box takes 1000')
+  })
+
+  it('flags a box that is too small for a letter that already exists', async () => {
+    const env = await setup()
+    const { answers } = await answerFields(env.deps, job, [box(true, 500)], BIG_LETTER)
+    expect(env.seen).toHaveLength(0)
+    expect(answers[0]).toMatchObject({ value: '', needsUser: true })
+  })
+
+  it('leaves an optional box blank when the existing letter is too long for it', async () => {
+    const env = await setup()
+    const { answers } = await answerFields(env.deps, job, [box(false, 500)], BIG_LETTER)
+    expect(answers[0]).toMatchObject({ value: '', needsUser: false })
+    expect(answers[0].note).toContain('optional')
+  })
+
+  it('keeps the usual letter length for a box with no limit', async () => {
+    const env = await setup()
+    await answerFields(env.deps, job, [...questions, box(true, null)], null, { writeCoverLetter: true })
+    expect(env.seen[0].req.prompt).toContain('Length: 200 to 300 words')
   })
 })
 

@@ -8,6 +8,7 @@ import { mapInferredField, mapKnownField, mustAskUser } from './fieldMap'
 // Every branch that answers from profile.application, driven by real labels in the fixture.
 
 const FACTS: ApplicationFacts = {
+  ...EMPTY_APPLICATION_FACTS,
   address: { street: '221 Baker Street', city: 'Austin', region: 'TX', postalCode: '78701', country: 'United States' },
   phoneCountryCode: '+1',
   authorization: [

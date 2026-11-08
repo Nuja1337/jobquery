@@ -27,13 +27,17 @@ export function ProfilePage(): React.JSX.Element {
   const [reading, setReading] = useState(false)
   const [confirmRead, setConfirmRead] = useState(false)
   const resumes = useAsync(() => api.listDocuments('resume'), [tab])
-  const resumeId = (resumes.data?.find((d) => d.isPrimary) ?? resumes.data?.[0])?.id ?? null
+  const resume = resumes.data?.find((d) => d.isPrimary) ?? resumes.data?.[0] ?? null
+  const resumeId = resume?.id ?? null
+  const resumeName = resume?.name ?? 'your resume'
 
   useEffect(() => {
     if (rec.data) setDraft((cur) => cur ?? rec.data?.profile ?? null)
   }, [rec.data])
 
   const saved: ProfileRecord | null = rec.data
+  const savedRef = useRef(saved)
+  savedRef.current = saved
   const dirty = !!(draft && saved && JSON.stringify(cleanProfile(draft)) !== JSON.stringify(saved.profile))
   const leaving = useRef(false)
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname)
@@ -53,13 +57,26 @@ export function ProfilePage(): React.JSX.Element {
     }
   }
 
+  /** Adding a portfolio link may have filled the profile's empty portfolio field. Take that in without losing unsaved edits. */
+  async function pullPortfolio(): Promise<void> {
+    try {
+      const next = await api.getProfile()
+      const portfolio = next.profile.links.portfolio
+      if (!portfolio || portfolio === savedRef.current?.profile.links.portfolio) return
+      rec.setData(next)
+      setDraft((cur) => (cur && !cur.links.portfolio.trim() ? { ...cur, links: { ...cur.links, portfolio } } : cur))
+    } catch {
+      // The profile tab loads it again when it is opened.
+    }
+  }
+
   async function readResume(): Promise<void> {
     if (!resumeId) return
     setReading(true)
     try {
       const read = await api.extractProfileFromResume(resumeId)
       setDraft(read)
-      toast.success('Read your resume. Check the draft, then press Save profile.')
+      toast.success(`Read ${resumeName}. Check the draft, then press Save profile.`)
     } catch (e) {
       toast.error(e)
     } finally {
@@ -143,7 +160,7 @@ export function ProfilePage(): React.JSX.Element {
             <div className="min-w-0">
               <p className="text-sm font-medium text-fg">Fill this in from your resume</p>
               <p className="text-xs text-faint">
-                {resumeId ? 'Uses your Reading model and replaces the fields below with a draft. Nothing is saved until you press Save profile.' : 'Upload a resume on the Documents tab first.'}
+                {resumeId ? `Reads ${resumeName} with your Reading model and replaces the fields below with a draft. Nothing is saved until you press Save profile.` : 'Upload a resume on the Documents tab first.'}
               </p>
             </div>
             <Button icon={<Wand2 size={14} />} loading={reading} disabled={!resumeId} onClick={() => (draft.fullName.trim() ? setConfirmRead(true) : void readResume())}>
@@ -169,7 +186,7 @@ export function ProfilePage(): React.JSX.Element {
           <DocumentSection kind="resume" title="Resumes" hint="The primary resume is attached to applications." emptyText="No resume yet. Upload a PDF or Word file, then press Read my resume on the Profile tab to fill in your details." />
           <DocumentSection kind="cover_letter_sample" title="Sample cover letters" hint="Past letters you were happy with." emptyText="No sample letters. Add one so drafts match how you open and close." />
           <DocumentSection kind="writing_sample" title="Writing samples" hint="Emails, posts or notes in your own words." allowPaste emptyText="No writing samples. A few pages of your own writing is enough to learn your voice." />
-          <DocumentSection kind="portfolio" title="Portfolio links" allowLink emptyText="No portfolio links yet." />
+          <DocumentSection kind="portfolio" title="Portfolio links" hint="The first link also fills the portfolio field in your profile when that field is empty." allowLink emptyText="No portfolio links yet." onChange={() => void pullPortfolio()} />
           <DocumentSection kind="other" title="Other documents" emptyText="Anything else you want available, such as a certificate." />
         </>
       )}
@@ -181,7 +198,7 @@ export function ProfilePage(): React.JSX.Element {
       {confirmRead && (
         <ConfirmDialog
           title="Replace the profile fields?"
-          message="The fields on this page will be replaced with a draft read from your resume, including anything you have not saved. Nothing is saved until you press Save profile."
+          message={`The fields on this page will be replaced with a draft read from ${resumeName}, including anything you have not saved. Nothing is saved until you press Save profile.`}
           confirmLabel="Read my resume"
           onClose={() => setConfirmRead(false)}
           onConfirm={readResume}

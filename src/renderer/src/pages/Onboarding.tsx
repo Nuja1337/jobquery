@@ -15,6 +15,8 @@ import { DocumentSection } from '@renderer/components/DocumentSection'
 import { ModelPicker } from '@renderer/components/ModelPicker'
 import { PresetDialog } from '@renderer/components/PresetDialog'
 import { ApplyingEditor, QuestionFormsEditor } from '@renderer/components/ApplicationFactsEditor'
+import { EmploymentTypeChips, WorkAndAvailabilityEditor } from '@renderer/components/WorkFactsEditor'
+import { fillFilterFromAnswers } from '@renderer/components/workFactsHelpers'
 import { STANCE_SLOTS, TEMPLATE_SLOTS } from '@renderer/components/answerSlots'
 import { ProfileEditor, cleanProfile } from '@renderer/components/ProfileEditor'
 import { AnswerSlots, useSlotDrafts } from '@renderer/components/SavedAnswerSlots'
@@ -23,10 +25,10 @@ import { VoiceCard } from '@renderer/components/VoiceCard'
 import { Companies, Searches } from './Sources'
 import { Badge, Button, Card, Checkbox, Chip, ErrorBlock, Field, Loading, Notice, NumberInput, Select, TagInput, Textarea } from '@renderer/components/ui'
 
-const STEPS = ['AI provider', 'Models', 'Resume', 'Your profile', 'Applying', 'Questions forms ask', 'Your stances', 'Answers in your words', 'Your writing', 'Job preferences', 'Sources', 'Finish'] as const
+const STEPS = ['AI provider', 'Models', 'Resume', 'Your profile', 'Applying', 'Questions forms ask', 'Work and availability', 'Your stances', 'Answers in your words', 'Your writing', 'Job preferences', 'Sources', 'Finish'] as const
 
 /** Steps with nothing required, so each has a Skip button. */
-const OPTIONAL: ReadonlyArray<(typeof STEPS)[number]> = ['Resume', 'Applying', 'Questions forms ask', 'Your stances', 'Answers in your words', 'Your writing', 'Sources']
+const OPTIONAL: ReadonlyArray<(typeof STEPS)[number]> = ['Resume', 'Applying', 'Questions forms ask', 'Work and availability', 'Your stances', 'Answers in your words', 'Your writing', 'Sources']
 
 const STAGES: Array<{ id: LlmStage; label: string; hint: string }> = [
   { id: 'triage', label: 'Scoring fit', hint: 'Runs on every job that passes the free filters. A cheap, fast model is enough.' },
@@ -54,6 +56,7 @@ export function Onboarding(): React.JSX.Element {
   const [reading, setReading] = useState(false)
   const [resumeId, setResumeId] = useState<string | null>(null)
   const [samples, setSamples] = useState({ writing: 0, letters: 0 })
+  const [filterFilled, setFilterFilled] = useState(false)
   const [presetByProvider, setPresetByProvider] = useState<Record<string, ProviderPreset | undefined>>({})
 
   const slots = useSlotDrafts([...STANCE_SLOTS, ...TEMPLATE_SLOTS])
@@ -94,6 +97,17 @@ export function Onboarding(): React.JSX.Element {
     if (current === 'Questions forms ask') setProfile((p) => (p.application.heardAbout.trim() ? p : { ...p, application: { ...p.application, heardAbout: 'Job board' } }))
   }, [current])
 
+  // The job filter starts from the answers while it is still at its default. After that the two are separate.
+  useEffect(() => {
+    if (current !== 'Job preferences' || !prefs) return
+    const filled = fillFilterFromAnswers(prefs, profile.application)
+    if (filled === prefs) return
+    setPrefs(filled)
+    setFilterFilled(true)
+    // Runs when the step opens, with the answers as they are then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, prefs === null])
+
   async function guard(fn: () => Promise<void>): Promise<boolean> {
     setBusy(true)
     try {
@@ -111,7 +125,7 @@ export function Onboarding(): React.JSX.Element {
     if (current === 'Models') {
       if (!(await guard(async () => void (await updateSettings({ routing })))))
         return
-    } else if (current === 'Your profile' || current === 'Applying' || current === 'Questions forms ask' || current === 'Your writing') {
+    } else if (current === 'Your profile' || current === 'Applying' || current === 'Questions forms ask' || current === 'Work and availability' || current === 'Your writing') {
       if (!(await guard(async () => void (await api.saveProfile(cleanProfile(profile)))))) return
     } else if (current === 'Your stances' || current === 'Answers in your words') {
       if (!(await guard(slots.save))) return
@@ -298,6 +312,14 @@ export function Onboarding(): React.JSX.Element {
               </>
             )}
 
+            {current === 'Work and availability' && (
+              <>
+                <p className="text-sm text-muted">Forms ask about hours, shifts, your current job and checks. Answer what you can. Not answered makes jobpls ask you on the form.</p>
+                <WorkAndAvailabilityEditor facts={profile.application} onChange={(application) => setProfile({ ...profile, application })} defaultCurrency={settings?.preferences.salaryCurrency} />
+                <Notice tone="info">The Job preferences step has a filter for work style and employment type. It starts from your answers here and stays separate afterwards.</Notice>
+              </>
+            )}
+
             {current === 'Your stances' && (
               <>
                 <p className="text-sm text-muted">Two kinds of question are always yours to answer. Write your answer in your own words and jobpls reuses it word for word. It never writes these for you.</p>
@@ -330,7 +352,7 @@ export function Onboarding(): React.JSX.Element {
               </>
             )}
 
-            {current === 'Job preferences' && prefs && <PreferencesStep prefs={prefs} onChange={setPrefs} />}
+            {current === 'Job preferences' && prefs && <PreferencesStep prefs={prefs} onChange={setPrefs} filled={filterFilled} />}
 
             {current === 'Sources' && (
               <>
@@ -391,10 +413,11 @@ export function Onboarding(): React.JSX.Element {
   )
 }
 
-function PreferencesStep({ prefs, onChange }: { prefs: JobPreferences; onChange: (p: JobPreferences) => void }): React.JSX.Element {
+function PreferencesStep({ prefs, onChange, filled }: { prefs: JobPreferences; onChange: (p: JobPreferences) => void; filled: boolean }): React.JSX.Element {
   const set = (patch: Partial<JobPreferences>): void => onChange({ ...prefs, ...patch })
   return (
     <Card className="space-y-4 p-4">
+      {filled && <Notice tone="info">Work style and employment type start from your answers. Change them here and your answers stay as they are.</Notice>}
       <Field label="Job titles you want" hint="Press Enter after each title.">
         <TagInput value={prefs.targetTitles} onChange={(v) => set({ targetTitles: v })} placeholder="Senior Frontend Engineer" />
       </Field>
@@ -406,6 +429,11 @@ function PreferencesStep({ prefs, onChange }: { prefs: JobPreferences; onChange:
         {REMOTE.map((r) => (
           <Checkbox key={r.id} label={r.label} checked={prefs.remote.includes(r.id)} onChange={(on) => set({ remote: on ? [...prefs.remote, r.id] : prefs.remote.filter((x) => x !== r.id) })} />
         ))}
+      </div>
+      <div>
+        <p className="mb-1.5 text-xs font-medium text-muted">Employment type</p>
+        <EmploymentTypeChips value={prefs.employmentTypes} onChange={(v) => set({ employmentTypes: v })} />
+        <p className="mt-1 text-xs text-faint">Select none to see every type.</p>
       </div>
       <div>
         <p className="mb-1.5 text-xs font-medium text-muted">Seniority</p>

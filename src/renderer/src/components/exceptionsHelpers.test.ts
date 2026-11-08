@@ -24,7 +24,9 @@ describe('inputKindFor', () => {
 
 describe('defaultSaveToBank', () => {
   it('is on for a topic and off for questions only the person may answer', () => {
-    expect(defaultSaveToBank({ topic: 'salary_expectation', userOnly: false })).toBe(true)
+    expect(defaultSaveToBank({ topic: 'notice_period', userOnly: false })).toBe(true)
+    // A saved amount carries no currency, so salary is not saved by default.
+    expect(defaultSaveToBank({ topic: 'salary_expectation', userOnly: false })).toBe(false)
     expect(defaultSaveToBank({ topic: null, userOnly: false })).toBe(false)
     expect(defaultSaveToBank({ topic: 'ai_use_disclosure', userOnly: true })).toBe(false)
   })

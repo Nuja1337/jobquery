@@ -2,7 +2,7 @@
 // None of this is real. Companies and people are made up.
 
 import { answerNeedsUser, isGuess } from '@shared/answers'
-import { DEFAULT_SETTINGS } from '@shared/defaults'
+import { DEFAULT_SETTINGS, EMPTY_APPLICATION_FACTS } from '@shared/defaults'
 import type {
   AnalyticsReport,
   AnswerBankEntry,
@@ -74,9 +74,11 @@ export function initialSettings(onboardingDone: boolean): Settings {
       minSalary: 90000,
       salaryCurrency: 'USD',
       excludedCompanies: ['Acme Staffing'],
-      maxPostingAgeDays: 30
+      maxPostingAgeDays: 30,
+      employmentTypes: ['full_time']
     }
     s.autopilot = { ...s.autopilot, enabled: true, intervalHours: 6, autoPrepare: true }
+    s.eeo = { ...s.eeo, veteran: 'not_protected', pronouns: 'they', religion: 'none', caring: 'no', socioeconomic: { ...s.eeo.socioeconomic, freeSchoolMeals: 'no', parentDegree: 'yes' } }
     s.writing = { ...s.writing, bannedPhrases: ['rockstar', 'wear many hats'], styleNotes: 'Dry humor is fine. No exclamation marks.' }
   }
   return s
@@ -89,12 +91,13 @@ export function initialSettings(onboardingDone: boolean): Settings {
 export function demoProfile(): Profile {
   return {
     application: {
+      ...EMPTY_APPLICATION_FACTS,
       address: { street: 'Oderberger Strasse 12', city: 'Berlin', region: 'Berlin', postalCode: '10435', country: 'Germany' },
       phoneCountryCode: '+49',
       authorization: [
-        { country: 'Germany', status: 'citizen', needsSponsorship: false, notes: 'EU citizen.' },
-        { country: 'Spain', status: 'citizen', needsSponsorship: false, notes: 'EU citizen.' },
-        { country: 'United States', status: 'none', needsSponsorship: true, notes: '' }
+        { country: 'Germany', status: 'citizen', needsSponsorship: false, notes: 'EU citizen.', visaType: '', expires: null, anyEmployer: null },
+        { country: 'Spain', status: 'citizen', needsSponsorship: false, notes: 'EU citizen.', visaType: '', expires: null, anyEmployer: null },
+        { country: 'United States', status: 'none', needsSponsorship: true, notes: '', visaType: '', expires: null, anyEmployer: null }
       ],
       salary: [
         { currency: 'EUR', min: 80000, target: 90000, period: 'year', answerStyle: 'range' },
@@ -111,9 +114,33 @@ export function demoProfile(): Profile {
       over18: true,
       references: 'Available on request.',
       gpa: '',
-      heardAbout: 'Job board'
+      heardAbout: 'Job board',
+      workArrangement: { remote: true, hybrid: true, onsite: false, maxOfficeDaysPerWeek: 2, commutableCities: ['Berlin'] },
+      employment: {
+        types: ['full_time'],
+        hoursPerWeek: 40,
+        currentlyEmployed: true,
+        desiredTitle: 'Senior Frontend Engineer',
+        currentPay: { stance: 'decline', amount: null, currency: 'EUR', period: 'year' }
+      },
+      schedule: { evenings: false, weekends: false, nights: false, onCall: false, overtime: true, timeZones: ['CET', 'GMT'] },
+      screening: { backgroundCheck: true, drugTest: true, creditCheck: false },
+      education: { highestCompleted: 'bachelor', currentlyEnrolled: false, expectedGraduation: null, fields: ['Computer Science'], relatedFields: ['Software Engineering'] },
+      experience: {
+        professionalSoftware: 8,
+        gamesIndustry: 0,
+        teamLead: 2,
+        peopleManagement: 0,
+        shippedTitles: null,
+        aaaTitles: null,
+        platforms: ['web']
+      },
+      citizenships: ['Germany', 'Spain'],
+      exportControlUsPerson: false,
+      clearanceEligible: null
     },
     fullName: 'Alex Rivera',
+    name: { first: 'Alex', middle: '', last: 'Rivera', preferred: '', pronunciation: '' },
     email: 'alex.rivera@example.com',
     phone: '+49 151 5550 0142',
     location: 'Berlin, Germany',

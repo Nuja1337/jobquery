@@ -150,6 +150,11 @@ export interface Api {
   openPath(path: string): Promise<void>
   /** Writes a JSON export of all data (minus API keys) and returns its path, or null if cancelled. */
   exportData(): Promise<string | null>
+  /**
+   * Writes a consistent copy of the database to a file the person picks, with stored API keys and job
+   * board credentials removed. Returns its path, or null if cancelled. It never writes to the live database.
+   */
+  exportDatabase(): Promise<string | null>
 
   // Settings
   getSettings(): Promise<Settings>

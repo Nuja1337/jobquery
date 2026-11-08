@@ -100,13 +100,13 @@ export const BANNED_PHRASES: PhraseRule[] = [
   p('thrilled to', 'high'),
   p('i am excited to apply', 'high'),
   p('i\'m excited to apply', 'high'),
-  p('excited about the opportunity', 'medium'),
-  p('excited by the opportunity', 'medium'),
+  p('excited about the opportunity', 'high'),
+  p('excited by the opportunity', 'high'),
   p('unique opportunity', 'medium'),
-  p('eager to contribute', 'medium'),
+  p('eager to contribute', 'high'),
   p('keen interest', 'medium'),
-  p('passionate about', 'medium', 'Say what you did instead of how you feel about it.'),
-  p('my passion for', 'medium'),
+  p('passionate about', 'high', 'Say what you did instead of how you feel about it.'),
+  p('my passion for', 'high', 'Say what you did instead of how you feel about it.'),
   p('proven track record', 'high', 'Give the number or result instead.'),
   p('results-driven', 'high'),
   p('detail-oriented', 'medium'),
@@ -116,8 +116,8 @@ export const BANNED_PHRASES: PhraseRule[] = [
   p('hit the ground running', 'medium'),
   p('wear many hats', 'medium'),
   p('think outside the box', 'high'),
-  p('i am confident that', 'medium'),
-  p('i\'m confident that', 'medium'),
+  p('i am confident that', 'high'),
+  p('i\'m confident that', 'high'),
   p('i believe i would be a great fit', 'high'),
   p('would be a great fit', 'medium'),
   p('perfect fit', 'medium'),
@@ -140,6 +140,79 @@ export const BANNED_PHRASES: PhraseRule[] = [
   p('i look forward to the opportunity to discuss', 'medium', 'I\'d be glad to talk more.'),
   p('thank you for considering my application', 'low'),
   p('thank you for your time and consideration', 'low'),
+
+  // Game-industry clichés. Recruiters at studios read these all day.
+  p('passion for games', 'high', 'Say what you built instead.'),
+  p('passion for gaming', 'high', 'Say what you built instead.'),
+  p('passion for game', 'high', 'Say what you built instead.'),
+  p('passion for video games', 'high', 'Say what you built instead.'),
+  p('love of games', 'medium'),
+  p('love for games', 'medium'),
+  p('love of gaming', 'medium'),
+  p('love for gaming', 'medium'),
+  p('lifelong gamer', 'high'),
+  p('avid gamer', 'high'),
+  p('gaming since', 'high', 'Say what you built instead of when you started playing.'),
+  p('playing games since', 'high', 'Say what you built instead of when you started playing.'),
+  p('since childhood', 'high'),
+  p('since i was a kid', 'high'),
+  p('since i was a child', 'high'),
+  p('since i was young', 'high'),
+  p('since a young age', 'high'),
+  p('from a young age', 'medium'),
+  p('push the boundaries', 'high', 'Name the thing you pushed and the result.'),
+  p('pushing the boundaries', 'high', 'Name the thing you pushed and the result.'),
+  p('push boundaries', 'high'),
+  p('push the envelope', 'high'),
+  p('immersive experience', 'high', 'Name the feature or system instead.'),
+  p('immersive experiences', 'high', 'Name the feature or system instead.'),
+  p('immersive', 'medium'),
+  p('player-first', 'high'),
+  p('player first', 'medium'),
+  p('player-centric', 'high'),
+  p('player-centered', 'medium'),
+  p('aaa-quality', 'high'),
+  p('aaa quality', 'high'),
+  p('level up', 'medium'),
+  p('level-up', 'medium'),
+  p('next level', 'medium'),
+  p('dream job', 'high'),
+  p('dream come true', 'high'),
+  p('bring your vision to life', 'high'),
+  p('bring worlds to life', 'high'),
+  p('bring games to life', 'high'),
+  p('bring ideas to life', 'medium'),
+  p('fellow gamers', 'medium'),
+  p('unforgettable', 'medium'),
+
+  // More machine tells.
+  p('in today\'s', 'medium'),
+  p('in the ever', 'medium'),
+  p('digital age', 'high'),
+  p('unique blend', 'high', 'Say what the two things are.'),
+  p('unique combination', 'medium'),
+  p('unique mix', 'medium'),
+  p('i\'d love the opportunity', 'high'),
+  p('i would love the opportunity', 'high'),
+  p('love the opportunity', 'high'),
+  p('i am delighted', 'high'),
+  p('i\'m delighted', 'high'),
+  p('i am eager', 'high'),
+  p('i\'m eager', 'high'),
+  p('align perfectly', 'high'),
+  p('aligned perfectly', 'high'),
+  p('aligning perfectly', 'high'),
+  p('dive into', 'medium'),
+  p('deep dive', 'medium'),
+  p('treasure trove', 'high'),
+  p('beacon', 'high'),
+  p('game-changing', 'high'),
+  p('revolutionize', 'medium'),
+  p('spearhead', 'medium', 'lead'),
+  p('strive', 'medium'),
+  p('passionate', 'medium'),
+  p('excited to join', 'high'),
+  p('excited to bring', 'high'),
 
   // Filler words.
   p('truly', 'medium'),
@@ -170,7 +243,8 @@ export const BANNED_SENTENCE_STARTS = ['additionally', 'furthermore', 'moreover'
 export const PATTERN_RULES: PatternRule[] = [
   {
     id: 'em-dash',
-    pattern: /\s?—\s?|\s--\s|\s–\s/g,
+    // Em and en dashes, a double hyphen, and a spaced hyphen used as a dash. A hyphen at the start of a line is a list marker.
+    pattern: /\s?—\s?|\s--\s|\s–\s|(?<=\S)[ \t]-[ \t](?=\S)/g,
     severity: 'high',
     message: 'Dashes used as pauses are a strong AI tell.',
     suggestion: 'Use a comma or a period, or split the sentence.'
@@ -247,7 +321,7 @@ export const PATTERN_RULES: PatternRule[] = [
   },
   {
     id: 'placeholder',
-    pattern: /\[(?:company|company name|your name|hiring manager|position|role|job title)[^\]]*\]|\{\{[^}]*\}\}|\bXYZ (?:Company|Corp)\b|lorem ipsum/gi,
+    pattern: /\[(?:company|company name|your name|hiring manager|position|role|job title)[^\]]*\]|\{\{[^}]*\}\}|\bXYZ (?:Company|Corp)\b|lorem ipsum|\bNEEDS[_ -]INPUT\b/gi,
     severity: 'high',
     message: 'A template placeholder was left in.',
     suggestion: 'Fill it in or remove it.'
@@ -260,6 +334,13 @@ export const PATTERN_RULES: PatternRule[] = [
     suggestion: 'Open with something you did or something specific about them.'
   },
   {
+    id: 'with-years-opener',
+    pattern: /(?:^|[.!?]\s+)With\s+(?:over\s+|more than\s+|nearly\s+|almost\s+|about\s+|close to\s+)?(?:\d+\+?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+years?\b/gm,
+    severity: 'high',
+    message: '"With N years of experience" is a stock opener.',
+    suggestion: 'Open with something you did or something specific about the job.'
+  },
+  {
     id: 'the-result',
     pattern: /\b(?:The result|The outcome|The best part|The kicker)\?/g,
     severity: 'high',
@@ -268,12 +349,44 @@ export const PATTERN_RULES: PatternRule[] = [
   }
 ]
 
-/** Replacement used when revisions run out and a dash is still there. */
+/**
+ * Replacement used when revisions run out and a dash is still there. A dash between two numbers becomes " to "
+ * ("2019 - 2021" becomes "2019 to 2021"). Any other dash becomes a comma. Line breaks stay, and so does a hyphen
+ * at the start of a line, which is a list marker.
+ */
 export function replaceDashes(text: string): string {
   return text
-    .replace(/\s*—\s*/g, ', ')
-    .replace(/\s--\s/g, ', ')
-    .replace(/\s–\s/g, ', ')
-    .replace(/,\s*,/g, ',')
-    .replace(/,\s*\./g, '.')
+    .replace(/(\d)[ \t]*[—–][ \t]*(\d)/g, '$1 to $2')
+    .replace(/(\d)[ \t]+(?:--|-)[ \t]+(\d)/g, '$1 to $2')
+    .replace(/^[ \t]*—[ \t]*/gm, '')
+    .replace(/[ \t]*—[ \t]*(?=\n|$)/g, ',')
+    .replace(/[ \t]*—[ \t]*/g, ', ')
+    .replace(/[ \t]--[ \t]/g, ', ')
+    .replace(/[ \t]–[ \t]/g, ', ')
+    .replace(/(?<=\S)[ \t]+-[ \t]+(?=\S)/g, ', ')
+    .replace(/,[ \t]*,/g, ',')
+    .replace(/,[ \t]*\./g, '.')
+}
+
+/**
+ * Banned words that have a plain technical meaning in a game or tools job. One is allowed when the posting or the
+ * profile uses it that way, for example a test harness or unlock progression. Fillers and template openers never are.
+ */
+const ALLOWABLE_TERMS: Array<{ term: string; found: RegExp }> = [
+  { term: 'harness', found: /\btest harness(?:es)?\b/i },
+  { term: 'unlock', found: /\bunlock(?:s|ed|ing|ables?)?\b/i },
+  { term: 'journey', found: /\b(?:player|user|customer) journey\b/i },
+  { term: 'immersive', found: /\bimmersive (?:sim|simulation|game|games|environment|environments|audio|worlds?)\b/i },
+  { term: 'level up', found: /\blevel up\b/i },
+  { term: 'level-up', found: /\blevel-up\b/i },
+  { term: 'robust', found: /\brobust (?:netcode|tooling|tools|systems?|pipelines?|testing|test)\b/i },
+  { term: 'powerful', found: /\bpowerful (?:tools?|editors?|engines?|scripting)\b/i },
+  { term: 'intuitive', found: /\bintuitive (?:tools?|controls?|interfaces?|editors?|ui|ux)\b/i }
+]
+
+/** The banned terms that the given texts (a posting, the profile) use in a plain technical sense. Lowercase. */
+export function allowedTermsFrom(...texts: Array<string | null | undefined>): string[] {
+  const all = texts.filter((t): t is string => !!t).join('\n')
+  if (!all.trim()) return []
+  return ALLOWABLE_TERMS.filter((a) => a.found.test(all)).map((a) => a.term)
 }

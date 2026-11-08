@@ -1,0 +1,12 @@
+Hi Scopely team,
+
+Four years of shipping games have taught me that most of the work is finding out why something breaks. My habit is to write clean, dependable code and to leave notes behind, so the next person does not have to repeat my search. Designers and producers tend to find me easy to work with, because I ask questions early and say plainly what I do not know yet.
+
+A rough prototype usually beats a long meeting. I would rather put something on screen on Tuesday and change it on Wednesday than argue about an idea for a week. That habit has saved my teams a lot of rework over the years, and it has made me a calmer engineer when a deadline gets close.
+
+Outside of work I read about how other people build things, and I keep a small notebook of mistakes I have made. Reading it before a new project keeps me honest. It also gives me something useful to share with newer colleagues, who often make the same ones.
+
+Your role looks like a good match for my background. Thank you for reading, and I would be glad to talk about how I could help the group grow.
+
+Thanks,
+Mara

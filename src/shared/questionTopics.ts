@@ -232,3 +232,74 @@ export function currencyInQuestion(question: string): string | null {
 export function countryInQuestion(question: string): string | null {
   return countryIn(question)
 }
+
+// ---------------------------------------------------------------------------
+// Kinds of work named in a years question
+// ---------------------------------------------------------------------------
+
+/**
+ * The kind of work a years question names. 'other' is a kind the facts hold no years for, such as
+ * shipping, a lead role or game development.
+ */
+export type WorkKind = 'software' | 'games_industry' | 'team_lead' | 'people_management' | 'shipping' | 'other'
+
+const KIND_GAMES = /\b(?:games?|gaming)\b/
+const KIND_GAMES_INDUSTRY = /\b(?:video ?)?(?:games?|gaming) industry\b/
+const KIND_SHIPPING = /\b(?:aaa|triple[- ]a|ship(?:ped|ping|s)?|releas(?:ed|ing)|publish(?:ed|ing)|launch(?:ed|ing))\b/
+const KIND_LEAD = /\b(?:lead|leads|leading|led|leader|leadership)\b/
+const KIND_PEOPLE = /\b(?:manag(?:e|es|ed|ing|ement|er|erial)|supervis\w*|direct reports?)\b/
+const KIND_SOFTWARE = /\b(?:software|engineering|programming|coding|development|developers?|engineers?)\b/
+const LEAD_A_TEAM = /\b(?:lead(?:ing|s)?|led)\b(?: (?:a|an|the))?(?: [a-z]+){0,2}? (?:teams?|groups?|squads?)\b|\bteam (?:lead|leader|leadership)\b/
+const MANAGE_PEOPLE = /\bmanag(?:e|es|ed|ing)\b(?: (?:a|an|the|other))?(?: [a-z]+){0,2}? (?:people|staff|teams?|reports|engineers|developers|programmers|employees)\b|\bdirect reports?\b|\bpeople manag\w*\b|\bline manag\w*\b/
+
+// Words that may surround a kind of work without adding another subject to the question.
+const KIND_COMMON = [
+  'how', 'many', 'much', 'long', 'years', 'year', 'yrs', 'of', 'total', 'overall', 'professional', 'professionally', 'commercial', 'commercially',
+  'relevant', 'work', 'working', 'full', 'time', 'experience', 'do', 'does', 'you', 'have', 'has', 'in', 'the', 'a', 'an', 'your', 'number', 'at',
+  'least', 'minimum', 'more', 'than', 'over', 'or', 'plus', 'are', 'is', 'to', 'as', 'with', 'hands', 'on', 'industry', 'prior', 'related'
+]
+const KIND_WORDS: Record<Exclude<WorkKind, 'other' | 'shipping'>, string[]> = {
+  software: ['software', 'engineering', 'programming', 'coding', 'development', 'developer', 'developers', 'engineer', 'engineers'],
+  games_industry: ['game', 'games', 'gaming', 'video'],
+  team_lead: ['lead', 'leads', 'leading', 'led', 'leader', 'leadership', 'team', 'teams', 'group', 'squad', 'small', 'engineering', 'software', 'development', 'engineers', 'developers', 'programmers'],
+  people_management: ['manage', 'manages', 'managed', 'managing', 'management', 'people', 'staff', 'team', 'teams', 'direct', 'report', 'reports', 'engineers', 'developers', 'programmers', 'employees']
+}
+
+/**
+ * The kind of work a years question names, or null when it names none. `subject` is the question
+ * without its number ("of experience leading a team"). `exact` is true when the question holds
+ * nothing else, so the years fact for that kind answers it. "Years of experience in a lead role" and
+ * "years of backend software engineering" name a kind too, with exact false.
+ */
+export function workKindIn(subject: string): { kind: WorkKind; exact: boolean } | null {
+  // A second number, such as a team size, is another condition the years fact does not answer.
+  const hasNumber = /\d/.test(subject)
+  const text = subject
+    .toLowerCase()
+    .replace(/\d+(?:\.\d+)?\s*\+?/g, ' ')
+    .replace(/\b(?:or|and) (?:more|longer|above|over|up)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const games = KIND_GAMES.test(text)
+  const shipping = KIND_SHIPPING.test(text)
+  const lead = KIND_LEAD.test(text)
+  const people = KIND_PEOPLE.test(text)
+  const software = KIND_SOFTWARE.test(text)
+  if (!games && !shipping && !lead && !people && !software) return null
+
+  let kind: WorkKind = 'other'
+  if (shipping) kind = 'shipping'
+  else if (lead || people) {
+    const leads = LEAD_A_TEAM.test(text)
+    const manages = MANAGE_PEOPLE.test(text)
+    if (!games && leads && !manages) kind = 'team_lead'
+    else if (!games && manages && !leads) kind = 'people_management'
+  } else if (games) {
+    if (KIND_GAMES_INDUSTRY.test(text) && !software) kind = 'games_industry'
+  } else kind = 'software'
+
+  if (kind === 'other' || kind === 'shipping') return { kind, exact: false }
+  const allowed = new Set([...KIND_COMMON, ...KIND_WORDS[kind]])
+  const leftover = text.split(/[^\p{L}\p{N}]+/u).filter(Boolean).filter((w) => !allowed.has(w))
+  return { kind, exact: leftover.length === 0 && !hasNumber }
+}

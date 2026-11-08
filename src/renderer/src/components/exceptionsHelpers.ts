@@ -51,9 +51,12 @@ export function inputKindFor(group: Pick<NeedsYouGroup, 'type' | 'options'>): In
   return 'text'
 }
 
-/** Saving to the answer bank is on for a question with a topic, and off for one only the person may answer. */
+/**
+ * Saving to the answer bank is on for a question with a topic, and off for one only the person may answer.
+ * Salary is off too. A saved amount has no currency unless the question names one, and the bank never fills a salary flag.
+ */
 export function defaultSaveToBank(group: Pick<NeedsYouGroup, 'topic' | 'userOnly'>): boolean {
-  return group.topic !== null && !group.userOnly
+  return group.topic !== null && group.topic !== 'salary_expectation' && !group.userOnly
 }
 
 /** The toast after answering a group. */

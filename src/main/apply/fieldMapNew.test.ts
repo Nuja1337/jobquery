@@ -234,7 +234,8 @@ describe('required privacy and truthfulness boxes', () => {
   it('does nothing when the setting is off, or the field is optional or has no Yes option', () => {
     expect(agreeAnswer(field(DISCORD, 'checkbox'), DEFAULT_SETTINGS)).toBeNull()
     expect(agreeAnswer(optional(field(DISCORD, 'checkbox')), on)).toBeNull()
-    expect(agreeAnswer(field(WORKABLE, 'select', ['I agree', 'I do not agree']), on)).toBeNull()
+    // An option that agrees is picked now. A list with no agreeing option gets nothing.
+    expect(agreeAnswer(field(WORKABLE, 'select', ['I do not agree', 'Decline']), on)).toBeNull()
     expect(agreeAnswer(field(WORKABLE, 'text'), on)).toBeNull()
   })
 

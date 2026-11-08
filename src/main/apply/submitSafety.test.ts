@@ -204,27 +204,40 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
     expect(clicks).toEqual([])
   })
 
-  it('never sends answers nobody could review, even ones taken from the profile', async () => {
-    const { result, clicks, submits } = await run(formHtml(), [])
-    expect(result.status).toBe('needs_attention')
-    expect(result.message).toMatch(/wasn't on the form you reviewed/)
-    expect(submits).toBe(0)
-    expect(clicks).toEqual([])
-  })
+  // A field the draft never had, answered from a saved answer, so nobody could have reviewed it.
+  const BANK_FIELD = '<label for="ref">Referred by *</label><input id="ref" name="referrer" required>'
+  const fromBank = { findSavedAnswer: (q: string) => (/referred/i.test(q) ? { id: 's1', answer: 'A friend', kind: 'fact' as const, topic: null } : null) }
+  const runBank = (draft: PreparedAnswer[], autopilot: Partial<AutopilotSettings> = {}, by: 'user' | 'autopilot' = 'autopilot', keepOpen = true) =>
+    run(formHtml(BANK_FIELD), draft, true, by, autopilot, undefined, keepOpen, fromBank)
+
+  it('never sends a saved answer nobody could review, but sends profile answers for fields the draft lacked', async () => {
+    const held = await runBank(DRAFT)
+    expect(held.result.status).toBe('needs_attention')
+    expect(held.result.message).toMatch(/"Referred by" wasn't on the form you reviewed/)
+    expect(held.submits).toBe(0)
+    expect(held.clicks).toEqual([])
+    // Owner decision 2: live-only fields answered from the profile no longer block auto-submit.
+    const profileOnly = await run(formHtml(), [])
+    expect(profileOnly.result.status).toBe('submitted')
+    expect(profileOnly.submits).toBe(1)
+  }, 40_000)
 
   it('marks the answers it writes on the live form, so a run that finds them saved still treats them as unreviewed', async () => {
-    const first = await run(formHtml(), [])
-    expect(first.result.answers.length).toBeGreaterThan(0)
-    expect(first.result.answers.every((a) => a.liveOnly === true)).toBe(true)
+    const first = await runBank(DRAFT)
+    const written = first.result.answers.find((a) => a.fieldKey === 'referrer')
+    expect(written).toMatchObject({ source: 'answer_bank', liveOnly: true })
+    // Answers from the profile are the owner's own facts, so they carry no flag.
+    expect(first.result.answers.find((a) => a.fieldKey === 'first_name')?.liveOnly).toBeUndefined()
     expect(first.clicks).toEqual([])
     // The application keeps them as the first run left them, as ipc.ts does.
-    const second = await run(formHtml(), first.result.answers)
+    const second = await run(formHtml(BANK_FIELD), [...DRAFT, written!])
     expect(second.result.status).toBe('needs_attention')
     expect(second.result.message).toMatch(/wasn't on the form you reviewed/)
     expect(second.clicks).toEqual([])
     expect(second.submits).toBe(0)
     // After a person saved the application, the same answers count as reviewed.
-    const third = await run(formHtml(), first.result.answers.map(({ liveOnly: _liveOnly, ...a }) => a))
+    const { liveOnly: _liveOnly, ...saved } = written!
+    const third = await run(formHtml(BANK_FIELD), [...DRAFT, saved])
     expect(third.result.status).toBe('submitted')
     expect(third.submits).toBe(1)
   }, 40_000)
@@ -259,7 +272,7 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
     })
 
     it('keeps the tab and the watcher when the user pressed Submit and a question is open', async () => {
-      const { result } = await run(formHtml(), [], true, 'user', {}, undefined, false)
+      const { result } = await runBank(DRAFT, {}, 'user', false)
       expect(result.status).toBe('needs_attention')
       expect(result.completion).not.toBeNull()
       expect(page.isClosed()).toBe(false)
@@ -310,7 +323,7 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
     })
 
     it('does not call a dry run ready when it met a problem', async () => {
-      const { result, clicks, submits } = await run(formHtml(), [], true, 'autopilot', { dryRun: true }, undefined, false)
+      const { result, clicks, submits } = await runBank(DRAFT, { dryRun: true }, 'autopilot', false)
       expect(result).toMatchObject({ ok: false, status: 'needs_attention', dryRun: true, completion: null })
       expect(result.message).toMatch(/^Dry run: filled and not sent. .*wasn't on the form you reviewed/)
       expect(clicks).toEqual([])
@@ -373,6 +386,155 @@ describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
       ).rejects.toThrow()
       expect(page.isClosed()).toBe(true)
     })
+  })
+
+  // The model answers nothing, so a field without a fact behind it stays open.
+  const BLANK_LLM = { json: async () => ({ value: { answers: [] }, costUsd: 0 }), text: () => Promise.reject(new Error('No AI call expected')) } as unknown as LlmService
+  const runBlank = (html: string, draft: PreparedAnswer[], extra: Partial<AnswerDeps> = {}, autopilot: Partial<AutopilotSettings> = {}, allowClick = true) =>
+    run(html, draft, allowClick, 'autopilot', autopilot, undefined, true, { llm: BLANK_LLM, ...extra })
+
+  describe('fields revealed by an earlier answer', () => {
+    const revealing = (reveal: string) =>
+      formHtml(`
+      <label for="hear">How did you hear about us?</label>
+      <select id="hear" name="hear"><option value="">Select</option><option>LinkedIn</option><option>Other</option></select>
+      <div id="more" style="display:none">${reveal}</div>
+      <script>
+        document.getElementById('hear').addEventListener('change', (e) => {
+          document.getElementById('more').style.display = e.target.value === 'Other' ? 'block' : 'none'
+        })
+      </script>`)
+    const hear = answer('hear', 'How did you hear about us?', 'Other', { type: 'select', options: ['LinkedIn', 'Other'] })
+    const SPECIFY = '<label for="so">Please specify *</label><input id="so" name="source_other" required>'
+
+    it('reads the form again and leaves the new field for the person when no fact answers it', async () => {
+      const { result, clicks, submits } = await runBlank(revealing(SPECIFY), [...DRAFT, hear])
+      expect(result.status).toBe('needs_attention')
+      expect(result.message).toMatch(/"Please specify" needs your answer/)
+      expect(clicks).toEqual([])
+      expect(submits).toBe(0)
+      expect(result.answers.some((a) => a.fieldKey === 'source_other')).toBe(true)
+    }, 40_000)
+
+    it('stops a run whose required field did not keep its value', async () => {
+      const extra =
+        '<label for="nick">Nickname *</label><input id="nick" name="nickname" required>' +
+        "<script>const n = document.getElementById('nick'); n.addEventListener('input', () => setTimeout(() => { n.value = '' }, 80))</script>"
+      const { result, clicks, submits } = await runBlank(formHtml(extra), [...DRAFT, answer('nickname', 'Nickname', 'Sam')])
+      expect(result.status).toBe('needs_attention')
+      expect(result.message).toMatch(/"Nickname" is required and still empty/)
+      expect(clicks).toEqual([])
+      expect(submits).toBe(0)
+    }, 40_000)
+
+    it('sends a revealed field that the profile answers', async () => {
+      const phone = '<label for="ph">Phone *</label><input id="ph" name="phone" type="tel" required>'
+      const profile = { ...PROFILE, phone: '555 0100' }
+      const { result, clicks, submits } = await runBlank(revealing(phone), [...DRAFT, hear], { profile })
+      expect(result.answers.find((a) => a.fieldKey === 'phone')).toMatchObject({ value: '555 0100', source: 'profile' })
+      expect(result.answers.find((a) => a.fieldKey === 'phone')?.liveOnly).toBeUndefined()
+      expect(result.status).toBe('submitted')
+      expect(clicks).toHaveLength(1)
+      expect(submits).toBe(1)
+    }, 40_000)
+
+    it('sends a revealed self-ID list that Settings answers, the way Greenhouse shows Race', async () => {
+      const race =
+        '<label for="race">Race *</label><select id="race" name="race" required><option value="">Select</option><option>Asian</option><option>White</option><option>Decline To Self Identify</option></select>'
+      const html = formHtml(`
+        <label for="hl">Are you Hispanic/Latino? *</label>
+        <select id="hl" name="hispanic" required><option value="">Select</option><option>Yes</option><option>No</option></select>
+        <div id="more" style="display:none">${race}</div>
+        <script>document.getElementById('hl').addEventListener('change', (e) => { document.getElementById('more').style.display = e.target.value === 'No' ? 'block' : 'none' })</script>`)
+      const hispanic = answer('hispanic', 'Are you Hispanic/Latino?', 'No', { type: 'select', options: ['Yes', 'No'], source: 'settings', rule: 'demographic' })
+      const { result, clicks, submits } = await runBlank(html, [...DRAFT, hispanic])
+      expect(result.answers.find((a) => a.fieldKey === 'race')).toMatchObject({ value: 'Decline To Self Identify', rule: 'demographic', source: 'settings' })
+      expect(result.status).toBe('submitted')
+      expect(clicks).toHaveLength(1)
+      expect(submits).toBe(1)
+    }, 40_000)
+
+    it('still holds back a revealed field that a saved answer filled', async () => {
+      const saved = { id: 's1', answer: 'A friend told me', kind: 'fact' as const, topic: null }
+      const findSavedAnswer = (q: string) => (/specify/i.test(q) ? saved : null)
+      const { result, clicks, submits } = await runBlank(revealing(SPECIFY), [...DRAFT, hear], { findSavedAnswer })
+      expect(await page.inputValue('#so')).toBe('A friend told me')
+      expect(result.answers.find((a) => a.fieldKey === 'source_other')).toMatchObject({ source: 'answer_bank', liveOnly: true })
+      expect(result.status).toBe('needs_attention')
+      expect(result.message).toMatch(/"Please specify" wasn't on the form you reviewed/)
+      expect(clicks).toEqual([])
+      expect(submits).toBe(0)
+    }, 40_000)
+
+    it('reports the same problem in a dry run', async () => {
+      const { result, clicks } = await runBlank(revealing(SPECIFY), [...DRAFT, hear], {}, { dryRun: true })
+      expect(result).toMatchObject({ ok: false, status: 'needs_attention', dryRun: true })
+      expect(result.message).toMatch(/"Please specify" needs your answer/)
+      expect(clicks).toEqual([])
+    }, 40_000)
+  })
+
+  describe('dropdown reads', () => {
+    const COMBO = `
+      <label for="ctry">Preferred office</label>
+      <input id="ctry" name="office" role="combobox" aria-autocomplete="list" aria-controls="offices">
+      <ul id="offices" role="listbox"><li role="option">Berlin</li><li role="option">Austin</li></ul>
+      <script>
+        window.__md = 0
+        document.addEventListener('mousedown', () => { window.__md++ }, true)
+      </script>`
+    const mousedowns = () => page.evaluate(() => (window as unknown as { __md?: number }).__md ?? 0)
+
+    it('opens a dropdown that has no answer when nothing is being typed in', async () => {
+      await runBlank(formHtml(COMBO), DRAFT, {}, {}, false)
+      expect(await mousedowns()).toBeGreaterThan(0)
+    }, 40_000)
+
+    it('leaves the dropdown closed while a text box has the focus', async () => {
+      const html = formHtml(COMBO).replace('</body>', "<script>document.getElementById('fn').focus()</script></body>")
+      const { result } = await runBlank(html, DRAFT, {}, {}, false)
+      expect(result.answers.some((a) => a.fieldKey === 'office')).toBe(true)
+      expect(await mousedowns()).toBe(0)
+    }, 40_000)
+
+    it('does not open a dropdown on a watcher pass', async () => {
+      const file = path.join(dir, 'watch.html')
+      fs.writeFileSync(file, formHtml())
+      page = await browser.newPage()
+      const llm = BLANK_LLM
+      const href = pathToFileURL(file).href
+      const job = { id: 'job1', company: 'Acme', title: 'Engineer', location: null, description: 'Build things.', fit: null, source: 'greenhouse', url: href, applyUrl: href, ats: 'unknown' } as unknown as Job
+      const app = { id: 'app1', jobId: 'job1', answers: DRAFT, formFields: [], coverLetter: null } as unknown as Application
+      const result = await runSubmission(
+        {
+          browser: { newVisiblePage: async () => page } as unknown as BrowserManager,
+          settings: { ...DEFAULT_SETTINGS, browser: { ...DEFAULT_SETTINGS.browser, keepOpen: true } },
+          answerDeps: { llm, settings: DEFAULT_SETTINGS, profile: PROFILE, samples: [], findSavedAnswer: () => null, markAnswerUsed: () => {}, resumePath: null },
+          renderCoverLetter: async () => '',
+          screenshotsDir: dir,
+          recordSubmitClick: () => false
+        },
+        job,
+        app,
+        'auto',
+        'user'
+      )
+      // The click was refused, so the run keeps watching. A new step then shows a dropdown.
+      expect(result.completion).not.toBeNull()
+      await page.evaluate((html) => {
+        const slot = document.createElement('div')
+        slot.innerHTML = html
+        document.getElementById('f')!.prepend(slot)
+        const w = window as unknown as { __md: number }
+        w.__md = 0
+        document.addEventListener('mousedown', () => { w.__md++ }, true)
+      }, '<label for="ctry">Preferred office</label><input id="ctry" name="office" role="combobox" aria-autocomplete="list" aria-controls="offices"><ul id="offices" role="listbox"><li role="option">Berlin</li></ul>')
+      // The watcher looks about every 15 seconds. Wait for it to write an answer for the new box.
+      const deadline = Date.now() + 30_000
+      while (Date.now() < deadline && !result.answers.some((a) => a.fieldKey === 'office')) await page.waitForTimeout(500)
+      expect(result.answers.some((a) => a.fieldKey === 'office')).toBe(true)
+      expect(await mousedowns()).toBe(0)
+    }, 60_000)
   })
 
   it('does not click an "Apply" button that submits a form while looking for the form', async () => {

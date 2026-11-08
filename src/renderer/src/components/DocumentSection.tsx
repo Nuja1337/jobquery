@@ -9,6 +9,8 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { Badge, Button, Card, CardHeader, ErrorBlock, Field, IconButton, Input, Loading, Modal, Textarea } from './ui'
 
 const EXTENSIONS = ['pdf', 'docx', 'txt', 'md']
+// A resume is attached to applications as it is, so it has to be a file a form accepts.
+const RESUME_EXTENSIONS = ['pdf', 'docx']
 
 interface Props {
   kind: DocumentKind
@@ -38,15 +40,24 @@ export function DocumentSection({ kind, title, hint, allowLink, allowPaste, empt
   const [viewing, setViewing] = useState<DocumentRecord | null>(null)
   const [deleting, setDeleting] = useState<DocumentRecord | null>(null)
   const [adding, setAdding] = useState<'link' | 'paste' | null>(null)
+  /** A resume that was just added and is not the primary one yet. */
+  const [offerPrimary, setOfferPrimary] = useState<DocumentRecord | null>(null)
 
   async function upload(): Promise<void> {
     setBusy(true)
     try {
-      const paths = await api.pickFiles({ title: `Choose ${title.toLowerCase()}`, extensions: EXTENSIONS, multiple: kind !== 'resume' })
-      for (const filePath of paths) await api.importDocument({ kind, filePath })
+      const paths = await api.pickFiles({ title: `Choose ${title.toLowerCase()}`, extensions: kind === 'resume' ? RESUME_EXTENSIONS : EXTENSIONS, multiple: kind !== 'resume' })
+      let added: DocumentRecord | null = null
+      try {
+        for (const filePath of paths) added = await api.importDocument({ kind, filePath })
+      } finally {
+        // Files added before a failure are kept, so the list shows them.
+        if (paths.length) docs.reload()
+      }
       if (paths.length) {
         toast.success(paths.length === 1 ? 'Added the file.' : `Added ${paths.length} files.`)
-        docs.reload()
+        // The first resume becomes primary on its own. Any later one stays secondary unless the person says otherwise.
+        if (kind === 'resume' && added && !added.isPrimary) setOfferPrimary(added)
       }
     } catch (e) {
       toast.error(e)
@@ -139,6 +150,24 @@ export function DocumentSection({ kind, title, hint, allowLink, allowPaste, empt
           onConfirm={async () => {
             try {
               await api.deleteDocument(deleting.id)
+              docs.reload()
+            } catch (e) {
+              toast.error(e)
+              throw e
+            }
+          }}
+        />
+      )}
+      {offerPrimary && (
+        <ConfirmDialog
+          title="Use as primary?"
+          message={`Use ${offerPrimary.name} as your primary resume? It is the one attached to applications. Applications that are not sent yet switch to it, and applications you already sent are not changed.`}
+          confirmLabel="Use as primary"
+          onClose={() => setOfferPrimary(null)}
+          onConfirm={async () => {
+            try {
+              await api.setPrimaryResume(offerPrimary.id)
+              toast.success('Primary resume changed.')
               docs.reload()
             } catch (e) {
               toast.error(e)

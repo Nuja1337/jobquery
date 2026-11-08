@@ -1,0 +1,12 @@
+Hi Riot Games team,
+
+On my roguelike Tidepool I tuned the drop curve from a spreadsheet and showed the odds in a debug panel, so that designers could see why a run felt rewarding by minute ten. I would bring the same habit to combat design, where a number on screen often settles an argument faster than a long discussion.
+
+The posting asks for fast prototypes and playtests, and for combat mechanics built in Unreal. I have worked in Unreal Engine and I like to put a rough version in front of players early. A first build is usually wrong in an interesting way, and the second one fixes it.
+
+On a small research team the work is hands-on, and I would expect to build and tune the combat systems myself. That suits me, because I learn the most when I write the script and then watch someone play it.
+
+I would like to talk about how your team tests a new combat idea, and what a good prototype looks like there.
+
+Thanks,
+Mara

@@ -70,6 +70,10 @@ export interface ReviewRow {
   screenshotPath: string | null
   submitMode: SubmitMode | null
   submitClickedAt: string | null
+  /** The currency the posting pays in, so salary questions group by currency. */
+  jobSalaryCurrency?: string | null
+  /** The job's location, read for its country when the posting names no currency. */
+  jobLocation?: string | null
 }
 
 /** Everything a caller may change. The preparer and the submitter use the fields beyond ApplicationPatch. */
@@ -174,6 +178,11 @@ export class ApplicationsRepo {
     return row ? toApplication(row) : null
   }
 
+  /** How many applications recorded this resume as the one they used or will use. */
+  countUsingResume(documentId: string): number {
+    return this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM applications WHERE resume_doc_id = :id', { id: documentId })?.n ?? 0
+  }
+
   list(query: ApplicationQuery): { items: ApplicationSummary[]; total: number } {
     const where: string[] = []
     const params: Record<string, string | number> = {}
@@ -263,13 +272,14 @@ export class ApplicationsRepo {
   /**
    * Applications waiting to be sent, best fit first. Jobs the user dismissed or that closed are left
    * out, and so is anything auto mode already clicked Submit on or that was opened for sending in assist mode.
+   * A job waiting for its one-time rescore is left out too, since its score is not final.
    */
   listReady(options: { skipDryRun?: boolean } = {}): ApplicationSummary[] {
     // With dry run on, a form autopilot already filled once is left alone, so the loop doesn't fill it again.
     const dryRun = options.skipDryRun ? 'AND a.dry_run_at IS NULL' : ''
     return this.db
       .all<ApplicationRow>(
-        `${SELECT_APP} WHERE a.status = 'ready' AND j.stage = 'ready' AND a.submit_clicked_at IS NULL AND a.submit_mode IS NULL ${dryRun} ORDER BY j.fit_score DESC, a.updated_at`
+        `${SELECT_APP} WHERE a.status = 'ready' AND j.stage = 'ready' AND j.rescore_pending = 0 AND a.submit_clicked_at IS NULL AND a.submit_mode IS NULL ${dryRun} ORDER BY j.fit_score DESC, a.updated_at`
       )
       .map(toSummary)
   }
@@ -294,8 +304,11 @@ export class ApplicationsRepo {
         screenshot_path: string | null
         submit_mode: SubmitMode | null
         submit_clicked_at: string | null
+        salary_currency: string | null
+        location: string | null
       }>(
-        `SELECT a.id, a.job_id, j.company, j.title, a.status, a.answers, a.error, a.screenshot_path, a.submit_mode, a.submit_clicked_at
+        `SELECT a.id, a.job_id, j.company, j.title, a.status, a.answers, a.error, a.screenshot_path, a.submit_mode, a.submit_clicked_at,
+                j.salary_currency, j.location
          FROM applications a JOIN jobs j ON j.id = a.job_id
          WHERE a.status IN (${names.join(', ')}) ORDER BY j.fit_score DESC, a.created_at, a.id`,
         params
@@ -310,7 +323,9 @@ export class ApplicationsRepo {
         error: r.error,
         screenshotPath: r.screenshot_path,
         submitMode: r.submit_mode,
-        submitClickedAt: r.submit_clicked_at
+        submitClickedAt: r.submit_clicked_at,
+        jobSalaryCurrency: r.salary_currency,
+        jobLocation: r.location
       }))
   }
 
@@ -325,12 +340,19 @@ export class ApplicationsRepo {
       .map((r) => ({ id: r.id, company: r.company, title: r.title, submittedAt: r.submitted_at, screenshotPath: r.screenshot_path }))
   }
 
-  /** Applications submitted since the given ISO time, counting Submit clicks that saw no confirmation. */
+  /**
+   * Applications submitted since the given ISO time, counting Submit clicks that saw no confirmation.
+   * Two indexed range counts instead of one OR. The second count skips rows the first one counted,
+   * so an application with both times is counted once.
+   */
   countSubmittedSince(sinceIso: string): number {
-    return (
-      this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM applications WHERE submitted_at >= :since OR submit_clicked_at >= :since', { since: sinceIso })
-        ?.n ?? 0
-    )
+    const sent = this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM applications WHERE submitted_at >= :since', { since: sinceIso })?.n ?? 0
+    const clickedOnly =
+      this.db.get<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM applications WHERE submit_clicked_at >= :since AND (submitted_at IS NULL OR submitted_at < :since)',
+        { since: sinceIso }
+      )?.n ?? 0
+    return sent + clickedOnly
   }
 
   countByStatus(): Record<string, number> {

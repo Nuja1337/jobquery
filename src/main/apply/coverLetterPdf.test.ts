@@ -4,7 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, EMPTY_PROFILE } from '@shared/defaults'
 import type { BrowserManager } from './browser'
-import { renderCoverLetterPdf } from './coverLetterPdf'
+import { clean, coverLetterFileName, renderCoverLetterPdf } from './coverLetterPdf'
 
 describe('renderCoverLetterPdf', () => {
   it('gives each application its own file, even for the same company', async () => {
@@ -28,5 +28,20 @@ describe('renderCoverLetterPdf', () => {
     expect(path.basename(one)).toBe(path.basename(two))
     expect(path.dirname(one)).toBe(path.join(outDir, 'app-one'))
     fs.rmSync(outDir, { recursive: true, force: true })
+  })
+})
+
+describe('clean', () => {
+  it('keeps letters of any language and drops what a file name cannot hold', () => {
+    expect(clean('José Müller')).toBe('José Müller')
+    expect(clean('Zoë <O\'Neil>: A/B?')).toBe("Zoë O'Neil A B")
+    expect(clean('山田 太郎')).toBe('山田 太郎')
+    expect(clean(' ..Acme, Inc.. ')).toBe('Acme, Inc')
+  })
+
+  it('names the letter from the cleaned parts', () => {
+    const profile = { ...EMPTY_PROFILE, fullName: 'José Müller' }
+    expect(coverLetterFileName(profile, 'Acme/Games: EU')).toBe('José Müller - Cover Letter - Acme Games EU.pdf')
+    expect(coverLetterFileName({ ...profile, fullName: '' }, '')).toBe('Cover Letter - Cover Letter - Company.pdf')
   })
 })

@@ -1,10 +1,13 @@
 import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser, type Page } from 'playwright-core'
 import type { FormField, PreparedAnswer } from '@shared/types'
 import { botCheckShown, hasVisibleCaptcha, readForm } from './browser'
 import type { ExtractedField } from './extractScript'
-import { chooseSuggestion, fillForm, readComboboxOptions, stripDialCode } from './fill'
+import { acceptsFile, chooseSuggestion, fillForm, readComboboxOptions, resumeFileName, stripDialCode, type FillFiles } from './fill'
 import { applyUrlFor, chooseEmployerLink, greenhouseIds, looksLikeApplication } from './prepare'
 
 function findBrowser(): string | undefined {
@@ -37,6 +40,8 @@ function answerFor(field: ExtractedField, value: string): PreparedAnswer {
 }
 
 const NO_FILES = { resume: null, coverLetter: null }
+
+const fixture = (name: string) => fs.readFileSync(fileURLToPath(new URL(`./__fixtures__/forms/${name}`, import.meta.url)), 'utf8')
 
 // Shaped like Greenhouse's react-select dropdowns: a visible combobox input, plus a hidden
 // required helper input next to it that has no id or name.
@@ -256,6 +261,317 @@ describe.skipIf(!executablePath)('reading and filling live-style forms (headless
     await page.close()
   })
 
+  describe('Ashby yes/no questions', () => {
+    const pressed = (page: Page) => page.$$eval('button[data-option]', (bs) => bs.map((b) => b.getAttribute('aria-pressed')))
+
+    it('reads each question as a required-aware Yes/No radio, without the hidden checkbox', async () => {
+      const page = await load(fixture('ashby-yesno.html'))
+      const { fields } = await readForm(page, { clickApply: false })
+      expect(fields.map((f) => ({ label: f.label, type: f.type, required: f.required, options: f.options }))).toEqual([
+        { label: 'Do you have at least 2 years of mobile engineering experience?', type: 'radio', required: true, options: ['Yes', 'No'] },
+        { label: 'Will you now or in the future require visa sponsorship?', type: 'radio', required: true, options: ['Yes', 'No'] },
+        { label: 'Were you referred by a current employee?', type: 'radio', required: false, options: ['Yes', 'No'] }
+      ])
+      expect(fields.every((f) => f.optionIds.length === 2 && !f.hasValue)).toBe(true)
+      await page.close()
+    })
+
+    it('presses Yes and No and confirms aria-pressed', async () => {
+      const page = await load(fixture('ashby-yesno.html'))
+      const { frame, fields } = await readForm(page, { clickApply: false })
+      const failures = await fillForm(
+        page,
+        frame,
+        [
+          { field: fields[0], answer: answerFor(fields[0], 'Yes') },
+          { field: fields[1], answer: answerFor(fields[1], 'No') },
+          { field: fields[2], answer: answerFor(fields[2], 'false') }
+        ],
+        NO_FILES
+      )
+      expect(failures).toEqual([])
+      expect(await pressed(page)).toEqual(['true', 'false', 'false', 'true', 'false', 'true'])
+      // A second pass leaves a pressed button alone.
+      expect(await fillForm(page, frame, [{ field: fields[0], answer: answerFor(fields[0], 'Yes') }], NO_FILES)).toEqual([])
+      expect((await pressed(page))[0]).toBe('true')
+      await page.close()
+    }, 20_000)
+
+    it('fails when the button does not stay pressed', async () => {
+      const page = await load(fixture('ashby-yesno.html'))
+      const { frame, fields } = await readForm(page, { clickApply: false })
+      // Replacing the buttons with copies drops the page's click handlers.
+      await page.evaluate(() => document.querySelectorAll('button[data-option]').forEach((b) => b.replaceWith(b.cloneNode(true))))
+      const failures = await fillForm(page, frame, [{ field: fields[0], answer: answerFor(fields[0], 'Yes') }], NO_FILES)
+      expect(failures).toHaveLength(1)
+      expect(failures[0].label).toContain('mobile engineering')
+      await page.close()
+    }, 20_000)
+  })
+
+  describe('Lever application form', () => {
+    it('reads the location box as a combobox and skips the hidden survey groups', async () => {
+      const page = await load(fixture('lever-location.html'))
+      const { fields } = await readForm(page, { clickApply: false })
+      expect(fields.find((f) => f.label === 'Current location')).toMatchObject({ type: 'combobox', required: true })
+      // Seven radio groups sit in sections that display:none hides. None is a question.
+      expect(await page.$$eval('.hidden input[type="radio"]', (els) => new Set(els.map((e) => (e as HTMLInputElement).name)).size)).toBe(7)
+      expect(fields.filter((f) => f.type === 'radio' || f.type === 'checkboxes')).toEqual([])
+      expect(fields.map((f) => f.label)).toEqual([
+        'Full name', 'Email', 'Phone', 'Current location', 'Resume/CV', 'GitHub URL', 'What is your location?', 'Keep my details for future roles'
+      ])
+      await page.close()
+    })
+
+    it('keeps the picked location and fills the hidden selected location', async () => {
+      const page = await load(fixture('lever-location.html'))
+      const { frame, fields } = await readForm(page, { clickApply: false })
+      await readComboboxOptions(frame, fields)
+      const location = fields.find((f) => f.label === 'Current location')!
+      const failures = await fillForm(page, frame, [{ field: location, answer: answerFor(location, 'Seattle, WA, USA') }], NO_FILES)
+      expect(failures).toEqual([])
+      expect(await page.inputValue('#location-input')).toBe('Seattle, WA, USA')
+      expect(await page.inputValue('#selected-location')).toContain('Seattle, WA, USA')
+      await page.close()
+    }, 20_000)
+
+    it('picks by city when the full address finds nothing', async () => {
+      const page = await load(fixture('lever-location.html'))
+      const { frame, fields } = await readForm(page, { clickApply: false })
+      const location = fields.find((f) => f.label === 'Current location')!
+      const failures = await fillForm(page, frame, [{ field: location, answer: answerFor(location, 'Seattle, Washington, United States') }], NO_FILES)
+      expect(failures).toEqual([])
+      expect(await page.inputValue('#location-input')).toBe('Seattle, WA, USA')
+      await page.close()
+    }, 20_000)
+
+    it('fails when the location box clears itself because nothing was picked', async () => {
+      const page = await load(fixture('lever-location.html'))
+      const { frame, fields } = await readForm(page, { clickApply: false })
+      const location = fields.find((f) => f.label === 'Current location')!
+      const failures = await fillForm(page, frame, [{ field: location, answer: answerFor(location, 'Nowhere, ZZ') }], NO_FILES)
+      expect(failures).toHaveLength(1)
+      expect(failures[0]).toEqual({ label: 'Current location', reason: 'The box cleared "Nowhere, ZZ" when it lost focus' })
+      expect(await page.inputValue('#selected-location')).toBe('')
+      await page.close()
+    }, 20_000)
+  })
+
+  describe('reading every field back after filling', () => {
+    const run = async (page: Page, field: ExtractedField, value: string, files: FillFiles = NO_FILES) =>
+      fillForm(page, page.mainFrame(), [{ field, answer: answerFor(field, value) }], files)
+
+    it('fails a value that maxlength cut, and one the page wiped or changed', async () => {
+      const page = await load(`<!doctype html><html><body><form>
+        <label for="a">Short answer</label><input id="a" name="a" maxlength="10">
+        <label for="b">Wiped</label><input id="b" name="b">
+        <label for="c">Changed</label><input id="c" name="c">
+        <label for="d">Phone</label><input id="d" name="d" type="tel">
+        <script>
+          document.getElementById('b').addEventListener('input', (e) => { e.target.value = '' });
+          document.getElementById('c').addEventListener('input', (e) => { e.target.value = 'something else' });
+          document.getElementById('d').addEventListener('input', (e) => {
+            const n = e.target.value.replace(/\\D/g, '');
+            e.target.value = n.length === 10 ? '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6) : n;
+          });
+        </script></form></body></html>`)
+      const { fields } = await readForm(page, { clickApply: false })
+      const by = (label: string) => fields.find((f) => f.label === label)!
+      expect(await run(page, by('Short answer'), 'x'.repeat(30))).toEqual([
+        { label: 'Short answer', reason: 'The box kept 10 of 30 characters (limit 10)' }
+      ])
+      expect(await run(page, by('Wiped'), 'hello')).toEqual([{ label: 'Wiped', reason: 'The box is empty after filling it' }])
+      expect(await run(page, by('Changed'), 'hello')).toEqual([{ label: 'Changed', reason: 'The box shows "something else" instead of "hello"' }])
+      expect(await run(page, by('Short answer'), 'fits fine')).toEqual([])
+      // A phone mask only changes the formatting.
+      expect(await run(page, by('Phone'), '5551234567')).toEqual([])
+      expect(await page.inputValue('#d')).toBe('(555) 123-4567')
+      await page.close()
+    }, 30_000)
+
+    it('fails a select that shows another label', async () => {
+      const page = await load(`<!doctype html><html><body><form>
+        <label for="s">State</label>
+        <select id="s"><option value="">Select</option><option>Texas</option><option>Utah</option></select>
+        <script>document.getElementById('s').addEventListener('change', (e) => { e.target.selectedIndex = 2 });</script>
+      </form></body></html>`)
+      const { fields } = await readForm(page, { clickApply: false })
+      expect(fields[0].options).toEqual(['Texas', 'Utah'])
+      expect(await run(page, fields[0], 'Texas')).toEqual([{ label: 'State', reason: 'The dropdown shows "Utah" instead of "Texas"' }])
+      expect(await run(page, fields[0], 'Utah')).toEqual([])
+      await page.close()
+    }, 20_000)
+
+    const REACT_SELECT = (onPick: string) => `<!doctype html><html><body><div class="select">
+      <label id="l">Country</label>
+      <div class="control"><div class="single-value" id="shown"></div>
+        <div class="input-wrap"><input id="c" role="combobox" aria-labelledby="l" aria-autocomplete="list" aria-controls="list"></div></div>
+      <ul id="list" role="listbox"><li role="option">Canada</li><li role="option">United States</li></ul>
+      <div aria-live="polite" id="live"></div>
+      <script>
+        document.querySelectorAll('#list li').forEach((li) => li.addEventListener('click', () => { ${onPick} }));
+      </script></div></body></html>`
+
+    it('reads the choice a react-select style control displays, and fails when it shows nothing', async () => {
+      const shows = await load(REACT_SELECT(`document.getElementById('shown').textContent = li.textContent; document.getElementById('c').value = ''`))
+      const a = (await readForm(shows, { clickApply: false })).fields[0]
+      expect(await run(shows, a, 'United States')).toEqual([])
+      expect(await shows.textContent('#shown')).toBe('United States')
+      await shows.close()
+
+      const blank = await load(REACT_SELECT(`document.getElementById('c').value = ''`))
+      const b = (await readForm(blank, { clickApply: false })).fields[0]
+      expect(await run(blank, b, 'United States')).toEqual([{ label: 'Country', reason: 'The dropdown shows nothing after choosing "United States"' }])
+      await blank.close()
+
+      const wrong = await load(REACT_SELECT(`document.getElementById('shown').textContent = 'Canada'; document.getElementById('c').value = ''`))
+      const c = (await readForm(wrong, { clickApply: false })).fields[0]
+      expect(await run(wrong, c, 'United States')).toEqual([{ label: 'Country', reason: 'The dropdown shows "Canada" instead of "United States"' }])
+      await wrong.close()
+    }, 40_000)
+
+    it('keeps a long free-text answer in a dropdown that has no suggestions', async () => {
+      const page = await load(`<!doctype html><html><body><label id="l">Current employer</label>
+        <input id="e" role="combobox" aria-labelledby="l" aria-autocomplete="list"></body></html>`)
+      const { fields } = await readForm(page, { clickApply: false })
+      const long = 'The International Association of Machinists and Aerospace Workers'
+      expect(await run(page, fields[0], long)).toEqual([])
+      expect(await page.inputValue('#e')).toBe(long)
+      await page.close()
+    }, 20_000)
+
+    it('fails an Ashby yes/no group that ends up with both buttons pressed', async () => {
+      const page = await load(fixture('ashby-yesno.html'))
+      const { fields } = await readForm(page, { clickApply: false })
+      await page.evaluate(() => {
+        const b = document.querySelector('button[data-option]') as HTMLButtonElement
+        b.addEventListener('click', () => b.parentElement!.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'true')))
+      })
+      const failures = await run(page, fields[0], 'Yes')
+      expect(failures).toHaveLength(1)
+      expect(failures[0].reason).toBe('The group shows "No" chosen instead of "Yes"')
+      await page.close()
+    }, 20_000)
+
+    describe('uploads', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-upload-'))
+      const stored = path.join(dir, 'resume-8f3a.pdf')
+      const odt = path.join(dir, 'resume-8f3a.odt')
+      fs.writeFileSync(stored, '%PDF-1.4 test')
+      fs.writeFileSync(odt, 'odt test')
+      afterAll(() => fs.rmSync(dir, { recursive: true, force: true }))
+      const names = (page: Page) => page.$eval('#cv', (el) => Array.from((el as HTMLInputElement).files ?? []).map((f) => f.name))
+      const form = (accept: string, script = '') => `<!doctype html><html><body><form>
+        <label for="cv">Resume *</label><input id="cv" type="file" required ${accept ? `accept="${accept}"` : ''}>
+        <script>${script}</script></form></body></html>`
+
+      it('uploads the resume under a clean name and keeps its type', async () => {
+        const page = await load(form('.pdf,.doc'))
+        const { fields } = await readForm(page, { clickApply: false })
+        const files = { resume: stored, coverLetter: null, resumeName: resumeFileName('Sam Rivera', stored) }
+        expect(await run(page, fields[0], '', files)).toEqual([])
+        expect(await names(page)).toEqual(['Sam Rivera - Resume.pdf'])
+        expect(await page.$eval('#cv', (el) => (el as HTMLInputElement).files![0].type)).toBe('application/pdf')
+        await page.close()
+      })
+
+      it('refuses a resume type the field does not take', async () => {
+        const page = await load(form('application/pdf'))
+        const { fields } = await readForm(page, { clickApply: false })
+        const files = { resume: odt, coverLetter: null, resumeName: resumeFileName('Sam Rivera', odt) }
+        const failures = await run(page, fields[0], '', files)
+        expect(failures).toEqual([{ label: 'Resume', reason: 'This upload takes application/pdf and "Sam Rivera - Resume.odt" is not one of those' }])
+        expect(await names(page)).toEqual([])
+        await page.close()
+      })
+
+      it('fails when the input ends up empty or holding another file', async () => {
+        const files = { resume: stored, coverLetter: null, resumeName: 'Sam Rivera - Resume.pdf' }
+        const empty = await load(form('', `document.getElementById('cv').addEventListener('change', (e) => { e.target.value = '' })`))
+        const e = (await readForm(empty, { clickApply: false })).fields[0]
+        expect(await run(empty, e, '', files)).toEqual([{ label: 'Resume', reason: 'The upload field is empty after attaching "Sam Rivera - Resume.pdf"' }])
+        await empty.close()
+
+        const other = await load(
+          form('', `document.getElementById('cv').addEventListener('change', (e) => { const dt = new DataTransfer(); dt.items.add(new File(['x'], 'other.pdf')); e.target.files = dt.files })`)
+        )
+        const o = (await readForm(other, { clickApply: false })).fields[0]
+        expect(await run(other, o, '', files)).toEqual([
+          { label: 'Resume', reason: 'The upload field holds "other.pdf" instead of "Sam Rivera - Resume.pdf"' }
+        ])
+        await other.close()
+      })
+    })
+
+    it('reads every option of a long dropdown', async () => {
+      const page = await load(`<!doctype html><html><body><label id="l">Country</label>
+        <input id="c" role="combobox" aria-labelledby="l" aria-autocomplete="list" aria-controls="list"><ul id="list" role="listbox" style="display:none"></ul>
+        <script>
+          const list = document.getElementById('list');
+          for (let i = 0; i < 250; i++) { const li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = 'Country ' + i; list.appendChild(li); }
+          document.getElementById('c').addEventListener('click', () => { list.style.display = 'block' });
+        </script></body></html>`)
+      const { frame, fields } = await readForm(page, { clickApply: false })
+      await readComboboxOptions(frame, fields)
+      expect(fields[0].options).toHaveLength(250)
+      await page.close()
+    }, 30_000)
+  })
+
+  describe('what the extractor reads', () => {
+    it('drops only the placeholder option of a select', async () => {
+      const page = await load(`<!doctype html><html><body><form>
+        <label for="a">Gender</label><select id="a"><option value="">Select...</option><option>Woman</option><option>Man</option><option>Choose not to disclose</option></select>
+        <label for="b">Start</label><select id="b"><option value="">Please select</option><option value="">No preference</option><option>Now</option></select>
+        <label for="c">Visa</label><select id="c"><option>Yes</option><option>No</option></select>
+      </form></body></html>`)
+      const { fields } = await readForm(page, { clickApply: false })
+      expect(fields.map((f) => f.options)).toEqual([['Woman', 'Man', 'Choose not to disclose'], ['No preference', 'Now'], ['Yes', 'No']])
+      await page.close()
+    })
+
+    it('takes a Greenhouse upload label and required flag from its group', async () => {
+      const page = await load(`<!doctype html><html><body><form>
+        <div role="group" aria-labelledby="r-label"><label id="r-label">Resume/CV<span>*</span></label>
+          <button type="button">Attach</button><input type="file" id="r" style="display:none"><label for="r">Attach</label></div>
+        <div role="group" aria-labelledby="c-label"><label id="c-label">Cover Letter</label>
+          <button type="button">Attach</button><input type="file" id="c" style="display:none"><label for="c">Attach</label></div>
+      </form></body></html>`)
+      const { fields } = await readForm(page, { clickApply: false })
+      expect(fields.map((f) => [f.label, f.required, f.fileHint])).toEqual([
+        ['Resume/CV', true, 'resume'],
+        ['Cover Letter', false, 'cover_letter']
+      ])
+      await page.close()
+    })
+
+    it('reads resume words in other languages and a lone upload as the resume', async () => {
+      const hint = async (labels: string[]) => {
+        const page = await load(`<!doctype html><html><body><form>${labels.map((l, i) => `<label for="f${i}">${l}</label><input id="f${i}" type="file">`).join('')}</form></body></html>`)
+        const { fields } = await readForm(page, { clickApply: false })
+        await page.close()
+        return fields.map((f) => f.fileHint)
+      }
+      expect(await hint(['Resume or cover letter', 'Portfolio'])).toEqual(['resume', 'other'])
+      expect(await hint(['Lebenslauf', 'Anschreiben cover letter'])).toEqual(['resume', 'cover_letter'])
+      expect(await hint(['Curriculum vitae', 'Attachment'])).toEqual(['resume', 'resume'])
+      expect(await hint(['Additional attachments', 'Resume'])).toEqual(['other', 'resume'])
+      expect(await hint(['Upload your documents'])).toEqual(['resume'])
+      expect(await hint(['Cover letter'])).toEqual(['cover_letter'])
+    })
+
+    it("skips Ashby's autofill pane", async () => {
+      const page = await load(`<!doctype html><html><body><form>
+        <div class="ashby-application-form-autofill-input-root"><label for="auto">Upload file</label><input id="auto" type="file"></div>
+        <label for="n">Name</label><input id="n" name="_systemfield_name">
+        <label for="r">Resume</label><input id="r" type="file">
+      </form></body></html>`)
+      const { fields } = await readForm(page, { clickApply: false })
+      expect(fields.map((f) => f.label)).toEqual(['Name', 'Resume'])
+      await page.close()
+    })
+  })
+
   it('does not take a DataDome challenge frame for the form', async () => {
     const page = await browser.newPage()
     await page.route('https://geo.captcha-delivery.com/**', (route) =>
@@ -314,6 +630,50 @@ describe('choosing a suggestion', () => {
   it('returns null when nothing fits', () => {
     expect(chooseSuggestion(['Male', 'Female'], 'Robot', false)).toBeNull()
     expect(chooseSuggestion(['Boston, Massachusetts, United States'], 'Austin, TX', true)).toBeNull()
+  })
+
+  it('never fills Athens, GA as Athens, Alabama', () => {
+    expect(chooseSuggestion(['Athens, Alabama, United States'], 'Athens, GA', true)).toBeNull()
+    expect(chooseSuggestion(['Athens, Alabama, United States', 'Athens, Georgia, United States'], 'Athens, GA', true)).toBe('Athens, Georgia, United States')
+    expect(chooseSuggestion(['Athens, Greece'], 'Athens, GA', true)).toBeNull()
+    expect(chooseSuggestion(['Athens, Alabama, United States'], 'Athens, Georgia, United States', true)).toBeNull()
+  })
+
+  it('accepts a longer city name in the wanted region', () => {
+    expect(chooseSuggestion(['Athens-Clarke County, Georgia, United States'], 'Athens, GA', true)).toBe('Athens-Clarke County, Georgia, United States')
+    // The same longer name in another region does not count, and neither does another city in the region.
+    expect(chooseSuggestion(['Athens-Clarke County, Georgia, United States'], 'Athens, AL', true)).toBeNull()
+    expect(chooseSuggestion(['Atlanta, Georgia, United States'], 'Athens, GA', true)).toBeNull()
+  })
+
+  it('needs the wanted country to match', () => {
+    expect(chooseSuggestion(['Paris, Texas, United States'], 'Paris, France', true)).toBeNull()
+    expect(chooseSuggestion(['Paris, Île-de-France, France'], 'Paris, France', true)).toBe('Paris, Île-de-France, France')
+    // A state in the suggestion already says the country.
+    expect(chooseSuggestion(['Seattle, Washington'], 'Seattle', true)).toBe('Seattle, Washington')
+  })
+})
+
+describe('resumeFileName and acceptsFile', () => {
+  it('names the resume after the person and keeps the real extension', () => {
+    expect(resumeFileName('Sam Rivera', 'C:/data/resumes/resume-8f3a.pdf')).toBe('Sam Rivera - Resume.pdf')
+    expect(resumeFileName('Sam Rivera', '/data/cv.final.DOCX')).toBe('Sam Rivera - Resume.DOCX')
+    expect(resumeFileName("Zoë O'Neil / Jr.", '/data/a.pdf')).toBe("Zoë O'Neil Jr - Resume.pdf")
+  })
+
+  it('falls back to "Resume" with no name', () => {
+    expect(resumeFileName('', '/data/a.pdf')).toBe('Resume.pdf')
+    expect(resumeFileName('  ', '/data/a.docx')).toBe('Resume.docx')
+    expect(resumeFileName(null, '/data/a.pdf')).toBe('Resume.pdf')
+  })
+
+  it('reads an accept list', () => {
+    expect(acceptsFile('', 'a.odt', 'application/vnd.oasis.opendocument.text')).toBe(true)
+    expect(acceptsFile('.pdf, .DOC', 'a.pdf', 'application/pdf')).toBe(true)
+    expect(acceptsFile('.pdf,.doc', 'a.docx', 'application/x')).toBe(false)
+    expect(acceptsFile('application/pdf', 'a.pdf', 'application/pdf')).toBe(true)
+    expect(acceptsFile('application/*', 'a.docx', 'application/x')).toBe(true)
+    expect(acceptsFile('image/*', 'a.pdf', 'application/pdf')).toBe(false)
   })
 })
 

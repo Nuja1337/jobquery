@@ -1,0 +1,12 @@
+Hi Bungie team,
+
+On my roguelike Tidepool I wrote the reward tables in Python and tuned the drop curve from a spreadsheet, so that a run feels rewarding by minute ten. I chose to show the loot odds in a debug panel, because designers argue less about a curve they can see.
+
+That is the work I would like to do as your Senior Investment Designer. The posting asks for rewards and commerce systems, scripting in Lua or Python, and tuning values for a satisfying progression curve on Marathon. I have written reward logic in both languages, and the part I like best is the tuning pass, where a small change to one value makes a whole chase feel different.
+
+Your posting also asks whether reward chases can excite players without feeling like chores. In Tidepool the answer came from pacing. Early drops were frequent and small, and the rare ones arrived on a schedule I could explain to a playtester.
+
+I would like to talk about how your team tunes pursuit and reward content for Marathon, and where scripting fits into that work.
+
+Thanks,
+Mara

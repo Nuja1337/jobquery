@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { FieldType, PreparedAnswer } from '@shared/types'
 import { ingestRaw } from '../pipeline/ingest'
 import { makeRaw, makeTestEnv } from '../testing'
-import { buildExceptions, canRetryLater, classifyReason, cleanLabel, groupCouldNotSend, groupNeedsYou } from './exceptions'
-import type { ReviewRow } from '../db/repos/applications'
+import { buildExceptions, canRetryLater, classifyReason, cleanLabel, groupCouldNotSend, groupKeyFor, groupNeedsYou, type NeedsYouRow } from './exceptions'
 
 const DAY = 86_400_000
 
@@ -24,7 +23,7 @@ function answer(label: string, patch: Partial<PreparedAnswer> = {}): PreparedAns
   }
 }
 
-function row(id: string, company: string, answers: PreparedAnswer[], patch: Partial<ReviewRow> = {}): ReviewRow {
+function row(id: string, company: string, answers: PreparedAnswer[], patch: Partial<NeedsYouRow> = {}): NeedsYouRow {
   return { id, jobId: `job-${id}`, company, title: 'Engineer', status: 'needs_attention', answers, error: null, screenshotPath: null, submitMode: null, submitClickedAt: null, ...patch }
 }
 
@@ -79,6 +78,67 @@ describe('groupNeedsYou', () => {
       ['USD', 2],
       ['GBP', 1]
     ])
+  })
+
+  describe('a salary question that names no currency', () => {
+    const jobRow = (id: string, company: string, job: { jobSalaryCurrency?: string | null; jobLocation?: string | null }, label = 'Expected salary') => row(id, company, [answer(label)], job)
+
+    it('groups by the posted currency of the job, so USD and GBP jobs never share an amount', () => {
+      const groups = groupNeedsYou([
+        jobRow('1', 'Acme', { jobSalaryCurrency: 'USD' }),
+        jobRow('2', 'Globex', { jobSalaryCurrency: 'GBP' }),
+        jobRow('3', 'Initech', { jobSalaryCurrency: 'usd' })
+      ])
+      expect(groups.map((g) => [g.label, g.scope, g.count])).toEqual([
+        ['Expected salary (USD)', 'USD', 2],
+        ['Expected salary (GBP)', 'GBP', 1]
+      ])
+      expect(new Set(groups.map((g) => g.key)).size).toBe(2)
+    })
+
+    it('falls back to the currency of the job country when the posting states none', () => {
+      const groups = groupNeedsYou([
+        jobRow('1', 'Acme', { jobSalaryCurrency: 'USD' }),
+        jobRow('2', 'Globex', { jobSalaryCurrency: null, jobLocation: 'Austin, TX' }),
+        jobRow('3', 'Initech', { jobSalaryCurrency: null, jobLocation: 'London, UK' })
+      ])
+      expect(groups.map((g) => [g.scope, g.count])).toEqual([
+        ['USD', 2],
+        ['GBP', 1]
+      ])
+    })
+
+    it('keeps a group with no known currency to its own job', () => {
+      const groups = groupNeedsYou([
+        jobRow('1', 'Acme', { jobLocation: 'Remote' }),
+        jobRow('2', 'Globex', { jobSalaryCurrency: null, jobLocation: null }),
+        row('3', 'Initech', [answer('Expected salary')])
+      ])
+      expect(groups).toHaveLength(3)
+      expect(groups.every((g) => g.count === 1 && g.scope === null && g.label === 'Expected salary')).toBe(true)
+    })
+
+    it('does not change a question that names its currency', () => {
+      const groups = groupNeedsYou([jobRow('1', 'Acme', { jobSalaryCurrency: 'GBP' }, 'Expected salary (USD)'), jobRow('2', 'Globex', { jobSalaryCurrency: 'EUR' }, 'Salary expectations in USD')])
+      expect(groups).toHaveLength(1)
+      expect(groups[0]).toMatchObject({ scope: 'USD', count: 2, label: expect.not.stringContaining('(GBP)') })
+    })
+
+    it('splits a salary choice field by currency too', () => {
+      const choice = { type: 'select' as FieldType, options: ['Under 100k', '100k and over'] }
+      const rows = [
+        row('1', 'Acme', [answer('Expected salary', choice)], { jobSalaryCurrency: 'USD' }),
+        row('2', 'Globex', [answer('Expected salary', choice)], { jobSalaryCurrency: 'GBP' })
+      ]
+      expect(groupNeedsYou(rows)).toHaveLength(2)
+    })
+
+    it('leaves other questions alone and gives the key the same value from the row and from the job', () => {
+      expect(groupKeyFor('Expected salary')).toMatchObject({ key: 'topic:salary_expectation:', scope: null })
+      expect(groupKeyFor('Favorite editor', undefined, { jobId: 'j1', salaryCurrency: 'USD' }).key).toBe(groupKeyFor('Favorite editor').key)
+      const fromRow = groupNeedsYou([jobRow('1', 'Acme', { jobSalaryCurrency: 'USD' })])[0].key
+      expect(groupKeyFor('Expected salary', { type: 'text' }, { jobId: 'job-1', salaryCurrency: 'USD' }).key).toBe(fromRow)
+    })
   })
 
   it('groups a question without a topic by its normalized label', () => {

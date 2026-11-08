@@ -10,6 +10,7 @@ import type {
   JobSummary,
   RawJob,
   RemoteType,
+  Seniority,
   SourceKind
 } from '@shared/types'
 import { isJobBoardUrl } from '../../apply/jobBoards'
@@ -33,6 +34,9 @@ interface JobRow {
   salary_max: number | null
   salary_currency: string | null
   employment_type: string | null
+  seniority: string
+  min_years: number | null
+  rescore_pending: number
   url: string
   apply_url: string | null
   ats: AtsKind
@@ -98,6 +102,8 @@ function toJob(row: JobRow): Job {
     atsJobId: row.ats_job_id,
     description: row.description,
     employmentType: row.employment_type,
+    seniority: parseJson<Seniority[]>(row.seniority, []),
+    minYears: row.min_years ?? null,
     fit: parseJson<FitAssessment | null>(row.fit_json, null),
     dismissReason: row.dismiss_reason,
     dismissTags: parseJson<string[]>(row.dismiss_tags, []),
@@ -186,6 +192,7 @@ export class JobsRepo {
            ats_job_id = CASE WHEN :atsJobId IS NOT NULL AND :ats != 'unknown' AND (ats = 'unknown' OR (ats = :ats AND ats_token IS :atsToken)) THEN :atsJobId ELSE ats_job_id END,
            ats_token = CASE WHEN ats = 'unknown' AND :ats != 'unknown' THEN :atsToken ELSE ats_token END,
            ats = CASE WHEN ats = 'unknown' THEN :ats ELSE ats END,
+           seniority = CASE WHEN :seniority = '[]' THEN seniority ELSE :seniority END, min_years = COALESCE(:minYears, min_years),
            description = CASE WHEN :description = '' THEN description ELSE :description END, posted_at = COALESCE(:postedAt, posted_at),
            content_hash = CASE WHEN :description = '' THEN content_hash ELSE :hash END, company_id = COALESCE(:companyId, company_id),
            last_seen_at = :at, updated_at = :at
@@ -204,10 +211,10 @@ export class JobsRepo {
     const id = newId()
     this.db.run(
       `INSERT INTO jobs (id, source, external_id, canonical_key, content_hash, company, company_norm, company_id, title,
-         location, remote, salary_min, salary_max, salary_currency, employment_type, url, apply_url, ats, ats_token, ats_job_id,
+         location, remote, salary_min, salary_max, salary_currency, employment_type, seniority, min_years, url, apply_url, ats, ats_token, ats_job_id,
          description, posted_at, discovered_at, last_seen_at, stage, updated_at)
        VALUES (:id, :source, :externalId, :key, :hash, :company, :companyNorm, :companyId, :title, :location, :remote,
-         :salaryMin, :salaryMax, :salaryCurrency, :employmentType, :url, :applyUrl, :ats, :atsToken, :atsJobId, :description,
+         :salaryMin, :salaryMax, :salaryCurrency, :employmentType, :seniority, :minYears, :url, :applyUrl, :ats, :atsToken, :atsJobId, :description,
          :postedAt, :at, :at, 'new', :at)`,
       {
         ...rawParams(raw),
@@ -292,6 +299,43 @@ export class JobsRepo {
     return this.db.all<JobRow>(`${SELECT_JOB} WHERE j.stage IN (${names.join(', ')}) ${failures} ORDER BY ${order} ${limit}`, params).map(toJob)
   }
 
+  /**
+   * Jobs marked for a one-time rescore (migration 11), best score first. Only shortlisted jobs and jobs with a
+   * ready application that was not sent. A mark on a job that has moved on, or whose application was sent
+   * or started, is ignored.
+   */
+  listRescorePending(limit: number): Job[] {
+    if (limit <= 0) return []
+    return this.db
+      .all<JobRow>(
+        `${SELECT_JOB} WHERE j.rescore_pending = 1 AND j.triage_failures < :maxFailures AND (
+           j.stage = 'shortlisted'
+           OR (j.stage = 'ready' AND a.status = 'ready' AND a.submit_clicked_at IS NULL AND a.submit_mode IS NULL AND a.submitted_at IS NULL)
+         ) ORDER BY j.fit_score DESC, j.discovered_at DESC LIMIT ${Math.floor(limit)}`,
+        { maxFailures: MAX_TRIAGE_FAILURES }
+      )
+      .map(toJob)
+  }
+
+  /** True while the job is marked for the one-time rescore. A scored job with the mark is sent to the model again. */
+  needsRescore(id: string): boolean {
+    return this.db.get<{ n: number }>('SELECT rescore_pending AS n FROM jobs WHERE id = :id', { id })?.n === 1
+  }
+
+  /**
+   * The jobs one score step should send to the model, at most `limit`: new jobs best pre-score first, plus jobs
+   * marked for rescoring. A quarter of the step is kept for the marked jobs, so they finish in time, and new jobs
+   * take every slot they leave free. The step's daily and per-run limits count both kinds.
+   */
+  listToScore(limit: number): Job[] {
+    if (limit <= 0) return []
+    const marked = this.listRescorePending(limit)
+    const reserved = Math.min(marked.length, Math.floor(limit / 4))
+    const room = limit - reserved
+    const fresh = room > 0 ? this.listByStage('new', { orderBy: 'prescore', limit: room, skipRepeatedTriageFailures: true }) : []
+    return [...fresh, ...marked.slice(0, limit - fresh.length)]
+  }
+
   /** Same posting stored under another job id. The oldest original comes first. */
   findByContentHash(hash: string, excludeId?: string): Job[] {
     return this.db
@@ -358,7 +402,7 @@ export class JobsRepo {
   saveFit(id: string, fit: FitAssessment, profileVersion: number, stage?: JobStage): void {
     this.db.run(
       `UPDATE jobs SET fit_score = :score, fit_bucket = :bucket, fit_summary = :summary, fit_json = :json,
-         scored_profile_version = :version,
+         scored_profile_version = :version, rescore_pending = 0,
          stage = CASE WHEN :stage IS NOT NULL AND stage IN (${sqlList(SCORE_MOVABLE_STAGES)}) THEN :stage ELSE stage END,
          updated_at = :at WHERE id = :id`,
       {
@@ -661,6 +705,8 @@ function rawParams(raw: RawJob) {
     salaryMax: raw.salaryMax,
     salaryCurrency: raw.salaryCurrency,
     employmentType: raw.employmentType,
+    seniority: JSON.stringify(raw.seniority ?? []),
+    minYears: raw.minYears ?? null,
     url: raw.url,
     applyUrl: raw.applyUrl,
     description: raw.description,

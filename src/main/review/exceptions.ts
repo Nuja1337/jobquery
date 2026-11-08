@@ -8,6 +8,7 @@ import { TRANSIENT_REASONS, classifyReason } from '@shared/reviewReasons'
 import type { ApplicationStatus, CouldNotSendGroup, ExceptionReason, FieldType, NeedsYouGroup, PreparedAnswer, ReviewExceptions, SubmitMode } from '@shared/types'
 import { mustAskUser } from '../apply/fieldMap'
 import type { ApplicationsRepo, ReviewRow } from '../db/repos/applications'
+import { currencyOf } from '../util/geo'
 import { normalizeQuestion } from '../util/text'
 
 export { TRANSIENT_REASONS, classifyReason }
@@ -32,23 +33,48 @@ export interface GroupKey {
   key: string
   topic: string | null
   scope: string | null
+  /** Set when the question names no currency and the group's currency comes from the job. */
+  jobCurrency?: string
+}
+
+/** What a group key needs to know about the job an answer belongs to. */
+export interface GroupJob {
+  jobId?: string
+  /** The currency the posting pays in. */
+  salaryCurrency?: string | null
+  /** The job's location, read for its country when the posting names no currency. */
+  location?: string | null
+}
+
+/** The currency of a job: the posted salary currency, else the currency of the country its location names. */
+export function jobCurrency(job: GroupJob | undefined): string | null {
+  const posted = job?.salaryCurrency?.trim().toUpperCase()
+  if (posted) return posted
+  return job?.location ? currencyOf(job.location) : null
 }
 
 /**
  * The group a question belongs to. A text question with a topic groups by topic and scope, so two
  * wordings of the salary question in USD meet and the same question in GBP stays apart. Any other
- * question groups by its label with the case, punctuation and required marker removed. That includes
+ * question groups by its label with the case, punctuation and required marker removed.
+ * A salary question that names no currency groups by the job's currency, so one typed amount never goes
+ * to jobs that pay in different currencies. With no known currency it stays with its own job. That includes
  * a yes/no or choice field and a question on a topic only the person may answer, because one topic
  * holds opposite questions ("Have you been convicted?" and "Do you consent to a background check?"),
  * and one answer for both would be wrong for one of them. A grouped question keeps its topic and scope
  * for saving the answer.
  */
-export function groupKeyFor(label: string, field?: { type: FieldType }): GroupKey {
+export function groupKeyFor(label: string, field?: { type: FieldType }, job?: GroupJob): GroupKey {
   const clean = cleanLabel(label)
   const match = topicFor(clean)
   const byLabel = !match || (field !== undefined && CHOICE_FIELD_TYPES.includes(field.type)) || USER_ONLY_TOPICS.includes(match.topic)
-  if (!byLabel) return { key: `topic:${match.topic}:${match.scope ?? ''}`, topic: match.topic, scope: match.scope }
-  return { key: `label:${normalizeQuestion(clean)}`, topic: match?.topic ?? null, scope: match?.scope ?? null }
+  const base: GroupKey = byLabel
+    ? { key: `label:${normalizeQuestion(clean)}`, topic: match?.topic ?? null, scope: match?.scope ?? null }
+    : { key: `topic:${match.topic}:${match.scope ?? ''}`, topic: match.topic, scope: match.scope }
+  if (match?.topic !== 'salary_expectation' || match.scope !== null || !job) return base
+  const currency = jobCurrency(job)
+  if (currency) return { ...base, key: `${base.key}|currency:${currency}`, scope: currency, jobCurrency: currency }
+  return job.jobId ? { ...base, key: `${base.key}|job:${job.jobId}` } : base
 }
 
 /** A wording as the group compares it: the label without its required marker, case and punctuation. */
@@ -83,8 +109,11 @@ function mostCommon(values: string[]): string {
   return best
 }
 
+/** A review row with the job facts that salary groups use. The repo fills them in from the job. */
+export type NeedsYouRow = ReviewRow & { jobSalaryCurrency?: string | null; jobLocation?: string | null }
+
 /** Groups every answer that still needs the person, in applications that are ready or need attention. */
-export function groupNeedsYou(rows: ReviewRow[]): NeedsYouGroup[] {
+export function groupNeedsYou(rows: NeedsYouRow[]): NeedsYouGroup[] {
   interface Bucket extends GroupKey {
     answers: Array<{ row: ReviewRow; answer: PreparedAnswer }>
   }
@@ -93,7 +122,7 @@ export function groupNeedsYou(rows: ReviewRow[]): NeedsYouGroup[] {
     if (row.status !== 'ready' && row.status !== 'needs_attention') continue
     for (const answer of row.answers) {
       if (!answerNeedsUser(answer)) continue
-      const g = groupKeyFor(answer.label, answer)
+      const g = groupKeyFor(answer.label, answer, { jobId: row.jobId, salaryCurrency: row.jobSalaryCurrency, location: row.jobLocation })
       const bucket = buckets.get(g.key) ?? { ...g, answers: [] }
       bucket.answers.push({ row, answer })
       buckets.set(g.key, bucket)
@@ -109,7 +138,9 @@ export function groupNeedsYou(rows: ReviewRow[]): NeedsYouGroup[] {
     const baseType: FieldType = types.size === 1 ? answers[0].type : 'text'
     // A choice field whose choices differ between forms can only take typed text here.
     const type: FieldType = !sameOptions && CHOICE_TYPES.includes(baseType) ? 'text' : baseType
-    const label = cleanLabel(mostCommon(answers.map((a) => cleanLabel(a.label))))
+    const baseLabel = cleanLabel(mostCommon(answers.map((a) => cleanLabel(a.label))))
+    // The currency came from the job, so the heading says it. Otherwise two groups would read the same.
+    const label = bucket.jobCurrency ? `${baseLabel} (${bucket.jobCurrency})` : baseLabel
     // Every distinct wording, so the person sees what the answer will be used for.
     const wordings = [...new Map(answers.map((a) => [wordingKey(a.label), cleanLabel(a.label)])).values()]
     groups.push({

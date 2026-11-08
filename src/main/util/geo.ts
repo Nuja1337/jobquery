@@ -19,7 +19,7 @@ const CA_PROVINCES: Record<string, string> = {
 }
 
 const COUNTRIES: Array<{ country: string; pattern: RegExp }> = [
-  { country: 'United States', pattern: /\b(united states|u\.s\.a?\.?|usa|us|america|nyc|san francisco|bay area|silicon valley|seattle|boston|chicago|los angeles|austin|denver|atlanta|miami|philadelphia|portland|san diego|san jose|washington,? d\.?c\.?)\b/i },
+  { country: 'United States', pattern: /\b(united states|u\.s\.a?\.?|usa|us|(?<!(?:north|south|latin|central)[\s-])america|nyc|san francisco|bay area|silicon valley|seattle|boston|chicago|los angeles|austin|denver|atlanta|miami|philadelphia|portland|san diego|san jose|washington,? d\.?c\.?)\b/i },
   { country: 'Canada', pattern: /\b(canada|toronto|vancouver|montreal|ottawa|calgary|edmonton|waterloo)\b/i },
   { country: 'United Kingdom', pattern: /\b(united kingdom|u\.?k\.?|great britain|britain|england|scotland|wales|northern ireland|london|manchester|edinburgh|bristol|cambridge,? uk|oxford)\b/i },
   { country: 'Ireland', pattern: /\b(ireland|dublin|cork)\b/i },
@@ -69,6 +69,19 @@ export function countryOf(location: string): string | null {
   return null
 }
 
+/**
+ * The places named in a location string. Job boards join several offices with ";", "|", "/" or "or",
+ * and some write "Austin, TX, New York, NY" with only the state codes to tell them apart.
+ */
+export function locationParts(location: string): string[] {
+  const parts = location
+    .split(/\s*(?:;|\||\n|\s\/\s|\s&\s|\sor\s)\s*/)
+    .flatMap((part) => part.split(/(?<=\b[A-Z]{2}),\s*(?=[A-Z])/))
+    .map((part) => part.trim())
+    .filter(Boolean)
+  return parts.length > 0 ? parts : [location]
+}
+
 /** True when both locations name the same country. */
 export function sameCountry(a: string, b: string): boolean {
   const ca = countryOf(a)
@@ -86,15 +99,26 @@ export function isCountryName(text: string): boolean {
   return COUNTRY_ALIASES.has(text.trim().toLowerCase())
 }
 
+const REGION_NAMES: Array<[string, string]> = [...Object.entries(US_STATES), ...Object.entries(CA_PROVINCES)].sort((a, b) => b[1].length - a[1].length)
+
 /** Two-letter US state or Canadian province code for a location, or null. */
 export function regionOf(location: string): string | null {
   const code = location.match(US_CODE)?.[1] ?? location.match(CA_CODE)?.[1]
   if (code) return code
-  const lower = location.toLowerCase()
-  for (const [c, name] of [...Object.entries(US_STATES), ...Object.entries(CA_PROVINCES)]) {
-    if (new RegExp(`\\b${name}\\b`).test(lower)) return c
+  const named = (text: string): string | null => {
+    // The longer name first, so "West Virginia" is not Virginia.
+    for (const [c, name] of REGION_NAMES) if (new RegExp(`\\b${name}\\b`).test(text)) return c
+    return null
   }
-  return null
+  // The part after the first comma names the region ("Kansas City, Missouri"). The city part can hold a
+  // state's name too ("Kansas City", "Washington, District of Columbia"), so it is read last.
+  const lower = location.toLowerCase()
+  const comma = lower.indexOf(',')
+  if (comma >= 0) {
+    const later = named(lower.slice(comma + 1))
+    if (later) return later
+  }
+  return named(lower)
 }
 
 /** ISO 4217 currency of each country, for the countries the job boards use most. */

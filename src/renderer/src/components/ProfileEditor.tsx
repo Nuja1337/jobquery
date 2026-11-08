@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from 'lucide-react'
 import type { Education, Profile, ProfileFact, Project, WorkExperience } from '@shared/types'
 import { cleanApplication } from './applicationFactsHelpers'
+import { cleanWorkFacts, nameParts } from './workFactsHelpers'
 import { Button, Card, Field, IconButton, Input, NumberInput, TagInput, Textarea, Toggle } from './ui'
 
 interface Props {
@@ -35,12 +36,15 @@ export function cleanProfile(p: Profile): Profile {
     experience: p.experience.map((e) => ({ ...e, highlights: lines(e.highlights) })),
     projects: p.projects.map((x) => ({ ...x, highlights: lines(x.highlights) })),
     facts: p.facts.filter((f) => f.question.trim() || f.answer.trim()),
-    application: cleanApplication(p.application)
+    name: Object.fromEntries(Object.entries(nameParts(p)).map(([k, v]) => [k, v.trim()])) as Profile['name'],
+    application: cleanWorkFacts(cleanApplication(p.application))
   }
 }
 
 export function ProfileEditor({ value: p, onChange }: Props): React.JSX.Element {
   const set = <K extends keyof Profile>(key: K, v: Profile[K]): void => onChange({ ...p, [key]: v })
+  const name = nameParts(p)
+  const setName = (patch: Partial<Profile['name']>): void => onChange({ ...p, name: { ...name, ...patch } })
   const setLink = (key: 'linkedin' | 'github' | 'portfolio' | 'website', v: string): void => onChange({ ...p, links: { ...p.links, [key]: v } })
 
   return (
@@ -58,6 +62,26 @@ export function ProfileEditor({ value: p, onChange }: Props): React.JSX.Element 
           </Field>
           <Field label="Location">
             <Input value={p.location} onChange={(e) => set('location', e.target.value)} placeholder="City, country" />
+          </Field>
+        </div>
+      </Block>
+
+      <Block title="Name" hint="Forms ask for the parts of your name. First and last come from your full name when it has two or more words, so check them.">
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="First name">
+            <Input value={name.first} onChange={(e) => setName({ first: e.target.value })} />
+          </Field>
+          <Field label="Middle name" hint="Leave empty if you have none.">
+            <Input value={name.middle} onChange={(e) => setName({ middle: e.target.value })} />
+          </Field>
+          <Field label="Last name">
+            <Input value={name.last} onChange={(e) => setName({ last: e.target.value })} />
+          </Field>
+          <Field label="Preferred name" hint="The name you go by, if it differs from your first name.">
+            <Input value={name.preferred} onChange={(e) => setName({ preferred: e.target.value })} />
+          </Field>
+          <Field label="Pronunciation" className="col-span-2" hint="How to say your name, for forms that ask.">
+            <Input value={name.pronunciation} onChange={(e) => setName({ pronunciation: e.target.value })} placeholder="ah-LEKS ri-VAIR-uh" />
           </Field>
         </div>
       </Block>

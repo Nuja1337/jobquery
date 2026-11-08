@@ -32,6 +32,34 @@ const EEO_LABELS: Record<string, string> = {
   disability_status: 'Disability status'
 }
 
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === '#') {
+      const code = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)
+      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m
+    }
+    return NAMED_ENTITIES[e.toLowerCase()] ?? m
+  })
+}
+
+/** The longest hint kept. A question's instruction is a sentence or two. */
+export const HINT_MAX_LENGTH = 300
+
+/** A question description from the API as one short plain line, or null when it holds no text. The API sends HTML, sometimes entity-escaped. */
+export function cleanHint(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let text = raw
+  // A description that arrives escaped decodes to markup, so strip once more after decoding.
+  for (let pass = 0; pass < 2; pass++) {
+    text = decodeEntities(text.replace(/<\s*\/?\s*(?:br|p|div|li|ul|ol|h\d)\b[^>]*>/gi, ' ').replace(/<[^>]*>/g, ''))
+  }
+  text = text.replace(/\s+/g, ' ').trim()
+  if (!text) return null
+  return text.length > HINT_MAX_LENGTH ? `${text.slice(0, HINT_MAX_LENGTH - 1).trimEnd()}…` : text
+}
+
 function convertQuestion(q: GhQuestion): FormField | null {
   const fileField = q.fields.find((f) => f.type === 'input_file')
   const field = fileField ?? q.fields.find((f) => f.type !== 'input_hidden')
@@ -62,7 +90,8 @@ function convertQuestion(q: GhQuestion): FormField | null {
     options: (field.values ?? []).map((v) => v.label.trim()),
     placeholder: null,
     maxLength: null,
-    fileHint: type === 'file' ? (/cover/i.test(field.name) ? 'cover_letter' : /resume|cv/i.test(field.name) ? 'resume' : 'other') : null
+    fileHint: type === 'file' ? (/cover/i.test(field.name) ? 'cover_letter' : /resume|cv/i.test(field.name) ? 'resume' : 'other') : null,
+    hint: cleanHint(q.description)
   }
 }
 

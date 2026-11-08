@@ -5,13 +5,13 @@ import type { Api, BoardAddCounts, BoardProbe, DeepPartial, PushChannel, PushEve
 import { answerNeedsUser } from '@shared/answers'
 import { COMPANY_SPECIFIC_TOPICS } from '@shared/questionTopics'
 import type { Application, ApplicationOutcome, AtsKind, CompanyOrigin, DocumentKind, Job, LoopStatus, PipelineProgress, Settings, SubmitResult, UpdateStatus, WorkerName } from '@shared/types'
-import { answerFields, type AnswerDeps } from './apply/answers'
+import { answerFields, companiesToCheck, type AnswerDeps } from './apply/answers'
 import { BrowserManager } from './apply/browser'
 import { renderCoverLetterPdf } from './apply/coverLetterPdf'
 import { isCoverLetterField } from './apply/fieldMap'
 import { isJobBoardUrl } from './apply/jobBoards'
 import { applyUrlFor, draftApplication, readFormForJob, type FormRead, type ResolvedApply } from './apply/prepare'
-import { statusAfterEdit } from './apply/readiness'
+import { heldLetterNote, letterHeld, letterInUse, statusAfterEdit, syncOptionalLetterUploads, type LetterCheck } from './apply/readiness'
 import { runSubmission } from './apply/submitRun'
 import { getAnalytics } from './analytics'
 import { type AppContext, createContext } from './context'
@@ -37,10 +37,12 @@ import { parseBoardList, probeBoard } from './sources/importBoards'
 import { prettifyToken } from './sources/detect'
 import { starterPack } from './sources/starterPack'
 import { Updater, type UpdaterOptions } from './updater'
+import { exportDatabaseCopy } from './db/exportDb'
+import { cleanLine, createFileLog, type FileLog } from './util/fileLog'
 import { pruneOldFiles } from './util/prune'
 import { runRetention } from './db/retention'
-import { lintText } from './writing/lint'
-import { writeCoverLetter } from './writing/generate'
+import { failureReason, HELD_LETTER_NOTE, lettersCheckPasses, lintText } from './writing/lint'
+import { coverLetterLintOptions, jobWritingContext, writeCoverLetter } from './writing/generate'
 
 export type Shutdown = () => Promise<void>
 
@@ -52,6 +54,7 @@ const SCREENSHOT_KEEP_DAYS = 60
 
 /** The services of the app that is running, so a crash handler outside this file can write to the activity log. */
 let active: AppContext | null = null
+let activeLog: FileLog | null = null
 
 /**
  * Writes an error nobody caught to the activity log, when the app is up. The caller decides what
@@ -60,6 +63,9 @@ let active: AppContext | null = null
 export function recordProcessError(what: string, err: unknown): void {
   const detail = err instanceof Error ? err.message : String(err)
   console.error(what, err)
+  // The first stack lines help with a crash. The log redacts keys and cuts long text.
+  const where = err instanceof Error && err.stack ? err.stack.split(/\r?\n/).slice(1, 4).join(' ') : ''
+  activeLog?.write('error', `${what} ${detail} ${where}`)
   try {
     // The mark lets the notifier tell a crash from an ordinary error.
     active?.events.add('error', `${what} ${detail}`.slice(0, 500), null, { process: true })
@@ -121,7 +127,19 @@ function workerName(value: unknown): WorkerName {
 
 /** Builds every service and returns the Api implementation. Separate from Electron so it can be tested. */
 export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedSender'>): Promise<{ api: Api; ctx: AppContext; shutdown: Shutdown; controls: BackgroundControls }> {
-  const ctx = await createContext({ dbFile: deps.paths.dbFile, paths: deps.paths, vault: deps.vault, emit: deps.emit })
+  // The file log gets every activity event: ids, counts and messages the activity log already shows.
+  // Event data, prompts, documents and keys are never passed to it.
+  const log = createFileLog(path.join(deps.paths.dataDir, 'logs'))
+  activeLog = log
+  const emit: IpcDeps['emit'] = (channel, payload) => {
+    if (channel === 'event:new') {
+      const event = payload as PushEvents['event:new']
+      log.write(event.type === 'error' || event.type === 'submit_failed' ? 'error' : 'info', `${event.type} job=${event.jobId ?? '-'} ${cleanLine(event.message)}`)
+    }
+    deps.emit(channel, payload)
+  }
+  const ctx = await createContext({ dbFile: deps.paths.dbFile, paths: deps.paths, vault: deps.vault, emit })
+  log.write('info', `jobpls ${deps.appVersion} started, database version ${ctx.db.schemaVersion}`)
   const browser = new BrowserManager(deps.paths.browserProfileDir)
   const pipeline = new Pipeline(ctx)
   const loop = new WorkLoop(ctx, pipeline)
@@ -195,6 +213,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     markAnswerUsed: (id) => ctx.answers.markUsed(id),
     // An application sent or clicked to this company before. The one being prepared was never sent, so it does not count.
     previouslyApplied: (company) => ctx.applications.lastSentAt(normalizeCompany(company)) !== null,
+    // Every company with an application that was not withdrawn, except names the profile itself uses (past employers,
+    // schools, skills, projects). A saved answer that names one of the rest is flagged.
+    otherCompanies: () =>
+      companiesToCheck(
+        ctx.db.all<{ company: string }>("SELECT DISTINCT j.company AS company FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.status != 'withdrawn'").map((r) => r.company),
+        ctx.profile.get().profile
+      ),
     resumePath: ctx.documents.primaryResume()?.filePath ?? null
   })
 
@@ -220,9 +245,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     if (inFlight.has(app.id) || app.status === 'submitting') throw new Error('This application is open in the browser. Finish it there first.')
   }
 
-  /** Points unsent applications at the current primary resume, so Review shows the file that gets uploaded. */
+  /**
+   * Points unsent applications at the current primary resume, so Review shows the file that gets uploaded,
+   * and records which resume document each one will use.
+   */
   function refreshResumeAnswers(): void {
-    const resume = ctx.documents.primaryResume()?.filePath ?? null
+    const primary = ctx.documents.primaryResume()
+    const resume = primary?.filePath ?? null
     const open = []
     for (let offset = 0; ; offset += 500) {
       const page = ctx.applications.list({ statuses: ['draft', 'ready', 'needs_attention', 'failed'], limit: 500, offset }).items
@@ -239,7 +268,10 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         touched = true
         return { ...a, value: resume ?? '', confidence: resume ? 1 : 0, needsUser: !resume && a.required, note: resume ? null : 'Upload a resume in Profile first.' }
       })
-      if (touched) changed(ctx.applications.update(app.id, { answers }))
+      const resumeDocId = primary?.id ?? null
+      // Through saveEdit, so a resume that appears or goes missing moves the status like any other edit.
+      if (touched) changed(saveEdit(app, { answers, resumeDocId }))
+      else if (app.resumeDocId !== resumeDocId) ctx.applications.update(app.id, { resumeDocId })
     }
   }
 
@@ -253,8 +285,19 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     return ctx.jobs.findByAtsJob(resolved.ats, resolved.atsToken, resolved.atsJobId, jobId).find((other) => !other.dupOf && !['closed', 'duplicate', 'dismissed'].includes(other.stage) && done(other)) ?? null
   }
 
+  /** Prepares in progress, by job. A second call for the same job waits for the first and gets its result. */
+  const preparing = new Map<string, Promise<Application>>()
+
   /** Drafts the application for a job: form, answers and cover letter. */
-  async function prepare(jobId: string): Promise<Application> {
+  function prepare(jobId: string): Promise<Application> {
+    const running = preparing.get(jobId)
+    if (running) return running
+    const started = prepareNow(jobId).finally(() => preparing.delete(jobId))
+    preparing.set(jobId, started)
+    return started
+  }
+
+  async function prepareNow(jobId: string): Promise<Application> {
     const j = job(jobId)
     const existing = ctx.applications.getByJob(jobId)
     if (existing?.status === 'submitted') throw new Error('This application was already submitted.')
@@ -302,6 +345,10 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       const notes: string[] = []
       if (draft.formSource === 'none') notes.push("The form couldn't be read ahead of time. It will be read and filled when you open it.")
       if (draft.coverLetterNeedsInput) notes.push(`Cover letter needs your input: ${draft.coverLetterNeedsInput}`)
+      // A letter the style check still holds back after its revisions keeps the application out of ready.
+      const letterCheck: LetterCheck = { lint: draft.coverLetterLint, minLintScore: ctx.settings.get().writing.minLintScore }
+      const letterIsHeld = Boolean(draft.coverLetter?.trim()) && letterHeld(letterCheck) && letterInUse(draft.fields, draft.answers)
+      if (letterIsHeld) notes.push(heldLetterNote(letterCheck))
       // An application opened in the browser may have been sent by hand, so it never goes back to ready.
       const wasOpened = Boolean(existing?.submitMode)
       if (wasOpened) notes.push('This application was opened in the browser before. Check that it was not already sent.')
@@ -310,11 +357,12 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       const stillDrafting = ctx.applications.get(app.id)?.status === 'draft'
       const updated = ctx.applications.update(app.id, {
         // A form that couldn't be read ahead of time has no reviewed answers, so autopilot must not open it.
-        status: stillDrafting ? (flagged || wasOpened || draft.formSource === 'none' ? 'needs_attention' : 'ready') : undefined,
+        status: stillDrafting ? (flagged || wasOpened || letterIsHeld || draft.formSource === 'none' ? 'needs_attention' : 'ready') : undefined,
         coverLetter: draft.coverLetter ?? undefined,
         coverLetterLint: draft.coverLetterLint,
         answers: draft.answers,
         formFields: draft.fields,
+        resumeDocId: ctx.documents.primaryResume()?.id ?? null,
         error: notes.length ? notes.join(' ') : null
       })
       ctx.events.add(
@@ -347,10 +395,39 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     }
   }
 
-  /** Saves an edit and moves the status between ready and needs_attention when the edit settled or reopened a flag. */
+  /**
+   * Saves an edit and moves the status between ready and needs_attention when the edit settled or reopened a flag.
+   * An edited letter is checked again, and a letter that fails the check keeps the application in needs_attention
+   * with a note that names the top issue. Only an edit that passes the check frees it.
+   */
   function saveEdit(app: Application, patch: Parameters<typeof ctx.applications.update>[1]): Application {
-    const next = patch.status === undefined ? statusAfterEdit(app, patch.answers ?? app.answers, patch.coverLetter ?? app.coverLetter) : null
-    return ctx.applications.update(app.id, next ? { ...patch, status: next, ...(next === 'ready' ? { error: null } : {}) } : patch)
+    const settings = ctx.settings.get()
+    const letterText = patch.coverLetter !== undefined ? patch.coverLetter : app.coverLetter
+    let lint = patch.coverLetterLint
+    if (lint === undefined && patch.coverLetter !== undefined) {
+      // An edited letter is checked like a written one: the terms its posting and the profile use in a plain sense are
+      // allowed, and it is held against the posting and the profile. Only an edit that is grounded and passes frees it.
+      const posting = ctx.jobs.get(app.jobId)
+      const writing = posting ? jobWritingContext(posting, ctx.profile.get().profile) : null
+      const options = writing ? coverLetterLintOptions({ settings }, null, writing.allowedTerms, { source: writing.grounding, kind: 'letter' }) : coverLetterLintOptions({ settings })
+      lint = patch.coverLetter.trim() ? lintText(patch.coverLetter, options) : null
+    }
+    const check: LetterCheck = { lint: lint !== undefined ? lint : app.coverLetterLint, minLintScore: settings.writing.minLintScore }
+    // A held letter is left off an optional upload, and put back once an edit makes it pass.
+    const answers = syncOptionalLetterUploads(app.formFields, patch.answers ?? app.answers, letterText, letterHeld(check))
+    const next = patch.status === undefined ? statusAfterEdit(app, answers, letterText, check) : null
+    const held = Boolean(letterText?.trim()) && letterHeld(check) && letterInUse(app.formFields, answers)
+    const out: Parameters<typeof ctx.applications.update>[1] = { ...patch, ...(lint !== undefined ? { coverLetterLint: lint } : {}) }
+    if (patch.answers !== undefined || answers !== app.answers) out.answers = answers
+    if (next) out.status = next
+    if (next === 'ready') {
+      out.error = null
+    } else if (held && (next === 'needs_attention' || (next === null && app.status === 'needs_attention' && app.submitMode === null && app.submitClickedAt === null && (!app.error || app.error.startsWith(HELD_LETTER_NOTE))))) {
+      out.error = heldLetterNote(check)
+    } else if (!held && app.error?.startsWith(HELD_LETTER_NOTE)) {
+      out.error = null
+    }
+    return ctx.applications.update(app.id, out)
   }
 
   /** Fills (and in auto mode submits) an application in the visible browser. */
@@ -383,7 +460,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
   async function submitNow(app: Application, mode: 'assist' | 'auto', by: 'user' | 'autopilot'): Promise<SubmitResult> {
     const j = job(app.jobId)
     const settings = ctx.settings.get()
-    ctx.applications.update(app.id, { status: 'submitting', submitMode: mode, lastAttemptBy: by, error: null })
+    ctx.applications.update(app.id, { status: 'submitting', submitMode: mode, lastAttemptBy: by, error: null, resumeDocId: ctx.documents.primaryResume()?.id ?? null })
     changed(app)
 
     let result
@@ -419,7 +496,8 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
           }
         },
         j,
-        app,
+        // A draft saved before a letter was held can still attach it to an optional upload. Leave it off.
+        { ...app, answers: syncOptionalLetterUploads(app.formFields, app.answers, app.coverLetter, letterHeld({ lint: app.coverLetterLint, minLintScore: settings.writing.minLintScore })) },
         mode,
         by
       )
@@ -597,6 +675,21 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       const err = await shell.openPath(p)
       if (err) throw new Error(err)
     },
+    async exportDatabase() {
+      const win = BrowserWindow.getFocusedWindow()
+      const defaultPath = path.join(deps.paths.exportsDir, `jobpls-backup-${new Date().toISOString().slice(0, 10)}.sqlite`)
+      const opts = { defaultPath, filters: [{ name: 'SQLite database', extensions: ['sqlite'] }] }
+      const res = win ? await dialog.showSaveDialog(win, opts) : { canceled: false, filePath: defaultPath }
+      if (res.canceled || !res.filePath) return null
+      try {
+        const written = exportDatabaseCopy(ctx.db, deps.paths.dbFile, res.filePath)
+        log.write('info', 'Database copy written.')
+        return written
+      } catch (err) {
+        log.write('error', `Database copy failed. ${(err as Error).message}`)
+        throw err
+      }
+    },
     async exportData() {
       const win = BrowserWindow.getFocusedWindow()
       const defaultPath = path.join(deps.paths.exportsDir, `jobpls-export-${new Date().toISOString().slice(0, 10)}.json`)
@@ -727,6 +820,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async importDocument(input) {
       let doc
+      // A resume is attached to applications as it is, so only formats an application form takes are allowed.
+      if (input.kind === 'resume') {
+        const ext = input.filePath ? path.extname(input.filePath).toLowerCase() : ''
+        if (!['.pdf', '.docx'].includes(ext)) {
+          throw new Error(`A resume has to be a PDF or Word (.docx) file, because it is attached to applications. ${input.filePath ? `This file ends in ${ext || 'nothing'}.` : 'Choose a file.'}`)
+        }
+      }
       if (input.filePath) {
         const { text, mime } = await extractTextFromFile(input.filePath)
         const copy = copyIntoAppData(input.filePath, deps.paths.documentsDir, newId().slice(0, 8))
@@ -749,6 +849,11 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       }
       if (doc.kind === 'resume' && !ctx.documents.primaryResume()) ctx.documents.setPrimary(doc.id)
       if (doc.kind === 'resume') refreshResumeAnswers()
+      if (doc.kind === 'portfolio' && doc.url) {
+        // The first portfolio link fills an empty profile field, so forms that ask for a portfolio get an answer.
+        const profile = ctx.profile.get().profile
+        if (!profile.links.portfolio.trim()) ctx.profile.save({ ...profile, links: { ...profile.links, portfolio: doc.url } })
+      }
       return ctx.documents.get(doc.id) ?? doc
     },
     async listDocuments(kind) {
@@ -760,8 +865,10 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     async deleteDocument(id) {
       const doc = ctx.documents.get(id)
       ctx.documents.delete(id)
-      if (doc?.filePath && insideDataDir(doc.filePath)) fs.rmSync(doc.filePath, { force: true })
       if (doc?.kind === 'resume') refreshResumeAnswers()
+      // A sent application recorded this resume. The record leaves the list, but the file stays so the application can still be traced to it.
+      const referenced = doc?.kind === 'resume' && ctx.applications.countUsingResume(id) > 0
+      if (doc?.filePath && insideDataDir(doc.filePath) && !referenced) fs.rmSync(doc.filePath, { force: true })
     },
     async setPrimaryResume(id) {
       ctx.documents.setPrimary(id)
@@ -928,14 +1035,30 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       assertEditable(app)
       const j = job(app.jobId)
       const deps2 = answerDeps()
-      const written = await writeCoverLetter(ctx.llm, { profile: deps2.profile, samples: deps2.samples, settings: deps2.settings }, j, { guidance, regenerate: true })
+      // A letter pasted into a text box with a character limit is written to fit the smallest one.
+      const limits = app.formFields.filter((f) => (f.type === 'textarea' || f.type === 'text') && isCoverLetterField(f) && f.maxLength != null).map((f) => f.maxLength as number)
+      const maxChars = limits.length ? Math.min(...limits) : null
+      const written = await writeCoverLetter(ctx.llm, { profile: deps2.profile, samples: deps2.samples, settings: deps2.settings }, j, { guidance, regenerate: true, maxChars })
       if (written.needsInput) throw new Error(`The cover letter needs your input: ${written.needsInput}`)
       // Read it again so edits made while the letter was being written are kept.
       const latest = application(applicationId)
       assertEditable(latest)
       // A cover letter pasted into a form field follows the new letter too.
-      const answers = latest.answers.map((a) => (isCoverLetterField({ key: a.fieldKey, label: a.label, type: a.type, required: a.required, options: [], placeholder: null, maxLength: null, fileHint: null }) && (a.type === 'textarea' || a.type === 'text') ? { ...a, value: written.text, needsUser: false } : a))
-      const updated = ctx.applications.update(app.id, { coverLetter: written.text, coverLetterLint: written.lint, answers })
+      const minLintScore = deps2.settings.writing.minLintScore
+      // A letter that is less grounded is held like one the style check rejects.
+      const passes = lettersCheckPasses(written.lint, minLintScore)
+      const answers = latest.answers.map((a) => {
+        if (!isCoverLetterField({ key: a.fieldKey, label: a.label, type: a.type, required: a.required, options: [], placeholder: null, maxLength: null, fileHint: null }) || (a.type !== 'textarea' && a.type !== 'text')) return a
+        // A letter that is too long for this box is not saved into it. The box is flagged, as when the application was drafted.
+        const max = latest.formFields.find((f) => f.key === a.fieldKey)?.maxLength ?? null
+        if (max !== null && written.text.length > max) {
+          const size = `The cover letter is ${written.text.length} characters and this box takes ${max}.`
+          return { ...a, value: '', needsUser: a.required, confidence: 0, lint: null, note: a.required ? `${size} Write a shorter one.` : `${size} This box is optional, so jobpls left it blank.` }
+        }
+        return { ...a, value: written.text, needsUser: false, confidence: passes ? 0.9 : 0.6, lint: written.lint, note: passes ? (a.note?.startsWith(HELD_LETTER_NOTE) ? null : a.note) : `${HELD_LETTER_NOTE} ${failureReason(written.lint, minLintScore)}` }
+      })
+      // Through saveEdit, so a new letter moves the status. A letter that fails the check holds the application back.
+      const updated = saveEdit(latest, { coverLetter: written.text, coverLetterLint: written.lint, answers })
       changed(updated)
       return updated
     },
@@ -975,15 +1098,18 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       ctx.db.transaction(() => {
         for (const id of new Set(group.applications.map((a) => a.id))) {
           const app = ctx.applications.get(id)
+          const appJob = app ? ctx.jobs.get(app.jobId) : null
           // A closed posting is not reopened by answering a question.
-          if (!app || inFlight.has(id) || (app.status !== 'ready' && app.status !== 'needs_attention') || ctx.jobs.get(app.jobId)?.stage === 'closed') {
+          if (!app || inFlight.has(id) || (app.status !== 'ready' && app.status !== 'needs_attention') || appJob?.stage === 'closed') {
             skipped += 1
             continue
           }
           let changedAny = false
           const answers = app.answers.map((a) => {
             // Only answers that still need the person, and only where the form accepts the value.
-            if (!answerNeedsUser(a) || groupKeyFor(a.label, a).key !== key || !seen.has(wordingKey(a.label)) || !acceptsValue(a, value)) return a
+            // The job is passed so a salary question with no currency in its label keys by the job's currency, as the group did.
+            const groupJob = { jobId: app.jobId, salaryCurrency: appJob?.salaryCurrency ?? null, location: appJob?.location ?? null }
+            if (!answerNeedsUser(a) || groupKeyFor(a.label, a, groupJob).key !== key || !seen.has(wordingKey(a.label)) || !acceptsValue(a, value)) return a
             changedAny = true
             const { liveOnly: _liveOnly, ...rest } = a
             return { ...rest, value, source: 'user' as const, confidence: 1, needsUser: false, note: null }
@@ -1017,6 +1143,8 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
           const app = ctx.applications.get(id)
           // An answer that still needs the person keeps the application out of the queue.
           if (!app || inFlight.has(id) || app.answers.some(answerNeedsUser)) continue
+          // A held cover letter is released only by an edit that passes the style check.
+          if (Boolean(app.coverLetter?.trim()) && letterHeld({ lint: app.coverLetterLint, minLintScore: ctx.settings.get().writing.minLintScore }) && letterInUse(app.formFields, app.answers)) continue
           // A closed posting stays closed, and a form a person had open may have been sent by hand.
           if (ctx.jobs.get(app.jobId)?.stage === 'closed' || !canRetryLater({ ...app, lastAttemptBy: ctx.applications.lastAttemptBy(id) })) continue
           touched.push(ctx.applications.update(id, { status: 'ready', submitMode: null, submitFailures: 0, error: null }))

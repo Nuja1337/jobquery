@@ -18,6 +18,18 @@ const needs = (note: string): MappedAnswer => ({ value: '', source: 'profile', c
 /** A conditional follow-up ("If yes, ...") whose question was answered No. It stays blank and does not block the form. */
 const notNeeded = (note: string): MappedAnswer => ({ value: '', source: 'profile', confidence: 0.85, needsUser: false, note })
 
+const NOT_APPLICABLE_OPTION = /^\s*(?:n\/?a|not applicable|none|does not apply)\s*\.?\s*$/i
+
+/** The follow-up of a No. A list that offers "n/a" gets it, since a required list cannot stay blank. Otherwise it stays blank. */
+function followUpSkipped(field: FormField, note: string): MappedAnswer {
+  if (isChoice(field) && field.options.length > 0) {
+    const na = field.options.find((o) => NOT_APPLICABLE_OPTION.test(o))
+    const picked = na ? answer(field, na, 'profile', 0.85, note) : null
+    if (picked) return picked
+  }
+  return notNeeded(note)
+}
+
 const FOLLOW_UP = /^\W*(?:if|when) (?:yes|so|you answered yes|you have|you did|you were|applicable)\b/
 
 const hasYesNo = (field: FormField): boolean => field.type === 'checkbox' || (isChoice(field) && field.options.length > 0 && pickOption(field.options, 'Yes') !== null && pickOption(field.options, 'No') !== null)
@@ -39,7 +51,7 @@ const SELF_EMPLOYER = /\b(?:for|at|by|with|of)\s+(?:our|this|the)\s+(?:organi[sz
 const PROPER = "[A-Z][\\w&.'-]*"
 const NAME = `${PROPER}(?: (?:${PROPER}|of)){0,3}`
 const PARENT_COMPANY = new RegExp(`\\ban? (${PROPER}(?: ${PROPER}){0,2}) (?:company|companies|group|studio|studios|subsidiary|subsidiaries|affiliate|affiliates|entity|entities)\\b`, 'g')
-const AFTER_PREPOSITION = new RegExp(`\\b(?:for|at|by)\\s+(?:the\\s+)?(${NAME})`, 'g')
+const AFTER_PREPOSITION = new RegExp(`\\b(?:for|at|by|services to)\\s+(?:the\\s+)?(${NAME})`, 'g')
 const EMPLOYMENT_VERB = /\b(?:worked|employed|employee|contractor|consultant)\b/i
 const NOT_A_NAME = new Set(['I', 'We', 'Our', 'The', 'A', 'An', 'If', 'Yes', 'No', 'Have', 'Do', 'Did', 'Has', 'You', 'Your', 'This', 'That', 'Any'])
 
@@ -99,7 +111,7 @@ export function employmentHistoryAnswer(field: FormField, ctx: MapContext): Mapp
   const employers = employersNamed(field.label)
   if (employers.length === 0 || employers.some((name) => extendsCompany(name, ctx.company))) return null
   const history = workedFor(employers, ctx)
-  if (followUp) return history === 'no' ? notNeeded('Left blank because your work history shows no job there.') : null
+  if (followUp) return history === 'no' ? followUpSkipped(field, 'Left blank because your work history shows no job there.') : null
   if (history === 'unsure') return needs('A past employer has a similar name. Answer this yourself.')
   return yesNo(field, history === 'yes')
 }
@@ -129,7 +141,8 @@ export function previouslyAppliedAnswer(field: FormField, company: string, previ
   const followUp = FOLLOW_UP.test(plain)
   const sentence = plain.split('?')[0]
   const match = followUp ? null : APPLIED_QUESTION.exec(sentence)
-  if (followUp ? !/\bappl\w+\b/.test(plain) : !match) return null
+  // "If applicable, ..." is not about applying. Only "apply", "applied" and "application" make a follow-up one.
+  if (followUp ? !/\bappl(?:y|ies|ied|ying|ication|ications)\b/.test(plain) : !match) return null
 
   if (match) {
     const after = sentence.slice(match.index + match[0].length)
@@ -145,7 +158,7 @@ export function previouslyAppliedAnswer(field: FormField, company: string, previ
   } catch {
     return needs("jobpls can't tell whether you applied here before. Answer it yourself.")
   }
-  if (followUp) return before ? null : notNeeded('Left blank because you have not applied here before.')
+  if (followUp) return before ? null : followUpSkipped(field, 'Left blank because you have not applied here before.')
   if (before && THIS_ROLE.test(sentence)) return needs('You applied here before. Check whether it was this role and answer yourself.')
   return yesNo(field, before)
 }
@@ -188,7 +201,7 @@ function aboutCompany(plain: string, company: string): boolean {
 export function relativesAnswer(field: FormField, plain: string, facts: ApplicationFacts, company: string, mode: Mode): MappedAnswer | null {
   if (field.type === 'file' || !RELATIVE.test(plain) || !WORKS_AT.test(plain)) return null
   const said = facts.relativesAtEmployers === false
-  if (FOLLOW_UP.test(plain)) return said && mode === 'known' ? notNeeded('Left blank because no family or friends work there.') : null
+  if (FOLLOW_UP.test(plain)) return said && mode === 'known' ? followUpSkipped(field, 'Left blank because no family or friends work there.') : null
   if (!aboutCompany(plain, company) || /\b(?:industry|field|tech|sector|similar role)\b/.test(plain)) return null
   if (said) return mode === 'known' ? yesNo(field, false, 0.85) : null
   if (mode === 'known') return null
@@ -212,7 +225,7 @@ export function referralAnswer(field: FormField, plain: string, facts: Applicati
   if (field.type === 'file' || !REFERRED_QUESTION.test(plain) || NOT_A_REFERRAL_QUESTION.test(plain)) return null
   const none = facts.referrals === 'none'
   if (none !== (mode === 'known')) return null
-  if (FOLLOW_UP.test(plain)) return none ? notNeeded('Left blank because you apply without a referral.') : null
+  if (FOLLOW_UP.test(plain)) return none ? followUpSkipped(field, 'Left blank because you apply without a referral.') : null
   // An optional box about a referral is left blank when the person has not said, instead of flagged.
   if (!none && !field.required && (field.type === 'text' || field.type === 'textarea')) return notNeeded('Left blank because you have not said whether you have a referral.')
   if (!none) return needs('Add whether you apply with a referral in Profile.')

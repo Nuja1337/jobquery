@@ -78,7 +78,8 @@ describe('answerFields on a real Greenhouse form', () => {
     expect(by(/^First Name/)).toMatchObject({ value: 'Sam', source: 'profile' })
     expect(by(/^Resume/)).toMatchObject({ value: 'C:/resumes/sam.pdf', source: 'file' })
     expect(by(/^Do you require visa sponsorship/).value).toBe('No')
-    expect(by(/working in-person/)).toMatchObject({ value: 'Yes', source: 'ai' })
+    // A willingness question no rule answers is flagged, never sent to the model.
+    expect(by(/working in-person/)).toMatchObject({ value: '', needsUser: true })
     expect(by(/interviewed at Anthropic before/)).toMatchObject({ needsUser: true })
     expect(by(/AI Policy/)).toMatchObject({ needsUser: true })
     expect(by(/Agreement to Arbitrate/)).toMatchObject({ needsUser: true })

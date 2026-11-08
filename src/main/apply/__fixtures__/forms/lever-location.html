@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Lever application with a location box and hidden surveys</title>
+<style>
+  .hidden { display: none; }
+  .dropdown-container { display: none; }
+</style>
+</head>
+<body>
+<!-- Markup follows Lever's application form. The script at the end is a stand-in written for this
+     test. It searches a short list, clears the location box on blur unless a suggestion was picked,
+     and fills the hidden selected-location input on a pick. -->
+<form>
+  <ul>
+    <li class="application-question"><label><div class="application-label">Full name<span class="required">✱</span></div><div class="application-field"><input type="text" name="name" required></div></label></li>
+    <li class="application-question"><label><div class="application-label">Email<span class="required">✱</span></div><div class="application-field"><input type="email" name="email" required></div></label></li>
+    <li class="application-question"><label><div class="application-label">Phone <span class="required">✱</span></div><div class="application-field"><input type="text" name="phone" required></div></label></li>
+    <li class="application-question" data-qa="structured-contact-location-question"><label><div class="application-label">Current location <span class="required">✱</span></div><div class="application-field">
+      <input class="location-input" id="location-input" type="text" maxlength="100" name="location" required>
+      <input id="selected-location" type="hidden" name="selectedLocation">
+      <div class="dropdown-container">
+        <div class="dropdown-results"></div>
+        <div class="dropdown-no-results" style="display:none">No location found. Try entering a different location</div>
+        <div class="dropdown-loading-results" style="display:none"><div><span>Loading</span></div></div>
+      </div>
+    </div></label></li>
+    <li class="application-question"><label><div class="application-label">Resume/CV<span class="required">✱</span></div><div class="application-field"><input type="file" name="resume" required></div></label></li>
+    <li class="application-question"><label><div class="application-label">GitHub URL</div><div class="application-field"><input type="text" name="urls[GitHub]"></div></label></li>
+  </ul>
+
+  <div class="section"><hr><h4>Demographic Survey</h4>
+    <div class="application-question"><label><div class="application-label">What is your location?</div><div class="application-field"><select class="candidate-location"><option value="">Select...</option><option value="GB">United Kingdom</option><option value="US">United States</option></select></div></label></div>
+  </div>
+
+  <!-- Four survey sections, hidden until a country is chosen. They hold seven radio groups. -->
+  <div class="section hidden" id="countrySurvey_US"><h4>Demographic Questions</h4><ul>
+    <li class="application-question"><div class="application-label"><div class="text">What best describes your gender?</div></div><div class="application-field"><ul>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field0]" value="Woman"><span>Woman</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field0]" value="Man"><span>Man</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field0]" value="Prefer not to disclose"><span>Prefer not to disclose</span></label></li></ul></div></li>
+    <li class="application-question"><div class="application-label"><div class="text">What is your race/ethnicity?</div></div><div class="application-field"><ul>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field1]" value="Asian"><span>Asian</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field1]" value="White"><span>White</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field1]" value="Prefer not to disclose"><span>Prefer not to disclose</span></label></li></ul></div></li>
+    <li class="application-question"><div class="application-label"><div class="text">Are you a veteran?</div></div><div class="application-field"><ul>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field2]" value="Yes"><span>Yes</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[us][responses][field2]" value="No"><span>No</span></label></li></ul></div></li>
+  </ul></div>
+  <div class="section hidden" id="countrySurvey_EU"><h4>Demographic Questions</h4><ul>
+    <li class="application-question"><div class="application-label"><div class="text">What best describes your gender?</div></div><div class="application-field"><ul>
+      <li><label><input type="radio" name="surveysResponses[eu][responses][field0]" value="Woman"><span>Woman</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[eu][responses][field0]" value="Man"><span>Man</span></label></li></ul></div></li>
+  </ul></div>
+  <div class="section hidden" id="countrySurvey_ROW"><h4>Demographic Questions</h4><ul>
+    <li class="application-question"><div class="application-label"><div class="text">What best describes your gender?</div></div><div class="application-field"><ul>
+      <li><label><input type="radio" name="surveysResponses[row][responses][field0]" value="Woman"><span>Woman</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[row][responses][field0]" value="Man"><span>Man</span></label></li></ul></div></li>
+    <li class="application-question"><div class="application-label"><div class="text">Do you identify as part of an ethnic minority?</div></div><div class="application-field"><ul>
+      <li><label><input type="radio" name="surveysResponses[row][responses][field1]" value="Yes"><span>Yes</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[row][responses][field1]" value="No"><span>No</span></label></li></ul></div></li>
+  </ul></div>
+  <div class="section hidden" id="countrySurvey_GB"><h4>Demographic Questions</h4><ul>
+    <li class="application-question"><div class="application-label"><div class="text">What is your sexual orientation?</div></div><div class="application-field"><ul>
+      <li><label><input type="radio" name="surveysResponses[gb][responses][field0]" value="Heterosexual"><span>Heterosexual</span></label></li>
+      <li><label><input type="radio" name="surveysResponses[gb][responses][field0]" value="Prefer not to say"><span>Prefer not to say</span></label></li></ul></div></li>
+</ul></div></li>
+  </ul></div>
+
+  <div class="section" data-qa="consent-section"><label><input type="checkbox" name="consent[marketing]"><span>Keep my details for future roles</span></label></div>
+</form>
+<script>
+  const LOCATIONS = ['Seattle, WA, USA', 'Seattle, OH, USA', 'Seatac, WA, USA', 'Portland, OR, USA'];
+  const input = document.querySelector('input.location-input');
+  const selected = document.getElementById('selected-location');
+  const container = document.querySelector('.dropdown-container');
+  const results = container.querySelector('.dropdown-results');
+  const none = container.querySelector('.dropdown-no-results');
+  let timer = null;
+
+  function reset() { results.innerHTML = ''; none.style.display = 'none'; }
+  function search() {
+    reset();
+    const q = input.value.trim().toLowerCase();
+    if (!q) return;
+    const found = LOCATIONS.filter((l) => l.toLowerCase().startsWith(q));
+    found.forEach((name, i) => {
+      const div = document.createElement('div');
+      div.className = 'dropdown-location';
+      div.id = 'location-' + i;
+      div.textContent = name;
+      results.appendChild(div);
+    });
+    if (!found.length) none.style.display = 'flex';
+  }
+  input.addEventListener('input', () => { container.style.display = 'flex'; });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' || e.key === 'Shift' || e.key === 'Escape') return;
+    clearTimeout(timer);
+    timer = setTimeout(search, 500);
+  });
+  input.addEventListener('blur', () => {
+    if (container.style.display === 'flex') {
+      container.style.display = 'none';
+      reset();
+      input.value = '';
+      selected.value = '';
+    }
+  });
+  document.addEventListener('mousedown', (e) => {
+    const item = e.target.closest('.dropdown-location');
+    if (!item) return;
+    container.style.display = 'none';
+    input.value = item.textContent;
+    selected.value = JSON.stringify({ name: item.textContent });
+    reset();
+  });
+</script>
+</body>
+</html>

@@ -1,4 +1,5 @@
-import type { RawJob } from '@shared/types'
+import type { RawJob, Seniority } from '@shared/types'
+import { seniorityFromLabel } from '../pipeline/filters'
 import { withAtsIdentity } from './detect'
 import { employmentLabel, findAtsLink, payPeriodFrom, yearlyPay } from './feeds'
 import { fetchJson } from './http'
@@ -49,6 +50,16 @@ function pageUrl(j: HimalayasJob): string {
   return (j.applicationLink ?? '').replace(/[?#].*$/, '')
 }
 
+/** The levels Himalayas lists for a job, as seniority ids. A label the app cannot place is dropped. */
+function levelsOf(labels: string[] | undefined): Seniority[] {
+  const found = new Set<Seniority>()
+  for (const label of labels ?? []) {
+    const level = seniorityFromLabel(label)
+    if (level) found.add(level)
+  }
+  return [...found]
+}
+
 /**
  * `params.query` filters by title, categories and description. Leave it out for results that the
  * search endpoint already matched. Jobs whose expiry date has passed at `now` are dropped.
@@ -78,6 +89,7 @@ export function parseHimalayas(json: HimalayasResponse, params: Record<string, s
         salaryMax: salary?.max ?? null,
         salaryCurrency: salary?.currency ?? null,
         employmentType: employmentLabel(j.employmentType),
+        seniority: levelsOf(j.seniority),
         url,
         applyUrl: employerLink ?? url,
         ats: 'unknown' as const,

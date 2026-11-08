@@ -1,5 +1,5 @@
 import type { DeepPartial } from './api'
-import type { ApplicationFacts, FitBucket, LlmStage, ModelPrice, Profile, ProviderBilling, ProviderKind, Settings } from './types'
+import type { ApplicationFacts, FitBucket, LlmStage, ModelPrice, Profile, ProfileName, ProviderBilling, ProviderKind, Settings } from './types'
 
 export const DEFAULT_SETTINGS: Settings = {
   routing: { triage: null, writing: null, extraction: null },
@@ -18,7 +18,8 @@ export const DEFAULT_SETTINGS: Settings = {
     maxPostingAgeDays: 30,
     needsVisaSponsorship: false,
     companyCooldownDays: 90,
-    perCompanyLimit: 1
+    perCompanyLimit: 1,
+    employmentTypes: []
   },
   thresholds: {
     prescoreMin: 15,
@@ -63,11 +64,28 @@ export const DEFAULT_SETTINGS: Settings = {
     maxRevisions: 2
   },
   eeo: {
+    version: 2,
     gender: 'decline',
-    race: 'decline',
+    genderText: '',
+    transgender: 'decline',
+    hispanicLatino: 'decline',
+    race: [],
     veteran: 'decline',
+    veteranCategories: [],
+    militaryService: 'decline',
+    militarySpouse: 'decline',
     disability: 'decline',
-    pronouns: ''
+    sexualOrientation: [],
+    sexualOrientationText: '',
+    lgbtq: 'decline',
+    pronouns: 'decline',
+    pronounsText: '',
+    birthYear: null,
+    ukEthnicity: 'decline',
+    religion: 'decline',
+    caring: 'decline',
+    socioeconomic: { householdOccupation: 'decline', schoolType: 'decline', freeSchoolMeals: 'decline', parentDegree: 'decline' },
+    neurodivergent: 'decline'
   },
   updates: {
     autoCheck: true
@@ -108,7 +126,7 @@ export const VOLUME_PRESET: DeepPartial<Settings> = {
   },
   preferences: { perCompanyLimit: 2, companyCooldownDays: 30, maxPostingAgeDays: 21 },
   browser: { slowMoMs: 25 },
-  writing: { coverLetterLength: 'short', minLintScore: 75, maxRevisions: 1 },
+  writing: { coverLetterLength: 'short', minLintScore: 80, maxRevisions: 2 },
   discovery: { autoWatchBoards: true, maxWatchedBoards: 5000, boardsPerRun: 2000 },
   system: { keepAwake: true, closeToTray: true, notifications: true }
 }
@@ -154,11 +172,37 @@ export const EMPTY_APPLICATION_FACTS: ApplicationFacts = {
   gpa: '',
   heardAbout: '',
   relativesAtEmployers: null,
-  referrals: ''
+  referrals: '',
+  workArrangement: { remote: null, hybrid: null, onsite: null, maxOfficeDaysPerWeek: null, commutableCities: [] },
+  employment: {
+    types: [],
+    hoursPerWeek: null,
+    currentlyEmployed: null,
+    desiredTitle: '',
+    currentPay: { stance: '', amount: null, currency: '', period: 'year' }
+  },
+  schedule: { evenings: null, weekends: null, nights: null, onCall: null, overtime: null, timeZones: [] },
+  screening: { backgroundCheck: null, drugTest: null, creditCheck: null },
+  education: { highestCompleted: null, currentlyEnrolled: null, expectedGraduation: null, fields: [], relatedFields: [] },
+  experience: {
+    professionalSoftware: null,
+    gamesIndustry: null,
+    teamLead: null,
+    peopleManagement: null,
+    shippedTitles: null,
+    aaaTitles: null,
+    platforms: []
+  },
+  citizenships: [],
+  exportControlUsPerson: null,
+  clearanceEligible: null
 }
+
+export const EMPTY_PROFILE_NAME: ProfileName = { first: '', middle: '', last: '', preferred: '', pronunciation: '' }
 
 export const EMPTY_PROFILE: Profile = {
   fullName: '',
+  name: EMPTY_PROFILE_NAME,
   email: '',
   phone: '',
   location: '',

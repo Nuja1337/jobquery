@@ -51,6 +51,8 @@ const HOUR_MS = 3_600_000
 const MAX_SUBMIT_SLOTS = 3
 /** The same error message from one worker is logged at most this often. */
 const ERROR_REPEAT_MS = 10 * 60_000
+/** How long the day's counts in the status are reused. */
+const TODAY_CACHE_MS = 3_000
 
 const DOING: Record<WorkerName, string> = { discover: 'finding jobs', score: 'scoring', prepare: 'preparing', submit: 'submitting' }
 const PHASE: Record<WorkerName, PipelinePhase> = { discover: 'discovering', score: 'scoring', prepare: 'preparing', submit: 'submitting' }
@@ -132,6 +134,8 @@ export class WorkLoop {
   private hour: { id: string; start: number; stats: RunStats } | null = null
   private lastProgress = ''
   private lastStatus = ''
+  /** Today's counts from the database. Reused for a few seconds, and dropped when a step ends. */
+  private todayCache: { day: string; at: number; value: LoopStatus['today']; counts: Record<WorkerName, number> } | null = null
 
   constructor(
     private readonly ctx: AppContext,
@@ -154,6 +158,7 @@ export class WorkLoop {
     if (this.running) return
     this.running = true
     this.since = new Date(this.clock.now()).toISOString()
+    this.todayCache = null
     this.stop$ = new AbortController()
     const signal = this.stop$.signal
     for (const name of WORKERS) Object.assign(this.rt[name], this.freshRuntime(), { manual: this.rt[name].manual })
@@ -177,6 +182,7 @@ export class WorkLoop {
     this.captchaStreak.clear()
     this.signInStreak.clear()
     this.lastProgress = ''
+    this.todayCache = null
     await Promise.all(finished)
     // Started again while the workers were ending: the new run owns the state from here.
     if (this.running) return
@@ -407,6 +413,7 @@ export class WorkLoop {
     } finally {
       w.active -= 1
       w.items -= items
+      this.todayCache = null
       this.touch()
     }
   }
@@ -465,6 +472,7 @@ export class WorkLoop {
     const now = this.clock.now()
     if (w.lastError && w.lastError.message === message && now - w.lastError.at < ERROR_REPEAT_MS) return
     w.lastError = { message, at: now }
+    this.todayCache = null
     try {
       this.ctx.events.add('error', `The ${DOING[name]} worker hit a problem and will try again. ${message}`)
     } catch {
@@ -538,12 +546,7 @@ export class WorkLoop {
   status(): LoopStatus {
     const now = this.clock.now()
     const day = new Date(localDay(now)).toISOString()
-    const { ctx } = this
-    const discovered = this.count('SELECT COUNT(*) AS n FROM jobs WHERE discovered_at >= :since', day)
-    const scored = this.scoredSince(day)
-    const prepared = ctx.applications.countCreatedSince(day)
-    const submitted = ctx.applications.countSubmittedSince(day)
-    const done: Record<WorkerName, number> = { discover: discovered, score: scored, prepare: prepared, submit: submitted }
+    const { today, done } = this.todayCounts(day)
     const workers = {} as Record<WorkerName, WorkerStatus>
     for (const name of WORKERS) {
       const w = this.rt[name]
@@ -572,14 +575,29 @@ export class WorkLoop {
       const active = w.active === 0 ? 0 : name === 'prepare' || name === 'score' ? w.items : w.active
       workers[name] = { state, until, reason, doneToday: done[name], active }
     }
+    return { running: this.running, since: this.since, workers, today: { ...today } }
+  }
+
+  /**
+   * The day's counts. Six queries run on every status read, and the status is read often, so the
+   * result is reused for TODAY_CACHE_MS. A step that ends, a failure and a start or stop drop it,
+   * and so does a new day. Changes made outside the loop, such as a manual submit, show up within the window.
+   */
+  private todayCounts(day: string): { today: LoopStatus['today']; done: Record<WorkerName, number> } {
+    const at = Date.now()
+    const cached = this.todayCache
+    if (cached && cached.day === day && at >= cached.at && at - cached.at < TODAY_CACHE_MS) return { today: cached.value, done: cached.counts }
+    const { ctx } = this
+    const discovered = this.count('SELECT COUNT(*) AS n FROM jobs WHERE discovered_at >= :since', day)
+    const scored = this.scoredSince(day)
+    const prepared = ctx.applications.countCreatedSince(day)
+    const submitted = ctx.applications.countSubmittedSince(day)
     const errors = this.count("SELECT COUNT(*) AS n FROM events WHERE at >= :since AND type IN ('error', 'submit_failed')", day)
     const spend = ctx.db.get<{ usd: number | null }>('SELECT SUM(cost_usd) AS usd FROM llm_calls WHERE at >= :since AND cache_hit = 0', { since: day })
-    return {
-      running: this.running,
-      since: this.since,
-      workers,
-      today: { discovered, scored, prepared, submitted, errors, costUsd: spend?.usd ?? 0 }
-    }
+    const value = { discovered, scored, prepared, submitted, errors, costUsd: spend?.usd ?? 0 }
+    const counts: Record<WorkerName, number> = { discover: discovered, score: scored, prepare: prepared, submit: submitted }
+    this.todayCache = { day, at, value, counts }
+    return { today: value, done: counts }
   }
 
   /** The one line for the top bar, such as "Continuous: 2 preparing, 1 submitting, scoring paused until 09:00". */

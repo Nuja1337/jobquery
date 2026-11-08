@@ -45,7 +45,9 @@ export function buildFreeEnv(ctx: AppContext, now = Date.now()): FreeEnv {
       now,
       blockedCompanies: blocked,
       lastAppliedAt: (norm) => ctx.applications.lastSentAt(norm),
-      appliedCount: (norm, sinceMs) => ctx.applications.countSentToCompanySince(norm, new Date(sinceMs).toISOString())
+      appliedCount: (norm, sinceMs) => ctx.applications.countSentToCompanySince(norm, new Date(sinceMs).toISOString()),
+      authorization: profile.application?.authorization,
+      relocation: profile.application?.relocation
     }
   }
 }
@@ -53,7 +55,7 @@ export function buildFreeEnv(ctx: AppContext, now = Date.now()): FreeEnv {
 /** Changes whenever a setting or profile edit could change what the free rules decide. */
 export function freeFingerprint(env: FreeEnv): string {
   return createHash('sha1')
-    .update(JSON.stringify({ p: env.prefs, t: env.thresholds.prescoreMin, v: env.profileVersion, b: [...env.filterContext.blockedCompanies].sort() }))
+    .update(JSON.stringify({ p: env.prefs, t: env.thresholds.prescoreMin, v: env.profileVersion, b: [...env.filterContext.blockedCompanies].sort(), a: env.filterContext.authorization ?? [], r: env.filterContext.relocation ?? null }))
     .digest('hex')
 }
 

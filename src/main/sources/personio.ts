@@ -1,4 +1,5 @@
 import type { RawJob } from '@shared/types'
+import { seniorityFromLabel } from '../pipeline/filters'
 import { prettifyToken } from './detect'
 import { payPeriodFrom, yearlyPay } from './feeds'
 import { fetchText, HttpError } from './http'
@@ -30,6 +31,17 @@ function employmentOf(employmentType: string | null, schedule: string | null): s
   return (schedule ? SCHEDULES[schedule.toLowerCase()] : undefined) ?? (type ? (EMPLOYMENT[type] ?? employmentType) : null)
 }
 
+/**
+ * The least experience Personio's yearsOfExperience range asks for: "lt-1" is 0, "1-2" is 1, "ge-15" is 15.
+ * Null when the feed gives none or something else.
+ */
+function minYearsOf(range: string | null): number | null {
+  const text = (range ?? '').trim().toLowerCase()
+  if (/^lt-?\d+$/.test(text)) return 0
+  const match = /^(?:ge-?)?(\d+)(?:-\d+)?$/.exec(text)
+  return match ? Number(match[1]) : null
+}
+
 /** Each description block has a heading and an HTML body. They are joined as headed sections. */
 function describe(descriptions: string): string {
   const parts: string[] = []
@@ -59,6 +71,7 @@ export function parsePersonio(xml: string, slug: string, companyName?: string | 
       ? yearlyPay(Number(xmlText(payBlock, 'min')), Number(xmlText(payBlock, 'max')), payPeriodFrom(xmlText(payBlock, 'type')) ?? 'year', xmlText(payBlock, 'currencyCode'))
       : null
     const salary = pay ?? findSalaryInText(description)
+    const level = seniorityFromLabel(xmlText(head, 'seniority'))
     const url = `https://${slug}.jobs.personio.${domain}/job/${id}`
     jobs.push({
       source: 'personio',
@@ -71,6 +84,8 @@ export function parsePersonio(xml: string, slug: string, companyName?: string | 
       salaryMax: salary?.max ?? null,
       salaryCurrency: salary?.currency ?? null,
       employmentType: employmentOf(xmlText(head, 'employmentType'), xmlText(head, 'schedule')),
+      seniority: level ? [level] : [],
+      minYears: minYearsOf(xmlText(head, 'yearsOfExperience')),
       url,
       applyUrl: `${url}#apply`,
       ats: 'personio',

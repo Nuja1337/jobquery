@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { issuesToInstructions, lintText, splitSentences } from './lint'
+import { blockingIssues, failureReason, isBetterLint, issuesToInstructions, lintPasses, lintText, splitSentences, topIssue } from './lint'
 import { replaceDashes } from './rules'
 
 const AI_LETTER = `Dear Hiring Manager,
@@ -80,5 +80,85 @@ describe('helpers', () => {
 
   it('replaces dashes with commas', () => {
     expect(replaceDashes('We shipped — finally — in May.')).toBe('We shipped, finally, in May.')
+  })
+})
+
+const PLAIN = 'I rebuilt the billing system at Ledgerly after a weekend of double charges. The retry fix cut failed payments by 40 percent, and I wrote the nightly check that still runs.'
+
+describe('blockingIssues', () => {
+  it('passes plain text', () => {
+    const report = lintText(PLAIN)
+    expect(blockingIssues(report)).toEqual([])
+    expect(lintPasses(report, 80)).toBe(true)
+  })
+
+  it('blocks the 88-scoring template opener even though its score passes', () => {
+    const report = lintText(`I am writing to express my interest in this role. ${PLAIN}`)
+    expect(report.score).toBeGreaterThanOrEqual(80)
+    expect(blockingIssues(report).map((i) => i.rule)).toEqual(['phrase:i am writing to express my interest'])
+    expect(lintPasses(report, 80)).toBe(false)
+  })
+
+  it.each([
+    ['passionate about', 'I am passionate about payment systems.'],
+    ['my passion for', 'My passion for payment systems started at Ledgerly.'],
+    ['excited about the opportunity', 'I am excited about the opportunity to build payment tools.'],
+    ['i am confident that', 'I am confident that the retry fix will carry over.'],
+    ["i'm confident that", "I'm confident that the retry fix will carry over."],
+    ['eager to contribute', 'I am eager to contribute to the payments team.']
+  ])('blocks the template opener "%s"', (phrase, sentence) => {
+    const report = lintText(`${PLAIN} ${sentence}`)
+    const hit = report.issues.find((i) => i.rule === `phrase:${phrase}`)
+    expect(hit?.severity).toBe('high')
+    expect(blockingIssues(report)).toContain(hit)
+  })
+
+  it.each([
+    ['em-dash', `${PLAIN} The fix was small — one flag.`],
+    ['not-x-but-y', `${PLAIN} We did not only ship, but also cut costs.`],
+    ['its-not-x-its-y', `${PLAIN} It's not a rewrite, it's a repair.`],
+    ['placeholder', `${PLAIN} I would like to join [Company Name].`],
+    ['markdown', `${PLAIN}
+
+**Key skills**`],
+    ['emoji', `${PLAIN} Thanks 🙂`],
+    ['as-a-opener', `As a senior engineer with six years of experience, ${PLAIN.charAt(0).toLowerCase()}${PLAIN.slice(1)}`]
+  ])('blocks %s', (rule, text) => {
+    const report = lintText(text)
+    expect(blockingIssues(report).map((i) => i.rule)).toContain(rule)
+    expect(lintPasses(report, 0)).toBe(false)
+  })
+
+  it('does not block medium and low issues, which only cost points', () => {
+    const report = lintText(`${PLAIN} This was really a good result; the team agreed.`)
+    expect(report.issues.length).toBeGreaterThan(0)
+    expect(blockingIssues(report)).toEqual([])
+  })
+
+  it('also needs the minimum score', () => {
+    const report = lintText(PLAIN)
+    expect(lintPasses(report, report.score + 1)).toBe(false)
+  })
+
+  it('prefers a text with fewer blocking issues even when its score is lower', () => {
+    const blocked = lintText(`I am writing to express my interest in this role. ${PLAIN}`)
+    const clean = lintText(`${PLAIN} This was really a good result; the team agreed. It was just simply actually fine. We leveraged a robust and truly seamless setup.`)
+    expect(clean.score).toBeLessThan(blocked.score)
+    expect(isBetterLint(clean, blocked)).toBe(true)
+    expect(isBetterLint(blocked, clean)).toBe(false)
+    // With the same blocking count, the score decides.
+    expect(isBetterLint(lintText(PLAIN), clean)).toBe(true)
+  })
+
+  it('names the blocking issue first and lists blocking issues first in revision notes', () => {
+    const report = lintText(`This is really a good result. ${PLAIN} I am writing to express my interest in this role.`)
+    expect(topIssue(report)?.rule).toBe('phrase:i am writing to express my interest')
+    expect(failureReason(report, 80)).toContain('I am writing to express my interest')
+    expect(issuesToInstructions(report, 1)).toContain('I am writing to express my interest')
+  })
+
+  it('explains a score-only failure with the score', () => {
+    const report = lintText(PLAIN)
+    expect(failureReason({ ...report, score: 70, issues: [] }, 80)).toBe('Its score is 70 and the minimum is 80.')
   })
 })

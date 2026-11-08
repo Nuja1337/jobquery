@@ -154,7 +154,8 @@ export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerat
       control = <Input id={id} type={answer.type === 'date' ? 'date' : answer.type === 'number' ? 'number' : answer.type} value={answer.value} onChange={(e) => setValue(e.target.value)} />
   }
 
-  const canRegenerate = answer.type !== 'file' && mayRegenerate
+  // A self-identification answer comes from Settings, so there is nothing for the model to write.
+  const canRegenerate = answer.type !== 'file' && mayRegenerate && answer.rule !== 'demographic'
   const canBank = (answer.type === 'text' || answer.type === 'textarea') && !!answer.value.trim()
 
   return (

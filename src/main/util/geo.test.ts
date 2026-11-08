@@ -43,3 +43,19 @@ describe('location filter with countries and states', () => {
     expect(applyFilters(job('Portland, OR'), prefs(['California']), ctx).pass).toBe(false)
   })
 })
+
+describe('region names', () => {
+  it('does not read North, South, Latin or Central America as the United States', () => {
+    expect(countryOf('North America')).toBeNull()
+    expect(countryOf('Remote, South America')).toBeNull()
+    expect(countryOf('Latin America')).toBeNull()
+    expect(countryOf('Central-America')).toBeNull()
+    expect(isCountryName('North America')).toBe(false)
+  })
+
+  it('still reads America and the United States of America as the United States', () => {
+    expect(countryOf('America')).toBe('United States')
+    expect(countryOf('United States of America')).toBe('United States')
+    expect(countryOf('Remote, USA')).toBe('United States')
+  })
+})

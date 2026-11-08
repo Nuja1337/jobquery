@@ -37,10 +37,19 @@ export function decodeEntities(text: string): string {
   })
 }
 
+/**
+ * Lever sends list content as bare <li> items. Without a list around them they run together
+ * ("ab"), so a fragment with items and no list gets one.
+ */
+function wrapBareListItems(html: string): string {
+  if (!/<li[\s>]/i.test(html) || /<(?:ul|ol)[\s>]/i.test(html)) return html
+  return `<ul>${html}</ul>`
+}
+
 /** Turns an HTML fragment into readable plain text with paragraph breaks. */
 export function htmlToPlain(html: string): string {
   if (!html) return ''
-  const text = convert(html, {
+  const text = convert(wrapBareListItems(html), {
     wordwrap: false,
     selectors: [
       { selector: 'a', options: { ignoreHref: true } },
@@ -74,12 +83,20 @@ export function escapedHtmlToPlain(escaped: string): string {
 // Remote, hybrid or on-site
 // ---------------------------------------------------------------------------
 
+/** "Remote" in front of these words names a thing, not a place to work from. */
+const REMOTE_WORD = /\bremote\b(?![- ]+(?:sensing|sensors?|controls?|controller|desktop|access|procedures?|execution|attestation|rendering|viewer)\b)/
+/**
+ * "Distributed" alone is part of too many titles ("Distributed Systems Engineer"). It counts when it
+ * describes the team or the company, or when it is the whole location.
+ */
+const DISTRIBUTED_WORK = /\bdistributed[- ](?:first|teams?|workforce|company|workplace|work|organi[sz]ation)\b|^\s*distributed\s*(?:$|[-–,(])|\(distributed\)/
+
 /** Reads a short string such as a location, a title or an ATS workplace field. */
 export function detectRemote(text: string | null | undefined): RemoteType {
   if (!text) return 'unknown'
   const t = text.toLowerCase()
   if (/\bhybrid\b/.test(t)) return 'hybrid'
-  if (/\bremote\b|\bwork from home\b|\bwfh\b|\banywhere\b|\bdistributed\b|\bworldwide\b/.test(t)) return 'remote'
+  if (REMOTE_WORD.test(t) || /\bwork from home\b|\bwfh\b|\banywhere\b|\bworldwide\b/.test(t) || DISTRIBUTED_WORK.test(t)) return 'remote'
   if (/\bon[- ]?site\b|\bin[- ]office\b|\bin[- ]person\b/.test(t)) return 'onsite'
   return 'unknown'
 }
@@ -193,6 +210,30 @@ function currencyHint(text: string, found: string | null): string | null {
 }
 
 /**
+ * Matches of a pay pattern. The next search starts where the numbers end, so the tail text of one
+ * match (".. Salary $110,000 - $140,000") is still searched for the next one.
+ */
+function* amountMatches(re: RegExp, text: string): Generator<RegExpExecArray> {
+  const scan = new RegExp(re.source, re.flags)
+  let m: RegExpExecArray | null
+  while ((m = scan.exec(text))) {
+    yield m
+    scan.lastIndex = Math.max(m.index + 1, m.index + m[0].length - (m.groups?.tail?.length ?? 0))
+  }
+}
+
+const EXTRA_PAY_WORDS = 'bonus|relocation|relocating|sign(?:ing)?[- ]?on|stipend|allowance|commission|equity|stock|rsus?|referral|retention|incentive|reimbursement'
+/** Money named just before the amount: "relocation bonus of up to $5,000 - $10,000". */
+const EXTRA_BEFORE = new RegExp(`(?:${EXTRA_PAY_WORDS})(?:(?!salary|base|pay\\b|compensation|wage)[^.\\n;]){0,30}$`, 'i')
+/** Money named right after the amount: "$10,000 - $20,000 annual bonus". */
+const EXTRA_AFTER = new RegExp(`^\\s*(?:(?:per year|annual|yearly|one-time|target|performance|cash|discretionary|total|paid|up to)\\s+){0,3}(?:${EXTRA_PAY_WORDS})(?!\\w*\\s*(?:eligib|included|potential))`, 'i')
+
+/** True when the amount at this position is a bonus, relocation or similar payment and not the salary. */
+function isExtraPay(text: string, index: number, tail: string): boolean {
+  return EXTRA_BEFORE.test(text.slice(Math.max(0, index - 50), index)) || EXTRA_AFTER.test(tail)
+}
+
+/**
  * Reads a yearly pay range from a short pay field or from the text of a posting.
  * Hourly and monthly pay is converted to yearly. Returns null when nothing clear is found.
  * Without a currency symbol or code a range is accepted only in a pay field (`fieldOnly: true`).
@@ -200,9 +241,9 @@ function currencyHint(text: string, found: string | null): string | null {
 export function parseSalary(text: string | null | undefined, options: { defaultCurrency?: string | null; fieldOnly?: boolean } = {}): SalaryRange | null {
   if (!text) return null
   const fieldOnly = options.fieldOnly ?? false
-  RANGE_RE.lastIndex = 0
-  for (const m of text.matchAll(RANGE_RE)) {
+  for (const m of amountMatches(RANGE_RE, text)) {
     const g = m.groups!
+    if (isExtraPay(text, m.index, g.tail ?? '')) continue
     const hasCurrency = Boolean(g.c1 || g.c2 || /^\s?(?:USD|EUR|GBP|CAD|AUD)\b/.test(g.tail ?? ''))
     if (!hasCurrency && !fieldOnly) continue
     const kb = Boolean(g.kb)
@@ -220,9 +261,9 @@ export function parseSalary(text: string | null | undefined, options: { defaultC
     return { ...yearly, currency: currencyHint(text, currency) }
   }
   if (!fieldOnly) return null
-  SINGLE_RE.lastIndex = 0
-  for (const m of text.matchAll(SINGLE_RE)) {
+  for (const m of amountMatches(SINGLE_RE, text)) {
     const g = m.groups!
+    if (isExtraPay(text, m.index, g.tail ?? '')) continue
     const a = parseAmount(g.a, Boolean(g.ka))
     if (a === null) continue
     const yearly = toYearly(a, a, periodFrom(g.tail ?? ''))

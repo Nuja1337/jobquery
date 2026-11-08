@@ -1,10 +1,31 @@
 import type { JobPreferences, Profile } from '@shared/types'
-import { titleWords } from './filters'
+import { stem, titleWords } from './filters'
 
 /** The fields of a job the pre-score reads. */
 export interface PrescoreJob {
   title: string
   description: string
+}
+
+/**
+ * Words that tie a role noun to software or games. "Backend Engineer" and "Engine Programmer" share
+ * the role noun with a "Software Engineer" target and have one of these, which counts as the second
+ * shared word. "Mechanical Engineer" and "Sales Engineer" have none.
+ */
+const ENGINEER_QUALIFIERS = new Set(
+  'software backend frontend fullstack web mobile ios android application applications platform systems server client network networking infrastructure tools engine gameplay game graphics rendering physics animation audio ai ui technical simulation unity unreal'
+    .split(' ')
+    .map((w) => stem(w))
+)
+const DESIGNER_QUALIFIERS = new Set('game level systems combat narrative technical ux ui economy quest mission content'.split(' ').map((w) => stem(w)))
+
+/** Title words a target shares with a job, plus one when the role noun matches and the job has a qualifier. */
+function sharedTitleWords(target: string[], words: Set<string>): number {
+  const shared = target.filter((w) => words.has(w)).length
+  const qualified = (noun: string, qualifiers: Set<string>): boolean =>
+    target.includes(noun) && words.has(noun) && [...words].some((w) => qualifiers.has(w))
+  if (qualified('engineer', ENGINEER_QUALIFIERS) || qualified('designer', DESIGNER_QUALIFIERS)) return Math.min(target.length, shared + 1)
+  return shared
 }
 
 function escapeRegExp(s: string): string {
@@ -33,9 +54,10 @@ export function profileTerms(profile: Profile, prefs: JobPreferences): { skills:
 
 /**
  * Keyword overlap between the candidate and a posting, 0 to 100. Costs no tokens.
- * Title overlap counts for 40 percent. Skills and include keywords found in the posting count for 60
- * percent, and a hit in the title counts double. With nothing to compare it returns 50, so
- * a new user with an empty profile still gets jobs scored by the AI.
+ * Title overlap counts for 40 percent and needs two shared words when the target has two or more.
+ * Skills and include keywords found in the posting count for 60 percent, and a hit in the title
+ * counts double. With nothing to compare it returns 50, so a new user with an empty profile still
+ * gets jobs scored by the AI.
  */
 export function prescore(job: PrescoreJob, profile: Profile, prefs: JobPreferences): number {
   const { skills, keywords, titles } = profileTerms(profile, prefs)
@@ -47,7 +69,16 @@ export function prescore(job: PrescoreJob, profile: Profile, prefs: JobPreferenc
   let titleScore: number | null = null
   if (titles.length > 0) {
     const words = new Set(titleWords(jobTitle))
-    titleScore = Math.max(...titles.map((t) => t.filter((w) => words.has(w)).length / t.length))
+    // One shared word is not a match. "Mechanical Engineer" shares "engineer" with "Software Engineer"
+    // and says nothing else. A software qualifier ("Backend Engineer") makes the second word.
+    // A one-word target needs only that word.
+    titleScore = Math.max(
+      ...titles.map((target) => {
+        const t = [...new Set(target)]
+        const shared = sharedTitleWords(t, words)
+        return shared >= Math.min(2, t.length) ? shared / t.length : 0
+      })
+    )
   }
 
   let termScore: number | null = null

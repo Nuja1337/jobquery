@@ -1,4 +1,5 @@
-import type { RawJob } from '@shared/types'
+import type { RawJob, Seniority } from '@shared/types'
+import { seniorityFromLabel } from '../pipeline/filters'
 import { withAtsIdentity } from './detect'
 import { findAtsLink } from './feeds'
 import { fetchJson, fetchText, HttpError, mapLimit } from './http'
@@ -20,7 +21,7 @@ export interface MuseJob {
   publication_date?: string
   locations?: Array<{ name?: string }>
   categories?: Array<{ name?: string }>
-  levels?: Array<{ name?: string }>
+  levels?: Array<{ name?: string; short_name?: string }>
   company?: { name?: string }
   refs?: { landing_page?: string }
 }
@@ -29,6 +30,16 @@ export interface MuseResponse {
   page?: number
   page_count?: number
   results?: MuseJob[]
+}
+
+/** The levels The Muse lists for a job ("Entry Level", "Senior Level", "Management"), as seniority ids. */
+function levelsOf(levels: MuseJob['levels']): Seniority[] {
+  const found = new Set<Seniority>()
+  for (const l of levels ?? []) {
+    const level = seniorityFromLabel(l.name) ?? seniorityFromLabel(l.short_name)
+    if (level) found.add(level)
+  }
+  return [...found]
 }
 
 /** The jobs from one page, with the landing page as the apply link until the page itself is read. */
@@ -55,6 +66,7 @@ export function parseTheMuse(json: MuseResponse, params: Record<string, string> 
       salaryMax: salary?.max ?? null,
       salaryCurrency: salary?.currency ?? null,
       employmentType: null,
+      seniority: levelsOf(j.levels),
       url: landing,
       applyUrl: landing,
       ats: 'unknown',
