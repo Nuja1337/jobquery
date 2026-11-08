@@ -1,6 +1,6 @@
 export type Theme = 'dark' | 'light'
 
-const KEY = 'jobpilot.theme'
+const KEY = 'jobpls.theme'
 
 export function getStoredTheme(): Theme {
   try {
@@ -19,7 +19,7 @@ export function applyTheme(theme: Theme): void {
   }
 }
 
-const SKIP_KEY = 'jobpilot.onboardingSkipped'
+const SKIP_KEY = 'jobpls.onboardingSkipped'
 
 export function onboardingSkipped(): boolean {
   try {

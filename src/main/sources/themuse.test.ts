@@ -41,7 +41,7 @@ describe('landing pages', () => {
     expect(job.url).toContain('themuse.com')
   })
 
-  it('keeps the employer link when the system is not one JobPilot can read', () => {
+  it('keeps the employer link when the system is not one jobpls can read', () => {
     const job = applyMuseLanding(parseTheMuse(fixtureJson('themuse.json'))[1], fixtureText('themuse-landing-workday.html'))
     expect(job.applyUrl).toContain('kyndryl.wd5.myworkdayjobs.com')
     expect(job.ats).toBe('workday')

@@ -593,13 +593,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async openPath(p) {
       // Only files the app created, such as screenshots and cover letter PDFs.
-      if (!insideDataDir(p)) throw new Error('That file is outside the JobPilot data folder.')
+      if (!insideDataDir(p)) throw new Error('That file is outside the jobpls data folder.')
       const err = await shell.openPath(p)
       if (err) throw new Error(err)
     },
     async exportData() {
       const win = BrowserWindow.getFocusedWindow()
-      const defaultPath = path.join(deps.paths.exportsDir, `jobpilot-export-${new Date().toISOString().slice(0, 10)}.json`)
+      const defaultPath = path.join(deps.paths.exportsDir, `jobpls-export-${new Date().toISOString().slice(0, 10)}.json`)
       const res = win ? await dialog.showSaveDialog(win, { defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }] }) : { canceled: false, filePath: defaultPath }
       if (res.canceled || !res.filePath) return null
       const tables = ['settings', 'profile', 'documents', 'answer_bank', 'companies', 'searches', 'jobs', 'applications', 'events', 'runs', 'llm_calls']
@@ -1097,9 +1097,9 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async installUpdate() {
       if (!updater) throw new Error('Updates work only in the installed app.')
-      if (pipeline.status().phase !== 'idle' && !loop.isRunning()) throw new Error('A run is in progress. Restart to update after it finishes, or close JobPilot to install the update then.')
+      if (pipeline.status().phase !== 'idle' && !loop.isRunning()) throw new Error('A run is in progress. Restart to update after it finishes, or close jobpls to install the update then.')
       const busy = inFlight.size > 0 || ctx.applications.list({ statuses: ['draft', 'submitting'], limit: 1 }).total > 0
-      if (busy) throw new Error('JobPilot is preparing or sending an application. Restart to update after it finishes.')
+      if (busy) throw new Error('jobpls is preparing or sending an application. Restart to update after it finishes.')
       await updater.install()
     }
   }
@@ -1154,7 +1154,7 @@ export async function registerIpc(deps: IpcDeps): Promise<{ shutdown: Shutdown; 
   const { api, shutdown, controls } = await createServices(deps)
   deps.ipcMain.handle('api', async (event, method: string, args: unknown[]) => {
     if (!deps.isTrustedSender(event)) {
-      return { ok: false, error: 'Calls are only accepted from the JobPilot window.', name: 'Forbidden' }
+      return { ok: false, error: 'Calls are only accepted from the jobpls window.', name: 'Forbidden' }
     }
     if (!Object.prototype.hasOwnProperty.call(api, method)) {
       return { ok: false, error: `Unknown method ${method}.`, name: 'UnknownMethod' }

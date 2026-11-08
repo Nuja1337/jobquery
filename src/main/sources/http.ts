@@ -1,6 +1,6 @@
 import type { RawJob } from '@shared/types'
 
-export const USER_AGENT = 'JobPilot/0.1 (+https://github.com/Nuja1337/jobpilot)'
+export const USER_AGENT = 'jobpls/0.1 (+https://github.com/Nuja1337/jobpls)'
 
 const DEFAULT_TIMEOUT_MS = 20_000
 

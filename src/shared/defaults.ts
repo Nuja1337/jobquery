@@ -134,7 +134,7 @@ function mergeInto<T>(base: T, patch: DeepPartial<T> | undefined): T {
  * The public page where new versions are published. It must match `build.publish` in
  * package.json, which tells installed copies where to look (a test checks that they match).
  */
-export const RELEASES_URL = 'https://github.com/Nuja1337/jobpilot-releases/releases/latest'
+export const RELEASES_URL = 'https://github.com/Nuja1337/jobpls-releases/releases/latest'
 
 export const EMPTY_APPLICATION_FACTS: ApplicationFacts = {
   address: { street: '', city: '', region: '', postalCode: '', country: '' },
@@ -229,7 +229,7 @@ export interface ProviderPreset {
 
 /** Shown wherever a user adds or reviews a paid provider. */
 export const BILLING_RESPONSIBILITY =
-  "Your AI provider bills you directly. JobPilot's costs and budgets are estimates from published prices, so your bill can be higher. JobPilot isn't responsible for any charges from your provider."
+  "Your AI provider bills you directly. jobpls's costs and budgets are estimates from published prices, so your bill can be higher. jobpls isn't responsible for any charges from your provider."
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
@@ -246,7 +246,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     requestsPerMinute: 10,
     requestsPerDay: 250,
     models: { triage: 'gemini-2.5-flash-lite', writing: 'gemini-2.5-flash', extraction: 'gemini-2.5-flash' },
-    note: "You don't need a card. Use a key from a Google project without billing. If billing is on, Google charges for each call and JobPilot's budgets won't stop it. Google may use what you send on the free tier to improve its products, and people may read it, including your resume and answers. This doesn't apply if you're in the European Economic Area, Switzerland or the UK.",
+    note: "You don't need a card. Use a key from a Google project without billing. If billing is on, Google charges for each call and jobpls's budgets won't stop it. Google may use what you send on the free tier to improve its products, and people may read it, including your resume and answers. This doesn't apply if you're in the European Economic Area, Switzerland or the UK.",
     trainsOnData: true
   },
   {

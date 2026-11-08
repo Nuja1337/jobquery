@@ -265,7 +265,7 @@ export class LlmService {
         result = await send()
       } catch (err) {
         // A short wait from the provider is worth sitting out, so an unattended run goes on instead of stopping.
-        // A long one, or one set by JobPilot's own daily limit, still ends the call.
+        // A long one, or one set by jobpls's own daily limit, still ends the call.
         if (!(err instanceof RateLimitedError) || err.retryAfterMs === null || err.retryAfterMs > MAX_RETRY_WAIT_MS || opts.signal?.aborted) throw err
         await this.clock.sleep(err.retryAfterMs, opts.signal)
         if (opts.signal?.aborted) throw err
@@ -332,7 +332,7 @@ export class LlmService {
     // Calls still running are not recorded yet but will count.
     const used = (row?.n ?? 0) + (this.pending.get(provider.id) ?? 0)
     if (used >= limit) {
-      throw new RateLimitedError(`${provider.label} has reached its limit of ${limit} requests for today. JobPilot uses it again after midnight.`)
+      throw new RateLimitedError(`${provider.label} has reached its limit of ${limit} requests for today. jobpls uses it again after midnight.`)
     }
   }
 

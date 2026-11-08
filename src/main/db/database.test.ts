@@ -26,7 +26,7 @@ describe('Db', () => {
   })
 
   it('persists to disk and reopens without re-running migrations', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-db-'))
     const file = path.join(dir, 'test.sqlite')
     const db = await Db.open(file)
     db.run("INSERT INTO settings (key, value) VALUES ('k', 'v')")
@@ -51,7 +51,7 @@ describe('Db', () => {
 })
 
 describe('Db on disk', () => {
-  const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+  const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-db-'))
   const insertJob = (db: Db, id: string) =>
     db.run(
       `INSERT INTO jobs (id, source, external_id, canonical_key, content_hash, company, company_norm, title, url, ats, description, discovered_at, stage, updated_at)
@@ -194,7 +194,7 @@ describe('migration 3', () => {
 
   /** A database file at schema version 2, as an installed app would have it. */
   async function oldDatabase(setup: (insertJob: (row: Row) => void, run: (sql: string, params?: Array<string | number | null>) => void) => void) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-db-'))
     const file = path.join(dir, 'old.sqlite')
     const raw = new DatabaseSync(file)
     const rawRun = (sql: string, params: Array<string | number | null> = []) => void raw.prepare(sql).run(...params)
@@ -316,7 +316,7 @@ describe('migration 3', () => {
 
 describe('migration 4', () => {
   it('adds the free-tier columns to a version 3 database and marks local providers free', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-db-'))
     const file = path.join(dir, 'v3.sqlite')
     const raw = new DatabaseSync(file)
     const rawRun = (sql: string, params: Array<string | number | null> = []) => void raw.prepare(sql).run(...params)

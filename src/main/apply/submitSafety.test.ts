@@ -66,7 +66,7 @@ const DRAFT = [answer('first_name', 'First name', 'Sam'), answer('last_name', 'L
 describe.skipIf(!executablePath)('auto mode safety (headless browser)', () => {
   let browser: Browser
   let page: Page
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-safety-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-safety-'))
 
   beforeAll(async () => {
     browser = await chromium.launch({ executablePath, headless: true })

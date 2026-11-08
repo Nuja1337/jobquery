@@ -43,7 +43,7 @@ export function VoiceCard({ voice, sampleCount, onBuilt }: Props): React.JSX.Ele
       />
       <div className="p-4">
         {!voice ? (
-          <p className="text-sm text-muted">{sampleCount === 0 ? 'Add a few writing samples or a past cover letter first. Then JobPilot can study how you write.' : 'No voice profile yet. Build one from your samples.'}</p>
+          <p className="text-sm text-muted">{sampleCount === 0 ? 'Add a few writing samples or a past cover letter first. Then jobpls can study how you write.' : 'No voice profile yet. Build one from your samples.'}</p>
         ) : (
           <div className="space-y-4">
             <p className="text-sm leading-relaxed text-fg">{voice.summary}</p>

@@ -175,7 +175,7 @@ describe('LlmService short rate limits', () => {
     expect(sleeps).toEqual([])
   })
 
-  it('still throws at once for the daily limit set in JobPilot', async () => {
+  it('still throws at once for the daily limit set in jobpls', async () => {
     const { clock, sleeps } = stillClock()
     const { llm, providers, settings, calls } = await withFlaky([], clock)
     const p = providers.list()[0]

@@ -138,12 +138,12 @@ export function previouslyAppliedAnswer(field: FormField, company: string, previ
     if (other.length > 0) return null
   }
 
-  if (!previouslyApplied) return needs("JobPilot can't tell whether you applied here before. Answer it yourself.")
+  if (!previouslyApplied) return needs("jobpls can't tell whether you applied here before. Answer it yourself.")
   let before: boolean
   try {
     before = previouslyApplied(company)
   } catch {
-    return needs("JobPilot can't tell whether you applied here before. Answer it yourself.")
+    return needs("jobpls can't tell whether you applied here before. Answer it yourself.")
   }
   if (followUp) return before ? null : notNeeded('Left blank because you have not applied here before.')
   if (before && THIS_ROLE.test(sentence)) return needs('You applied here before. Check whether it was this role and answer yourself.')

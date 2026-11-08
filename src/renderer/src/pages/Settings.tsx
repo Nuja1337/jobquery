@@ -193,7 +193,7 @@ export function SettingsPage(): React.JSX.Element {
           </Card>
 
           <Card id="settings-budget">
-            <CardHeader title="Budgets" hint="JobPilot stops making paid AI calls when its estimate of your spend reaches a budget, and a call already running can go a little over. A budget of 0 means no limit, and free and local providers don't count. The estimate uses the prices below, so your real bill can differ. Set a spend limit with your provider too." />
+            <CardHeader title="Budgets" hint="jobpls stops making paid AI calls when its estimate of your spend reaches a budget, and a call already running can go a little over. A budget of 0 means no limit, and free and local providers don't count. The estimate uses the prices below, so your real bill can differ. Set a spend limit with your provider too." />
             <div className="grid grid-cols-2 gap-4 p-4">
               <Field label="Daily budget (US dollars)" hint={draft.budget.dailyUsd === 0 ? 'No daily limit. The monthly budget still applies if you set one.' : 'Enter 0 for no limit.'}>
                 <BudgetInput value={draft.budget.dailyUsd} step={0.1} onChange={(v) => set('budget', { dailyUsd: v })} />
@@ -304,7 +304,7 @@ export function SettingsPage(): React.JSX.Element {
           <BackgroundCard draft={draft} set={set} />
 
           <Card id="settings-browser">
-            <CardHeader title="Browser" hint="JobPilot fills forms in a real browser window." />
+            <CardHeader title="Browser" hint="jobpls fills forms in a real browser window." />
             <div className="grid grid-cols-2 gap-4 p-4">
               <Field label="Browser">
                 <Select value={draft.browser.channel} onChange={(e) => set('browser', { channel: e.target.value as BrowserChannel })}>
@@ -522,7 +522,7 @@ function PricesCard({ prices, onSave, onReset }: { prices: Settings['prices']; o
 
   return (
     <Card id="settings-prices">
-      <CardHeader title="Prices" hint="Prices are in US dollars per million tokens, and the spend numbers and budgets use them. These are JobPilot's copy of published prices, and providers change their prices, so check them against your provider's price page. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Models on free providers are always $0." />
+      <CardHeader title="Prices" hint="Prices are in US dollars per million tokens, and the spend numbers and budgets use them. These are jobpls's copy of published prices, and providers change their prices, so check them against your provider's price page. Your numbers override the built-in ones. Models with no price count as $3 in and $15 out until you add one. Models on free providers are always $0." />
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr>
@@ -690,7 +690,7 @@ function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends Sectio
             checked={a.autoSubmit}
             onChange={(v) => (v ? setConfirmAuto(true) : set('autopilot', { autoSubmit: false }))}
             label="Submit applications automatically"
-            hint="JobPilot clicks Submit for you, without you looking at the draft first."
+            hint="jobpls clicks Submit for you, without you looking at the draft first."
           />
           <div className="mt-3 flex items-start gap-2 text-sm text-muted">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
@@ -735,7 +735,7 @@ function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends Sectio
       {confirmAuto && (
         <ConfirmDialog
           title="Turn on auto-submit"
-          message={`JobPilot will submit applications without asking you first, up to ${a.dailySubmitCap} a day, for jobs that score ${draft.thresholds.autoSubmitScore} or more. You can switch dry run on to test it. Turn it on?`}
+          message={`jobpls will submit applications without asking you first, up to ${a.dailySubmitCap} a day, for jobs that score ${draft.thresholds.autoSubmitScore} or more. You can switch dry run on to test it. Turn it on?`}
           confirmLabel="Turn on auto-submit"
           onClose={() => setConfirmAuto(false)}
           onConfirm={() => set('autopilot', { autoSubmit: true })}
@@ -753,11 +753,11 @@ function DiscoveryCard({ draft, set }: { draft: Settings; set: <K extends Sectio
   const d = draft.discovery
   return (
     <Card id="settings-discovery">
-      <CardHeader title="Finding jobs" hint="JobPilot checks each watched company board on its own schedule. A board with a good job in the last two weeks is checked about every hour, and a board with nothing good for two months about once a day." />
+      <CardHeader title="Finding jobs" hint="jobpls checks each watched company board on its own schedule. A board with a good job in the last two weeks is checked about every hour, and a board with nothing good for two months about once a day." />
       <div className="space-y-4 p-4">
-        <Toggle checked={d.autoWatchBoards} onChange={(v) => set('discovery', { autoWatchBoards: v })} label="Watch any company board that a posting links to." hint="A posting on Remotive, Hacker News or another job site often links to the employer's own board. JobPilot starts watching that board unless you blocked the company or turned its watch off before." />
+        <Toggle checked={d.autoWatchBoards} onChange={(v) => set('discovery', { autoWatchBoards: v })} label="Watch any company board that a posting links to." hint="A posting on Remotive, Hacker News or another job site often links to the employer's own board. jobpls starts watching that board unless you blocked the company or turned its watch off before." />
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Most company boards to watch" hint="JobPilot stops adding boards by itself when this many are watched. Boards you add yourself always work.">
+          <Field label="Most company boards to watch" hint="jobpls stops adding boards by itself when this many are watched. Boards you add yourself always work.">
             <NumberInput value={d.maxWatchedBoards} min={0} max={100000} step={100} onChange={(v) => set('discovery', { maxWatchedBoards: v ?? 0 })} />
           </Field>
           <Field label="Boards checked per run" hint="The boards that have waited longest go first. The rest wait for the next run.">
@@ -780,18 +780,18 @@ function BackgroundCard({ draft, set }: { draft: Settings; set: <K extends Secti
   const openAtLogin = appInfo?.openAtLogin
   let loginNote: string | null = null
   if (openAtLogin === null) loginNote = 'This works only in the installed app.'
-  else if (openAtLogin === false && settings?.system.startAtLogin) loginNote = 'Windows has JobPilot turned off for startup. Turn it on under Settings, Apps, Startup.'
+  else if (openAtLogin === false && settings?.system.startAtLogin) loginNote = 'Windows has jobpls turned off for startup. Turn it on under Settings, Apps, Startup.'
   return (
     <Card id="settings-system">
-      <CardHeader title="Running in the background" hint="For leaving JobPilot on all day, with autopilot doing the work." />
+      <CardHeader title="Running in the background" hint="For leaving jobpls on all day, with autopilot doing the work." />
       <div className="space-y-4 p-4">
-        <Toggle checked={sys.closeToTray} onChange={(v) => set('system', { closeToTray: v })} label="Run in the tray" hint="Closing the window leaves JobPilot running in the system tray. Quit it from the tray menu." />
+        <Toggle checked={sys.closeToTray} onChange={(v) => set('system', { closeToTray: v })} label="Run in the tray" hint="Closing the window leaves jobpls running in the system tray. Quit it from the tray menu." />
         <div>
-          <Toggle checked={sys.startAtLogin} onChange={(v) => set('system', { startAtLogin: v })} label="Start at login" hint="Start JobPilot when you sign in to Windows. It opens in the tray." />
+          <Toggle checked={sys.startAtLogin} onChange={(v) => set('system', { startAtLogin: v })} label="Start at login" hint="Start jobpls when you sign in to Windows. It opens in the tray." />
           {loginNote && <p className="mt-1 text-xs text-warn">{loginNote}</p>}
         </div>
         <Toggle checked={sys.keepAwake} onChange={(v) => set('system', { keepAwake: v })} label="Keep the PC awake" hint="Keep this PC from sleeping while a run is going or autopilot is on. Closing a laptop lid can still put it to sleep." />
-        <Toggle checked={sys.notifications} onChange={(v) => set('system', { notifications: v })} label="Notifications" hint="Show a Windows notification when JobPilot needs you, such as a sign-in, a captcha or a reached budget." />
+        <Toggle checked={sys.notifications} onChange={(v) => set('system', { notifications: v })} label="Notifications" hint="Show a Windows notification when jobpls needs you, such as a sign-in, a captcha or a reached budget." />
       </div>
     </Card>
   )
@@ -810,7 +810,7 @@ function EeoCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(
   ]
   return (
     <Card id="settings-eeo">
-      <CardHeader title="EEO answers" hint="Voluntary questions on US forms. JobPilot declines to answer unless you say otherwise." />
+      <CardHeader title="EEO answers" hint="Voluntary questions on US forms. jobpls declines to answer unless you say otherwise." />
       <div className="grid grid-cols-2 gap-4 p-4">
         {fields.map((f) => {
           const v = draft.eeo[f.key]
@@ -840,21 +840,21 @@ function EeoCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(
 function updateLine(u: UpdateStatus): string {
   switch (u.state) {
     case 'disabled':
-      return u.message ?? "This copy of JobPilot can't update itself."
+      return u.message ?? "This copy of jobpls can't update itself."
     case 'idle':
-      return "JobPilot hasn't checked for updates yet."
+      return "jobpls hasn't checked for updates yet."
     case 'checking':
       return 'Checking for updates.'
     case 'up_to_date':
-      return u.checkedAt ? `JobPilot is up to date. Last checked ${relativeTime(u.checkedAt)}.` : 'JobPilot is up to date.'
+      return u.checkedAt ? `jobpls is up to date. Last checked ${relativeTime(u.checkedAt)}.` : 'jobpls is up to date.'
     case 'downloading':
       return `Downloading version ${u.version ?? 'the update'}.${u.percent === null ? '' : ` ${Math.round(u.percent)}% done.`}`
     case 'ready':
-      return `Version ${u.version ?? 'the update'} is ready. It installs the next time JobPilot closes, or you can restart now.`
+      return `Version ${u.version ?? 'the update'} is ready. It installs the next time jobpls closes, or you can restart now.`
     case 'available':
       return `Version ${u.version ?? 'the update'} is available. This computer can't install it for you, so download it and run the installer.`
     case 'error':
-      return u.message ?? "JobPilot couldn't check for updates."
+      return u.message ?? "jobpls couldn't check for updates."
   }
 }
 
@@ -866,7 +866,7 @@ function UpdatesCard({ draft, set }: { draft: Settings; set: <K extends SectionK
 
   return (
     <Card id="settings-updates">
-      <CardHeader title="Updates" hint="To look for a new version, JobPilot asks GitHub whether one exists. GitHub sees your IP address and the version you run, as it does for any download. Updates keep your data." />
+      <CardHeader title="Updates" hint="To look for a new version, jobpls asks GitHub whether one exists. GitHub sees your IP address and the version you run, as it does for any download. Updates keep your data." />
       <div className="space-y-4 p-4">
         {!u ? (
           <Loading />
@@ -909,7 +909,7 @@ function UpdatesCard({ draft, set }: { draft: Settings; set: <K extends SectionK
             </div>
           </>
         )}
-        <Toggle checked={draft.updates.autoCheck} onChange={(v) => set('updates', { autoCheck: v })} label="Check for updates automatically" hint="JobPilot checks a few seconds after it opens and then every few hours. Checking by hand works either way." />
+        <Toggle checked={draft.updates.autoCheck} onChange={(v) => set('updates', { autoCheck: v })} label="Check for updates automatically" hint="jobpls checks a few seconds after it opens and then every few hours. Checking by hand works either way." />
       </div>
       {restarting && <RestartToUpdateDialog onClose={() => setRestarting(false)} />}
     </Card>
@@ -1005,7 +1005,7 @@ function DataCard(): React.JSX.Element {
         </div>
         <div className="border-t border-line pt-4">
           <h3 className="text-sm font-medium text-fg">About</h3>
-          <p className="mt-1 text-xs text-faint">JobPilot is provided as is, without warranty. You&apos;re responsible for charges from your AI providers, for everything sent to employers in your name, and for following the terms of the job sites and AI providers you use.</p>
+          <p className="mt-1 text-xs text-faint">jobpls is provided as is, without warranty. You&apos;re responsible for charges from your AI providers, for everything sent to employers in your name, and for following the terms of the job sites and AI providers you use.</p>
         </div>
       </div>
     </Card>

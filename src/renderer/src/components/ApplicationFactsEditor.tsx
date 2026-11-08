@@ -162,7 +162,7 @@ export function ApplyingEditor({
 
       <Block
         title="Salary expectations"
-        hint="Add a row for each currency. JobPilot uses the row that matches the job's currency or country."
+        hint="Add a row for each currency. jobpls uses the row that matches the job's currency or country."
         actions={
           <Button size="sm" icon={<Plus size={13} />} onClick={() => set('salary', [...facts.salary, { currency: facts.salary.length === 0 ? defaultCurrency : '', min: null, target: null, period: 'year', answerStyle: 'range' }])}>
             Add currency

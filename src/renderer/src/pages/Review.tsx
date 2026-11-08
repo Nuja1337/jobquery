@@ -61,7 +61,7 @@ function ReviewOverview(): React.JSX.Element {
         <EmptyState
           icon={<Inbox size={24} />}
           title="Nothing to review"
-          text="When JobPilot drafts an application, it shows up here. Prepare one from your shortlist, or turn on auto-prepare in Settings."
+          text="When jobpls drafts an application, it shows up here. Prepare one from your shortlist, or turn on auto-prepare in Settings."
           action={
             <Button variant="primary" icon={<ArrowRight size={14} />} onClick={() => navigate('/jobs')}>
               Go to the shortlist

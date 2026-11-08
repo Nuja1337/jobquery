@@ -215,9 +215,9 @@ export function createMockCompanies(initial: Company[], emit: Emit, uid: (prefix
         const pair = /^([a-z]+):([A-Za-z0-9._-]+)$/i.exec(line)
         const found: AtsDetection | null = pair ? { ats: pair[1].toLowerCase() as AtsKind, token: pair[2], jobId: null, companyName: titleCase(pair[2]) } : /\s/.test(line) ? null : detectMock(line)
         if (!found?.token) {
-          out.push({ line, error: /\s/.test(line) ? 'Put one address or ats:token on each line.' : 'JobPilot could not tell which application system this address uses.' })
+          out.push({ line, error: /\s/.test(line) ? 'Put one address or ats:token on each line.' : 'jobpls could not tell which application system this address uses.' })
         } else if (!READABLE.includes(found.ats)) {
-          out.push({ line, error: `This is a ${found.ats} careers page. JobPilot can detect it but cannot read its jobs yet.` })
+          out.push({ line, error: `This is a ${found.ats} careers page. jobpls can detect it but cannot read its jobs yet.` })
         } else if (!seen.has(`${found.ats}:${found.token}`)) {
           seen.add(`${found.ats}:${found.token}`)
           out.push({ ats: found.ats, token: found.token, name: found.companyName, line })

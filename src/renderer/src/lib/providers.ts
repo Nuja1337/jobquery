@@ -20,6 +20,6 @@ export function billingLabel(p: Pick<ProviderInfo, 'kind' | 'billing'>): string 
 /** Longer explanation of the same thing, for a tooltip. */
 export function billingTitle(p: Pick<ProviderInfo, 'kind' | 'billing'>): string {
   if (p.kind === 'openrouter') return 'Models whose names end in ":free" cost nothing. OpenRouter bills you for every other model, and those count toward your budget.'
-  if (p.billing === 'free') return "This is a free tier or a model on this computer. It costs nothing while billing is off for the key, and JobPilot doesn't count it toward your budget."
+  if (p.billing === 'free') return "This is a free tier or a model on this computer. It costs nothing while billing is off for the key, and jobpls doesn't count it toward your budget."
   return 'Each call is priced and counts toward your budget. The price is an estimate, and your provider bills you directly.'
 }

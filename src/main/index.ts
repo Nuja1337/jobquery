@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, ipcMain, Notification, powerMonitor, powerSaveBlocker, safeStorage, shell, type IpcMainInvokeEvent } from 'electron'
@@ -30,7 +31,7 @@ const keepAwake = new KeepAwake(powerSaveBlocker)
 const LOGIN_ARG = '--hidden'
 const startedHidden = process.argv.includes(LOGIN_ARG)
 /** Matches build.appId in package.json, which electron-builder gives the Start menu shortcut. */
-const APP_USER_MODEL_ID = 'dev.jobpilot.app'
+const APP_USER_MODEL_ID = 'dev.jobpls.app'
 
 const rendererIndex = path.join(__dirname, '../renderer/index.html')
 const devUrl = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
@@ -98,7 +99,7 @@ let appliedLoginItem: boolean | null = null
 
 /**
  * Registers or removes the start at sign-in entry. In development (an unpackaged app) it does
- * nothing, because the entry would point at the Electron binary and not at JobPilot.
+ * nothing, because the entry would point at the Electron binary and not at jobpls.
  */
 function applyLoginItem(wanted: boolean): void {
   if (!app.isPackaged || appliedLoginItem === wanted) return
@@ -121,7 +122,7 @@ function createWindow(): void {
     minWidth: 1040,
     minHeight: 680,
     show: false,
-    title: 'JobPilot',
+    title: 'jobpls',
     backgroundColor: '#0b0d12',
     autoHideMenuBar: true,
     webPreferences: {
@@ -158,7 +159,7 @@ function createWindow(): void {
     mainWindow?.hide()
     if (!trayHintShown && Notification.isSupported()) {
       trayHintShown = true
-      showNote('JobPilot keeps running in the tray.', 'Open it from the tray icon, or quit it from the tray menu.')
+      showNote('jobpls keeps running in the tray.', 'Open it from the tray icon, or quit it from the tray menu.')
     }
   })
   // Windows is signing out or shutting down.
@@ -182,10 +183,30 @@ function createWindow(): void {
   }
 }
 
-// JOBPILOT_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
+// JOBPLS_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
 // Electron's own files and the one-copy-at-a-time lock follow it, so a second profile can run
 // while the normal one is open.
-if (process.env.JOBPILOT_DATA_DIR) app.setPath('userData', process.env.JOBPILOT_DATA_DIR)
+if (process.env.JOBPLS_DATA_DIR) app.setPath('userData', process.env.JOBPLS_DATA_DIR)
+
+/**
+ * The app was called JobPilot before. Its data folder and database file carry the new name now, so an
+ * existing folder is moved once, before anything opens it. A folder set through the environment is left alone.
+ */
+function adoptOldDataFolder(): void {
+  if (process.env.JOBPLS_DATA_DIR) return
+  const dir = app.getPath('userData')
+  const old = path.join(path.dirname(dir), 'JobPilot')
+  try {
+    if (!fs.existsSync(dir) && fs.existsSync(old)) fs.renameSync(old, dir)
+    for (const suffix of ['', '-wal', '-shm']) {
+      const from = path.join(dir, `jobpilot.sqlite${suffix}`)
+      const to = path.join(dir, `jobpls.sqlite${suffix}`)
+      if (fs.existsSync(from) && !fs.existsSync(to)) fs.renameSync(from, to)
+    }
+  } catch (err) {
+    console.error('Could not move the old data folder.', err)
+  }
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -196,6 +217,7 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     // Notifications on Windows are filed under this ID. Unpackaged, the Electron binary is the app.
     if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? APP_USER_MODEL_ID : process.execPath)
+    adoptOldDataFolder()
     const paths = appPaths(app.getPath('userData'))
     const vault = await createSafeStorageVault(safeStorage)
     const ipc = await registerIpc({

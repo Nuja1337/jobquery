@@ -2,7 +2,7 @@
 
 ## Why a desktop app
 
-JobPilot runs on the user's computer as an Electron app. We weighed a web app and chose desktop for four reasons.
+jobpls runs on the user's computer as an Electron app. We weighed a web app and chose desktop for four reasons.
 
 1. **Filling forms needs a real browser.** Greenhouse, Lever, Ashby and Workday forms are filled in the user's own Chrome or Edge, from their home connection, in a separate browser profile where they sign in to job sites once and stay signed in. A server would have to run headless browsers from a data center, which job sites flag and block, and it would have to hold every user's login sessions.
 2. **The API key stays with its owner.** Keys are encrypted with the operating system's key store (DPAPI on Windows, Keychain on macOS, libsecret or KWallet on Linux) and are only read by the main process. When no key store is available, the key is only obscured on disk and the app tells the user so. A web app would either store everyone's keys on a server or keep them in browser storage.

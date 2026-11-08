@@ -158,7 +158,7 @@ export function Onboarding(): React.JSX.Element {
           <div className="flex h-7 w-7 items-center justify-center rounded-md bg-accent text-accent-fg">
             <Rocket size={15} />
           </div>
-          <span className="text-sm font-semibold text-fg">JobPilot setup</span>
+          <span className="text-sm font-semibold text-fg">jobpls setup</span>
         </div>
         <ol className="flex-1 space-y-1">
           {STEPS.map((label, i) => (
@@ -196,12 +196,12 @@ export function Onboarding(): React.JSX.Element {
           <div className="mt-5 space-y-4">
             {current === 'AI provider' && (
               <>
-                <p className="text-sm text-muted">JobPilot uses your own AI key. Choose a free option or a paid one, whichever suits you. You can add both and change this later in Settings.</p>
+                <p className="text-sm text-muted">jobpls uses your own AI key. Choose a free option or a paid one, whichever suits you. You can add both and change this later in Settings.</p>
                 <Notice tone="info" title="A ChatGPT or Claude subscription is not an API key">
-                  Those subscriptions don't include API use, so JobPilot can't use them. If you don't have a card, start with a free option.
+                  Those subscriptions don't include API use, so jobpls can't use them. If you don't have a card, start with a free option.
                 </Notice>
                 <Notice tone="info" title="Your provider bills you directly">
-                  Free tiers cost nothing while billing is off for the key. Paid providers charge you for each call. JobPilot's cost figures are estimates, and JobPilot isn't responsible for charges from your provider.
+                  Free tiers cost nothing while billing is off for the key. Paid providers charge you for each call. jobpls's cost figures are estimates, and jobpls isn't responsible for charges from your provider.
                 </Notice>
                 {list.length > 0 && (
                   <Card>
@@ -261,7 +261,7 @@ export function Onboarding(): React.JSX.Element {
 
             {current === 'Resume' && (
               <>
-                <p className="text-sm text-muted">Upload your resume as a PDF or Word file. JobPilot reads it to draft your profile, and you check every field before anything is saved.</p>
+                <p className="text-sm text-muted">Upload your resume as a PDF or Word file. jobpls reads it to draft your profile, and you check every field before anything is saved.</p>
                 <DocumentSection kind="resume" title="Resume" emptyText="No resume yet. Press Upload to choose a file." onChange={(docs) => setResumeId(docs.find((d) => d.isPrimary)?.id ?? docs[0]?.id ?? null)} />
                 <div className="flex items-center gap-3">
                   <Button variant="primary" icon={<Wand2 size={14} />} loading={reading} disabled={!resumeId} onClick={() => void readResume()}>
@@ -274,14 +274,14 @@ export function Onboarding(): React.JSX.Element {
 
             {current === 'Your profile' && (
               <>
-                <Notice>This is a draft. Fix anything that is wrong, because JobPilot copies these details into application forms.</Notice>
+                <Notice>This is a draft. Fix anything that is wrong, because jobpls copies these details into application forms.</Notice>
                 <ProfileEditor value={profile} onChange={setProfile} />
               </>
             )}
 
             {current === 'Applying' && (
               <>
-                <p className="text-sm text-muted">Application forms ask for the same details again and again. Answer them once and JobPilot fills them in, so fewer applications wait for you.</p>
+                <p className="text-sm text-muted">Application forms ask for the same details again and again. Answer them once and jobpls fills them in, so fewer applications wait for you.</p>
                 <ApplyingEditor
                   facts={profile.application}
                   onChange={(application) => setProfile({ ...profile, application })}
@@ -293,14 +293,14 @@ export function Onboarding(): React.JSX.Element {
 
             {current === 'Questions forms ask' && (
               <>
-                <p className="text-sm text-muted">These come up less often, but they stop an application when JobPilot cannot answer them. Leave anything you would rather answer yourself.</p>
+                <p className="text-sm text-muted">These come up less often, but they stop an application when jobpls cannot answer them. Leave anything you would rather answer yourself.</p>
                 <QuestionFormsEditor facts={profile.application} onChange={(application) => setProfile({ ...profile, application })} skills={profile.skills} languages={profile.languages} />
               </>
             )}
 
             {current === 'Your stances' && (
               <>
-                <p className="text-sm text-muted">Two kinds of question are always yours to answer. Write your answer in your own words and JobPilot reuses it word for word. It never writes these for you.</p>
+                <p className="text-sm text-muted">Two kinds of question are always yours to answer. Write your answer in your own words and jobpls reuses it word for word. It never writes these for you.</p>
                 <AnswerSlots slots={STANCE_SLOTS} drafts={slots.drafts} onChange={slots.setDrafts} />
                 <Notice tone="info" title="When autopilot sends these">
                   Autopilot sends a form with these questions only when &quot;Send my saved answers to questions only I answer&quot; is on in Settings. Required privacy and truthfulness boxes follow a second toggle called &quot;Tick required privacy and truthfulness boxes&quot;. Both are off until you turn them on.
@@ -310,14 +310,14 @@ export function Onboarding(): React.JSX.Element {
 
             {current === 'Answers in your words' && (
               <>
-                <p className="text-sm text-muted">JobPilot adapts these to each company and keeps your facts and wording. Fill in as many as you like.</p>
+                <p className="text-sm text-muted">jobpls adapts these to each company and keeps your facts and wording. Fill in as many as you like.</p>
                 <AnswerSlots slots={TEMPLATE_SLOTS} drafts={slots.drafts} onChange={slots.setDrafts} />
               </>
             )}
 
             {current === 'Your writing' && (
               <>
-                <p className="text-sm text-muted">This step is optional, and it helps the most with how your letters sound. A few things you wrote yourself teach JobPilot your voice.</p>
+                <p className="text-sm text-muted">This step is optional, and it helps the most with how your letters sound. A few things you wrote yourself teach jobpls your voice.</p>
                 <DocumentSection kind="writing_sample" title="Writing samples" allowPaste emptyText="Emails, posts or notes in your own words." onChange={(d) => setSamples((s) => ({ ...s, writing: d.length }))} />
                 <DocumentSection kind="cover_letter_sample" title="Sample cover letter" emptyText="A past cover letter you were happy with." onChange={(d) => setSamples((s) => ({ ...s, letters: d.length }))} />
                 <DocumentSection kind="portfolio" title="Portfolio links" allowLink emptyText="Links to your portfolio, GitHub or published work." />
@@ -342,9 +342,9 @@ export function Onboarding(): React.JSX.Element {
 
             {current === 'Finish' && (
               <Card className="space-y-3 p-5">
-                <p className="text-sm text-fg">Setup is done. This is what JobPilot does from now on.</p>
+                <p className="text-sm text-fg">Setup is done. This is what jobpls does from now on.</p>
                 <ul className="list-inside list-disc space-y-1.5 text-sm text-muted">
-                  <li>Press Run now. JobPilot looks at your sources and drops what does not fit, using free filters first.</li>
+                  <li>Press Run now. jobpls looks at your sources and drops what does not fit, using free filters first.</li>
                   <li>Jobs that pass get an AI fit score. The good ones land on your shortlist.</li>
                   <li>Prepare an application and it appears in the review queue. You check it and click Submit.</li>
                   <li>Autopilot is off until you turn it on in Settings.</li>

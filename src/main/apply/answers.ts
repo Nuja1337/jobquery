@@ -185,8 +185,8 @@ export async function answerFields(
         results.set(
           field.key,
           field.type === 'checkbox'
-            ? blank(field, { value: 'false', source: 'settings', confidence: 1, note: 'Optional, so JobPilot leaves it unticked.' })
-            : blank(field, { source: 'settings', note: 'Optional, so JobPilot leaves it blank.' })
+            ? blank(field, { value: 'false', source: 'settings', confidence: 1, note: 'Optional, so jobpls leaves it unticked.' })
+            : blank(field, { source: 'settings', note: 'Optional, so jobpls leaves it blank.' })
         )
       } else {
         results.set(field.key, blank(field, { source: 'settings', needsUser: true, note: ask }))

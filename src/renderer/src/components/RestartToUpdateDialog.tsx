@@ -8,7 +8,7 @@ export function RestartToUpdateDialog({ onClose }: { onClose: () => void }): Rea
   return (
     <ConfirmDialog
       title="Restart to update?"
-      message={`JobPilot saves your work, closes, installs ${version ? `version ${version}` : 'the update'} and opens again.`}
+      message={`jobpls saves your work, closes, installs ${version ? `version ${version}` : 'the update'} and opens again.`}
       confirmLabel="Restart now"
       onClose={onClose}
       onConfirm={installUpdate}

@@ -87,7 +87,7 @@ export function fakeClientFactory(calls: LlmRequest[], options: FakeModelOptions
 
 /** An in-memory context with a fake AI provider already set up. */
 export async function makeTestEnv(options: FakeModelOptions & { provider?: boolean } = {}): Promise<TestEnv> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-test-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-test-'))
   const pushed: TestEnv['pushed'] = []
   const llmCalls: LlmRequest[] = []
   const model: ModelStats = { inflight: 0, maxInflight: 0 }

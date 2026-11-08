@@ -45,7 +45,7 @@ const SEARCH_SOURCES: Record<SearchSource, { hint: string; params: ParamSpec[] }
 export function Sources(): React.JSX.Element {
   return (
     <Page wide>
-      <PageHeader title="Sources" intro="Where JobPilot looks for jobs." />
+      <PageHeader title="Sources" intro="Where jobpls looks for jobs." />
       <Companies />
       <Searches />
     </Page>
@@ -76,7 +76,7 @@ export function Companies(): React.JSX.Element {
       <StartFast compact={(counts?.total ?? 0) > 0} onAdded={list.reload} />
       <AddBoards onAdded={list.reload} />
       <Card>
-        <CardHeader title="Companies" hint="Every board JobPilot knows about. Turn Watch on to check a board on each run." />
+        <CardHeader title="Companies" hint="Every board jobpls knows about. Turn Watch on to check a board on each run." />
         <CompanyTable
           page={list.data}
           error={list.error}

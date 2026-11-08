@@ -6,7 +6,7 @@
 // To check a packaged build instead, point SMOKE_EXE at it:
 //
 //   npx electron-builder --win --dir
-//   SMOKE_EXE=release/win-unpacked/JobPilot.exe npm run smoke
+//   SMOKE_EXE=release/win-unpacked/jobpls.exe npm run smoke
 //
 // It doesn't call any AI provider, so it needs no API key and costs nothing.
 
@@ -20,7 +20,7 @@ import { _electron as electron } from 'playwright-core'
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-smoke-'))
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-smoke-'))
 const shotsDir = path.join(root, 'out', 'smoke')
 fs.mkdirSync(shotsDir, { recursive: true })
 
@@ -34,7 +34,7 @@ const packagedExe = process.env.SMOKE_EXE ? path.resolve(root, process.env.SMOKE
 const app = await electron.launch({
   executablePath: packagedExe ?? electronPath,
   args: packagedExe ? [] : [root],
-  env: { ...process.env, JOBPILOT_DATA_DIR: dataDir }
+  env: { ...process.env, JOBPLS_DATA_DIR: dataDir }
 })
 
 try {

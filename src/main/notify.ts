@@ -28,16 +28,16 @@ export function notificationFor(event: Pick<EventRecord, 'type' | 'message' | 'd
       // The person's own report. It comes first, because the note they wrote can mention anything.
       if (event.message.startsWith('Auto-submit paused')) return { title: 'Auto-submit paused', body: event.message }
       if (CAPTCHA.test(event.message)) {
-        return { title: 'A captcha stopped an application', body: `${who} showed a captcha. Open JobPilot and solve it in the browser window.` }
+        return { title: 'A captcha stopped an application', body: `${who} showed a captcha. Open jobpls and solve it in the browser window.` }
       }
       if (SIGN_IN.test(event.message)) {
-        return { title: 'JobPilot needs you to sign in', body: `${who} wants you to sign in before JobPilot can apply. Open JobPilot to finish it.` }
+        return { title: 'jobpls needs you to sign in', body: `${who} wants you to sign in before jobpls can apply. Open jobpls to finish it.` }
       }
       return null
     case 'budget_stop':
-      return { title: 'AI budget reached for today', body: 'JobPilot paused its AI work. Raise the budget in Settings or wait for it to reset.' }
+      return { title: 'AI budget reached for today', body: 'jobpls paused its AI work. Raise the budget in Settings or wait for it to reset.' }
     case 'rate_limit_stop':
-      return { title: 'AI provider limit reached', body: 'Your AI provider turned requests away, so JobPilot paused its AI work. It tries again on the next run.' }
+      return { title: 'AI provider limit reached', body: 'Your AI provider turned requests away, so jobpls paused its AI work. It tries again on the next run.' }
     case 'run_finished': {
       const submitted = num(event.data?.submitted)
       if (submitted <= 0) return null
@@ -51,7 +51,7 @@ export function notificationFor(event: Pick<EventRecord, 'type' | 'message' | 'd
     }
     case 'error':
       // Only the crash handlers mark their entries. Ordinary errors are too frequent to interrupt anyone.
-      return event.data?.process === true ? { title: 'JobPilot hit an unexpected error', body: event.message } : null
+      return event.data?.process === true ? { title: 'jobpls hit an unexpected error', body: event.message } : null
     default:
       return null
   }

@@ -131,7 +131,7 @@ export function DocumentSection({ kind, title, hint, allowLink, allowPaste, empt
           message={
             kind === 'resume'
               ? `Delete ${deleting.name}? Applications that are not sent yet switch to your primary resume. Applications you already sent are not changed.`
-              : `Delete ${deleting.name}? JobPilot will stop using it for new applications. Applications already written are not changed.`
+              : `Delete ${deleting.name}? jobpls will stop using it for new applications. Applications already written are not changed.`
           }
           confirmLabel="Delete"
           danger
@@ -211,7 +211,7 @@ function AddDialog({ mode, kind, onClose, onAdded }: { mode: 'link' | 'paste'; k
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={mode === 'link' ? 'My portfolio' : 'Blog post about migrations'} />
         </Field>
         {mode === 'link' ? (
-          <Field label="Web address" hint="JobPilot reads the page and keeps the text.">
+          <Field label="Web address" hint="jobpls reads the page and keeps the text.">
             <Input autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder="https://" />
           </Field>
         ) : (

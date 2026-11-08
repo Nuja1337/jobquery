@@ -8,7 +8,7 @@ import { renderCoverLetterPdf } from './coverLetterPdf'
 
 describe('renderCoverLetterPdf', () => {
   it('gives each application its own file, even for the same company', async () => {
-    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-letters-'))
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-letters-'))
     const written: string[] = []
     const browser = {
       headlessPage: async () => ({

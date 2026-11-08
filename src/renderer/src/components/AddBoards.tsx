@@ -79,7 +79,7 @@ export function AddBoards({ onAdded }: { onAdded: () => void }): React.JSX.Eleme
           {detected && (
             <div className="rounded-lg border border-line bg-bg p-3">
               {detected.ats === 'unknown' ? (
-                <p className="mb-3 text-sm text-warn">JobPilot could not recognize this job board. You can still save it, but it will not be checked automatically.</p>
+                <p className="mb-3 text-sm text-warn">jobpls could not recognize this job board. You can still save it, but it will not be checked automatically.</p>
               ) : (
                 <p className="mb-3 text-sm text-good">
                   Recognized a {SOURCE_LABELS[detected.ats as keyof typeof SOURCE_LABELS] ?? detected.ats} job board{detected.token ? ` (${detected.token})` : ''}.

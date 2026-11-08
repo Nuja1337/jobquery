@@ -201,7 +201,7 @@ export function Dashboard(): React.JSX.Element {
               </Button>
             }
           >
-            Finish the setup guide so JobPilot has an AI provider, your profile and places to look for jobs.
+            Finish the setup guide so jobpls has an AI provider, your profile and places to look for jobs.
           </Notice>
         </div>
       )}
@@ -311,7 +311,7 @@ export function Dashboard(): React.JSX.Element {
           <CardHeader title="Recent activity" actions={<Activity size={14} className="text-faint" />} />
           {events.data.length === 0 ? (
             <div className="p-4">
-              <EmptyState title="No activity yet" text="Press Run now to look for jobs. What JobPilot does shows up here." />
+              <EmptyState title="No activity yet" text="Press Run now to look for jobs. What jobpls does shows up here." />
             </div>
           ) : (
             <ul className="divide-y divide-line">
@@ -333,7 +333,7 @@ export function Dashboard(): React.JSX.Element {
         <Card className="col-span-2 self-start">
           <CardHeader title="Suggested filter changes" hint="Learned from the jobs you dismissed." actions={<Lightbulb size={14} className="text-faint" />} />
           {!suggestions.data || suggestions.data.length === 0 ? (
-            <p className="p-4 text-sm text-muted">No suggestions yet. Dismiss a few jobs with a reason and JobPilot will suggest filters.</p>
+            <p className="p-4 text-sm text-muted">No suggestions yet. Dismiss a few jobs with a reason and jobpls will suggest filters.</p>
           ) : (
             <ul className="divide-y divide-line">
               {suggestions.data.map((s) => (

@@ -17,7 +17,7 @@ export interface AppPaths {
 export function appPaths(dataDir: string): AppPaths {
   const paths: AppPaths = {
     dataDir,
-    dbFile: path.join(dataDir, 'jobpilot.sqlite'),
+    dbFile: path.join(dataDir, 'jobpls.sqlite'),
     documentsDir: path.join(dataDir, 'documents'),
     screenshotsDir: path.join(dataDir, 'screenshots'),
     browserProfileDir: path.join(dataDir, 'browser-profile'),

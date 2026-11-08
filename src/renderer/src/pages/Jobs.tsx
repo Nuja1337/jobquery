@@ -168,7 +168,7 @@ export function Jobs(): React.JSX.Element {
     <Page wide>
       <PageHeader
         title="Jobs"
-        intro="Everything JobPilot found, with what it decided and why."
+        intro="Everything jobpls found, with what it decided and why."
         actions={
           <Button icon={<LinkIcon size={14} />} onClick={() => setAddOpen(true)}>
             Add job by URL
@@ -410,7 +410,7 @@ function AddJobDialog({ onClose, onAdded }: { onClose: () => void; onAdded: (id:
           if (!busy && /^https?:\/\//.test(url.trim())) void submit()
         }}
       >
-        <Field label="Posting address" hint="Paste the link to a single job posting. JobPilot reads it and runs it through the free filters.">
+        <Field label="Posting address" hint="Paste the link to a single job posting. jobpls reads it and runs it through the free filters.">
           <Input autoFocus value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://boards.greenhouse.io/company/jobs/123456" />
         </Field>
       </form>

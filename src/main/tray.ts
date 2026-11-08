@@ -19,7 +19,7 @@ function trayImage(): Electron.NativeImage {
   return image
 }
 
-/** The icon in the notification area, with a menu that shows what JobPilot is doing and can pause it. */
+/** The icon in the notification area, with a menu that shows what jobpls is doing and can pause it. */
 export class AppTray {
   private readonly tray: Tray
   /** What the menu shows now. The menu is only rebuilt when this changes. */
@@ -30,7 +30,7 @@ export class AppTray {
     private readonly actions: TrayActions
   ) {
     this.tray = new Tray(trayImage())
-    this.tray.setToolTip('JobPilot')
+    this.tray.setToolTip('jobpls')
     this.tray.on('click', () => actions.open())
     this.tray.on('double-click', () => actions.open())
     this.update()
@@ -47,13 +47,13 @@ export class AppTray {
     this.shown = key
 
     const items: MenuItemConstructorOptions[] = [
-      { label: 'Open JobPilot', click: () => this.actions.open() },
+      { label: 'Open jobpls', click: () => this.actions.open() },
       { type: 'separator' },
       { label: status, enabled: false },
       { label: autopilot.enabled ? 'Pause autopilot' : 'Resume autopilot', click: () => void this.toggleAutopilot() },
       { label: 'Run now', enabled: !running, click: () => void this.controls.runNow() },
       { type: 'separator' },
-      { label: 'Quit JobPilot', click: () => this.actions.quit() }
+      { label: 'Quit jobpls', click: () => this.actions.quit() }
     ]
     this.tray.setContextMenu(Menu.buildFromTemplate(items))
   }
@@ -65,7 +65,7 @@ export class AppTray {
       const answer = await dialog.showMessageBox({
         type: 'warning',
         title: 'Resume autopilot?',
-        message: 'Auto-submit is on, so JobPilot will send applications in your name without asking you first.',
+        message: 'Auto-submit is on, so jobpls will send applications in your name without asking you first.',
         buttons: ['Resume autopilot', 'Cancel'],
         defaultId: 1,
         cancelId: 1,

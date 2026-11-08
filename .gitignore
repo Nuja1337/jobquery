@@ -9,4 +9,4 @@ Thumbs.db
 .env
 .env.*
 # Local app data created during development
-.jobpilot-dev/
+.jobpls-dev/
