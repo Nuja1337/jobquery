@@ -234,3 +234,197 @@ describe('getAnalytics', () => {
     expect(report.tokenSavings.estimatedUsdSaved).toBeCloseTo(2 * (2125 * 0.1 + 375 * 0.5) / 1_000_000, 8)
   })
 })
+
+describe('volume analytics', () => {
+  /** An age that is always inside today, even just after midnight. */
+  function earlierToday(): number {
+    const midnight = new Date()
+    midnight.setHours(0, 0, 0, 0)
+    return Math.floor((Date.now() - midnight.getTime()) / 2)
+  }
+
+  function sendNow(env: TestEnv, id: string, at: Date, score = 80) {
+    const job = seedJob(env, id, DAY, 'applied')
+    env.ctx.jobs.saveFit(job.id, fit(score, 'great', [], []), 1)
+    const app = env.ctx.applications.create(job.id)
+    env.ctx.applications.update(app.id, { status: 'submitted', submittedAt: at.toISOString() })
+    return app
+  }
+
+  it('counts the day and the week in SQL, not from list lengths', async () => {
+    const env = await makeTestEnv()
+    const { ctx } = env
+    ctx.settings.update({ thresholds: { shortlistScore: 60 } })
+    const recent = earlierToday()
+
+    // Today: one dropped by a filter, one dropped by the keyword score, one scored low, one shortlisted, one prepared and waiting.
+    seedJob(env, 't-f', recent, 'filtered_out', {}, { reason: 'company blocked' })
+    seedJob(env, 't-p', recent, 'prescored_out', {}, { reason: 'keyword match too low (10)' })
+    const low = seedJob(env, 't-low', recent, 'scored')
+    ctx.jobs.saveFit(low.id, fit(40, 'weak', [], []), 1)
+    const short = seedJob(env, 't-short', recent, 'shortlisted')
+    ctx.jobs.saveFit(short.id, fit(70, 'good', [], []), 1)
+    const prepared = seedJob(env, 't-prep', recent, 'ready')
+    ctx.jobs.saveFit(prepared.id, fit(85, 'great', [], []), 1)
+    const readyApp = ctx.applications.create(prepared.id)
+    ctx.applications.update(readyApp.id, { status: 'ready' })
+    // Today: one application that needs the user.
+    const stuck = seedJob(env, 't-stuck', recent, 'preparing')
+    ctx.jobs.saveFit(stuck.id, fit(90, 'perfect', [], []), 1)
+    const stuckApp = ctx.applications.create(stuck.id)
+    ctx.applications.update(stuckApp.id, { status: 'needs_attention' })
+    // Found a day ago, sent just now. Its job was not found today, but its application is new.
+    sendNow(env, 't-sent', new Date(Date.now() - recent / 2))
+    // Three days ago: found, shortlisted and sent.
+    const old = seedJob(env, 'w-old', 3 * DAY, 'applied')
+    ctx.jobs.saveFit(old.id, fit(75, 'great', [], []), 1)
+    const oldApp = ctx.applications.create(old.id)
+    ctx.db.run('UPDATE applications SET created_at = :at WHERE id = :id', { id: oldApp.id, at: new Date(Date.now() - 3 * DAY).toISOString() })
+    ctx.applications.update(oldApp.id, { status: 'submitted', submittedAt: new Date(Date.now() - 3 * DAY).toISOString() })
+    // Ten days ago: outside the week.
+    seedJob(env, 'x-old', 10 * DAY, 'filtered_out', {}, { reason: 'company blocked' })
+
+    seedCall(env, { task: 'triage', tokens: 100, cost: 0.2, ageMs: recent })
+    seedCall(env, { task: 'triage', tokens: 100, cost: 0.5, ageMs: 3 * DAY })
+    seedCall(env, { task: 'triage', tokens: 0, cost: 0, hit: true, ageMs: recent })
+
+    const { today, week } = getAnalytics(ctx, 1)
+    expect(today).toMatchObject({ discovered: 6, filteredOut: 2, scored: 4, shortlisted: 3, prepared: 3, submitted: 1, needsAttention: 1, ready: 1 })
+    expect(today.costUsd).toBeCloseTo(0.2, 6)
+    expect(week).toMatchObject({ discovered: 8, filteredOut: 2, scored: 6, shortlisted: 5, prepared: 4, submitted: 2, needsAttention: 1, ready: 1 })
+    expect(week.costUsd).toBeCloseTo(0.7, 6)
+    // The windows do not depend on the range asked for.
+    expect(getAnalytics(ctx, 30).today).toEqual(today)
+  })
+
+  it('counts the whole queue and the replies over all time', async () => {
+    const env = await makeTestEnv()
+    const { ctx } = env
+    const old = sendNow(env, 'o1', new Date(Date.now() - 90 * DAY))
+    ctx.db.run("UPDATE applications SET outcome = 'rejected' WHERE id = :id", { id: old.id })
+    sendNow(env, 'o2', new Date(Date.now() - 80 * DAY))
+    for (const [id, status] of [['q1', 'ready'], ['q2', 'ready'], ['q3', 'needs_attention']] as const) {
+      const job = seedJob(env, id, 40 * DAY, 'ready')
+      const app = ctx.applications.create(job.id)
+      ctx.db.run('UPDATE applications SET created_at = :at WHERE id = :id', { id: app.id, at: new Date(Date.now() - 40 * DAY).toISOString() })
+      ctx.applications.update(app.id, { status })
+    }
+    expect(getAnalytics(ctx, 7).totals).toEqual({ submitted: 2, responses: 1, needsAttention: 1, ready: 2 })
+  })
+
+  it('buckets the last 24 hours of sends by hour with zeros filled in', async () => {
+    const env = await makeTestEnv()
+    const now = Date.now()
+    sendNow(env, 'h1', new Date(now - 60_000))
+    sendNow(env, 'h2', new Date(now - 60_000))
+    sendNow(env, 'h3', new Date(now - 3 * HOUR))
+    sendNow(env, 'h4', new Date(now - 30 * HOUR))
+    const { sendsByHour } = getAnalytics(env.ctx, 7)
+    expect(sendsByHour).toHaveLength(24)
+    const hours = sendsByHour.map((h) => h.hour)
+    expect(hours).toEqual([...hours].sort())
+    expect(new Set(hours).size).toBe(24)
+    expect(hours.every((h) => h.endsWith(':00:00.000Z'))).toBe(true)
+    expect(sendsByHour.reduce((n, h) => n + h.count, 0)).toBe(3)
+    // The last bucket is the current hour. A send a minute ago is in it, or in the one before just after the hour turns.
+    expect(sendsByHour[23].count + sendsByHour[22].count).toBe(2)
+    expect(sendsByHour[20].count + sendsByHour[19].count + sendsByHour[21].count).toBeGreaterThanOrEqual(1)
+  })
+
+  it('counts a Submit click with no confirmation as a send', async () => {
+    const env = await makeTestEnv()
+    const job = seedJob(env, 'c1', HOUR, 'applied')
+    const app = env.ctx.applications.create(job.id)
+    env.ctx.db.run('UPDATE applications SET submit_clicked_at = :at WHERE id = :id', { id: app.id, at: new Date(Date.now() - 60_000).toISOString() })
+    const report = getAnalytics(env.ctx, 7)
+    expect(report.week.submitted).toBe(1)
+    expect(report.sendsByHour.reduce((n, h) => n + h.count, 0)).toBe(1)
+  })
+
+  it('builds the score histogram for jobs found in the last 7 days', async () => {
+    const env = await makeTestEnv()
+    const { ctx } = env
+    const scores: Array<[string, number, number]> = [
+      ['a', 49, DAY],
+      ['b', 50, DAY],
+      ['c', 54, DAY],
+      ['d', 55, DAY],
+      ['e', 72, 2 * DAY],
+      ['f', 72, 2 * DAY],
+      ['g', 99, DAY],
+      ['h', 100, DAY],
+      ['i', 90, 10 * DAY]
+    ]
+    for (const [id, score, age] of scores) {
+      const job = seedJob(env, `s-${id}`, age, 'scored')
+      ctx.jobs.saveFit(job.id, fit(score, 'good', [], []), 1)
+    }
+    const { scoreHistogram, scoreCounts } = getAnalytics(ctx, 7)
+    expect(scoreHistogram).toHaveLength(10)
+    expect(scoreHistogram[0]).toEqual({ from: 50, to: 55, count: 2 })
+    expect(scoreHistogram[1]).toEqual({ from: 55, to: 60, count: 1 })
+    expect(scoreHistogram.find((b) => b.from === 70)?.count).toBe(2)
+    expect(scoreHistogram[9]).toEqual({ from: 95, to: 100, count: 2 })
+    expect(scoreHistogram.reduce((n, b) => n + b.count, 0)).toBe(7)
+    expect(scoreCounts).toHaveLength(51)
+    expect(scoreCounts[72 - 50]).toBe(2)
+    expect(scoreCounts[100 - 50]).toBe(1)
+  })
+
+  it('counts boards like the Sources page and finds the ones due now', async () => {
+    const env = await makeTestEnv()
+    const { ctx } = env
+    const board = (token: string, o: { watch: boolean; blocked?: boolean; failures?: number; next?: Date }) => {
+      const c = ctx.companies.save({ name: `Co ${token}`, ats: 'greenhouse', atsToken: token, watch: o.watch, blocked: o.blocked ?? false })
+      ctx.boards.ensureState(c.id)
+      ctx.db.run('UPDATE board_state SET failures = :f, next_check_at = :n WHERE company_id = :id', {
+        id: c.id,
+        f: o.failures ?? 0,
+        n: (o.next ?? new Date(Date.now() + DAY)).toISOString()
+      })
+    }
+    board('ok-later', { watch: true })
+    board('ok-due', { watch: true, next: new Date(Date.now() - HOUR) })
+    board('flaky', { watch: true, failures: 2, next: new Date(Date.now() - HOUR) })
+    board('dead', { watch: false, failures: 5 })
+    board('blocked-due', { watch: true, blocked: true, next: new Date(Date.now() - HOUR) })
+    board('unwatched-due', { watch: false, next: new Date(Date.now() - HOUR) })
+    expect(getAnalytics(ctx, 7).boards).toEqual({ watched: 3, failing: 1, stopped: 1, dueNow: 2 })
+  })
+
+  it('reports requests and spend today for each provider against its daily limit', async () => {
+    const env = await makeTestEnv({ provider: false })
+    const { ctx } = env
+    const free = await ctx.providers.save({ kind: 'gemini', label: 'Gemini free', apiKey: 'k', requestsPerDay: 1000 })
+    const paid = await ctx.providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'k' })
+    const idle = await ctx.providers.save({ kind: 'openai', label: 'Idle', apiKey: 'k' })
+    const call = (providerId: string, cost: number, o: { hit?: boolean; ageMs?: number } = {}) => {
+      seedCall(env, { task: 'triage', tokens: 10, cost, hit: o.hit, ageMs: o.ageMs ?? earlierToday() })
+      ctx.db.run('UPDATE llm_calls SET provider_id = :p WHERE rowid = (SELECT MAX(rowid) FROM llm_calls)', { p: providerId })
+    }
+    call(free.id, 0)
+    call(free.id, 0)
+    call(free.id, 0, { hit: true })
+    call(paid.id, 0.25)
+    call(paid.id, 0.5, { ageMs: 2 * DAY })
+    const { quota } = getAnalytics(ctx, 7)
+    expect(quota).toEqual([
+      { providerId: free.id, label: 'Gemini free', requestsToday: 2, requestsPerDay: 1000, costToday: 0 },
+      { providerId: paid.id, label: 'Claude', requestsToday: 1, requestsPerDay: null, costToday: 0.25 },
+      { providerId: idle.id, label: 'Idle', requestsToday: 0, requestsPerDay: null, costToday: 0 }
+    ])
+  })
+
+  it('returns empty volume fields for an empty database', async () => {
+    const { ctx } = await makeTestEnv({ provider: false })
+    const r = getAnalytics(ctx, 7)
+    const zero = { discovered: 0, filteredOut: 0, scored: 0, shortlisted: 0, prepared: 0, submitted: 0, needsAttention: 0, ready: 0, costUsd: 0 }
+    expect(r.today).toEqual(zero)
+    expect(r.week).toEqual(zero)
+    expect(r.sendsByHour).toHaveLength(24)
+    expect(r.scoreHistogram.every((b) => b.count === 0)).toBe(true)
+    expect(r.boards).toEqual({ watched: 0, failing: 0, stopped: 0, dueNow: 0 })
+    expect(r.quota).toEqual([])
+    expect(r.totals).toEqual({ submitted: 0, responses: 0, needsAttention: 0, ready: 0 })
+  })
+})

@@ -25,6 +25,8 @@ export interface FakeModelOptions {
   score?: (prompt: string) => number
   /** Throw this instead of answering. */
   fail?: (prompt: string) => Error | null
+  /** For a reply that scores several jobs: leave out the job whose posting text matches. */
+  omit?: (jobPrompt: string) => boolean
   /** Wait this long before answering, to test concurrency. */
   delayMs?: number
 }
@@ -49,16 +51,25 @@ export function fakeClientFactory(calls: LlmRequest[], options: FakeModelOptions
       stats.inflight -= 1
       const failure = options.fail?.(req.prompt)
       if (failure) throw failure
-      const score = options.score ? options.score(req.prompt) : 80
-      const value = schema.parse({
-        score,
-        summary: `Fit is ${score}.`,
-        matches: ['TypeScript'],
-        gaps: score < 70 ? ['Kubernetes'] : [],
-        dealbreakers: [],
-        seniorityFit: 'match',
-        keywords: ['typescript']
-      })
+      const fitFor = (text: string) => {
+        const score = options.score ? options.score(text) : 80
+        return {
+          score,
+          summary: `Fit is ${score}.`,
+          matches: ['TypeScript'],
+          gaps: score < 70 ? ['Kubernetes'] : [],
+          dealbreakers: [],
+          seniorityFit: 'match',
+          keywords: ['typescript']
+        }
+      }
+      // A prompt that scores several jobs (free providers) lists each one under "JOB jobN".
+      const parts = req.prompt.split(/^JOB (job\d+)$/m)
+      const listed = Array.from({ length: (parts.length - 1) / 2 }, (_, i) => ({ id: parts[1 + i * 2], text: parts[2 + i * 2] }))
+      const value =
+        parts.length > 1
+          ? schema.parse({ scores: listed.filter((j) => !options.omit?.(j.text)).map((j) => ({ id: j.id, ...fitFor(j.text) })) })
+          : schema.parse(fitFor(req.prompt))
       return {
         text: '{}',
         value,

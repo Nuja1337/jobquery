@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { ArrowLeft, ArrowRight, Check, Rocket, Wand2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Gauge, Rocket, Wand2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { EMPTY_PROFILE, PROVIDER_LABELS, PROVIDER_PRESETS, type ProviderPreset } from '@shared/defaults'
 import type { JobPreferences, LlmStage, ModelRef, Profile, ProviderInfo, RemotePreference, Seniority } from '@shared/types'
@@ -13,13 +13,20 @@ import { setOnboardingSkipped } from '@renderer/lib/theme'
 import { ProviderBillingBadge } from '@renderer/components/badges'
 import { DocumentSection } from '@renderer/components/DocumentSection'
 import { ModelPicker } from '@renderer/components/ModelPicker'
+import { PresetDialog } from '@renderer/components/PresetDialog'
+import { ApplyingEditor, QuestionFormsEditor } from '@renderer/components/ApplicationFactsEditor'
+import { STANCE_SLOTS, TEMPLATE_SLOTS } from '@renderer/components/answerSlots'
 import { ProfileEditor, cleanProfile } from '@renderer/components/ProfileEditor'
+import { AnswerSlots, useSlotDrafts } from '@renderer/components/SavedAnswerSlots'
 import { ProviderForm } from '@renderer/components/ProviderForm'
 import { VoiceCard } from '@renderer/components/VoiceCard'
 import { Companies, Searches } from './Sources'
 import { Badge, Button, Card, Checkbox, Chip, ErrorBlock, Field, Loading, Notice, NumberInput, Select, TagInput, Textarea } from '@renderer/components/ui'
 
-const STEPS = ['AI provider', 'Models', 'Resume', 'Your profile', 'Your writing', 'Job preferences', 'Sources', 'Finish'] as const
+const STEPS = ['AI provider', 'Models', 'Resume', 'Your profile', 'Applying', 'Questions forms ask', 'Your stances', 'Answers in your words', 'Your writing', 'Job preferences', 'Sources', 'Finish'] as const
+
+/** Steps with nothing required, so each has a Skip button. */
+const OPTIONAL: ReadonlyArray<(typeof STEPS)[number]> = ['Resume', 'Applying', 'Questions forms ask', 'Your stances', 'Answers in your words', 'Your writing', 'Sources']
 
 const STAGES: Array<{ id: LlmStage; label: string; hint: string }> = [
   { id: 'triage', label: 'Scoring fit', hint: 'Runs on every job that passes the free filters. A cheap, fast model is enough.' },
@@ -43,11 +50,13 @@ export function Onboarding(): React.JSX.Element {
   const [routing, setRouting] = useState<Record<LlmStage, ModelRef | null>>({ triage: null, writing: null, extraction: null })
   const [prefs, setPrefs] = useState<JobPreferences | null>(null)
   const [busy, setBusy] = useState(false)
+  const [presetOpen, setPresetOpen] = useState(false)
   const [reading, setReading] = useState(false)
   const [resumeId, setResumeId] = useState<string | null>(null)
   const [samples, setSamples] = useState({ writing: 0, letters: 0 })
   const [presetByProvider, setPresetByProvider] = useState<Record<string, ProviderPreset | undefined>>({})
 
+  const slots = useSlotDrafts([...STANCE_SLOTS, ...TEMPLATE_SLOTS])
   const providers = useAsync(() => api.listProviders(), [])
   const stored = useAsync(() => api.getProfile(), [])
 
@@ -78,6 +87,12 @@ export function Onboarding(): React.JSX.Element {
 
   const list: ProviderInfo[] = providers.data ?? []
   const last = step === STEPS.length - 1
+  const current = STEPS[step]
+
+  // "How you hear about jobs" starts as a job board, which is true for most people.
+  useEffect(() => {
+    if (current === 'Questions forms ask') setProfile((p) => (p.application.heardAbout.trim() ? p : { ...p, application: { ...p.application, heardAbout: 'Job board' } }))
+  }, [current])
 
   async function guard(fn: () => Promise<void>): Promise<boolean> {
     setBusy(true)
@@ -93,12 +108,14 @@ export function Onboarding(): React.JSX.Element {
   }
 
   async function next(): Promise<void> {
-    if (step === 1) {
+    if (current === 'Models') {
       if (!(await guard(async () => void (await updateSettings({ routing })))))
         return
-    } else if (step === 3 || step === 4) {
+    } else if (current === 'Your profile' || current === 'Applying' || current === 'Questions forms ask' || current === 'Your writing') {
       if (!(await guard(async () => void (await api.saveProfile(cleanProfile(profile)))))) return
-    } else if (step === 5 && prefs) {
+    } else if (current === 'Your stances' || current === 'Answers in your words') {
+      if (!(await guard(slots.save))) return
+    } else if (current === 'Job preferences' && prefs) {
       if (!(await guard(async () => void (await updateSettings({ preferences: prefs }))))) return
     }
     setStep(step + 1)
@@ -119,7 +136,7 @@ export function Onboarding(): React.JSX.Element {
       const draft = await api.extractProfileFromResume(resumeId)
       setProfile(draft)
       toast.success('Read your resume. Check the draft before you save it.')
-      setStep(3)
+      setStep(STEPS.indexOf('Your profile'))
     } catch (e) {
       toast.error(e)
     } finally {
@@ -132,7 +149,7 @@ export function Onboarding(): React.JSX.Element {
     navigate('/')
   }
 
-  const canNext = step === 0 ? list.length > 0 : step === 1 ? STAGES.every((s) => routing[s.id]?.model) : step === 3 ? profile.fullName.trim().length > 0 : true
+  const canNext = current === 'AI provider' ? list.length > 0 : current === 'Models' ? STAGES.every((s) => routing[s.id]?.model) : current === 'Your profile' ? profile.fullName.trim().length > 0 : true
 
   return (
     <div className="flex h-full bg-bg">
@@ -174,10 +191,10 @@ export function Onboarding(): React.JSX.Element {
           <p className="text-xs font-medium uppercase tracking-wide text-faint">
             Step {step + 1} of {STEPS.length}
           </p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-fg">{STEPS[step]}</h1>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-fg">{current}</h1>
 
           <div className="mt-5 space-y-4">
-            {step === 0 && (
+            {current === 'AI provider' && (
               <>
                 <p className="text-sm text-muted">JobPilot uses your own AI key. Choose a free option or a paid one, whichever suits you. You can add both and change this later in Settings.</p>
                 <Notice tone="info" title="A ChatGPT or Claude subscription is not an API key">
@@ -219,7 +236,7 @@ export function Onboarding(): React.JSX.Element {
               </>
             )}
 
-            {step === 1 && (
+            {current === 'Models' && (
               <>
                 <p className="text-sm text-muted">Each stage can use a different model. The lists come straight from your provider, and the suggestions are a starting point.</p>
                 {list.length === 0 ? (
@@ -242,7 +259,7 @@ export function Onboarding(): React.JSX.Element {
               </>
             )}
 
-            {step === 2 && (
+            {current === 'Resume' && (
               <>
                 <p className="text-sm text-muted">Upload your resume as a PDF or Word file. JobPilot reads it to draft your profile, and you check every field before anything is saved.</p>
                 <DocumentSection kind="resume" title="Resume" emptyText="No resume yet. Press Upload to choose a file." onChange={(docs) => setResumeId(docs.find((d) => d.isPrimary)?.id ?? docs[0]?.id ?? null)} />
@@ -255,14 +272,50 @@ export function Onboarding(): React.JSX.Element {
               </>
             )}
 
-            {step === 3 && (
+            {current === 'Your profile' && (
               <>
                 <Notice>This is a draft. Fix anything that is wrong, because JobPilot copies these details into application forms.</Notice>
                 <ProfileEditor value={profile} onChange={setProfile} />
               </>
             )}
 
-            {step === 4 && (
+            {current === 'Applying' && (
+              <>
+                <p className="text-sm text-muted">Application forms ask for the same details again and again. Answer them once and JobPilot fills them in, so fewer applications wait for you.</p>
+                <ApplyingEditor
+                  facts={profile.application}
+                  onChange={(application) => setProfile({ ...profile, application })}
+                  defaultCurrency={settings?.preferences.salaryCurrency}
+                  authorizedCountries={profile.workAuthorization.authorizedCountries}
+                />
+              </>
+            )}
+
+            {current === 'Questions forms ask' && (
+              <>
+                <p className="text-sm text-muted">These come up less often, but they stop an application when JobPilot cannot answer them. Leave anything you would rather answer yourself.</p>
+                <QuestionFormsEditor facts={profile.application} onChange={(application) => setProfile({ ...profile, application })} skills={profile.skills} languages={profile.languages} />
+              </>
+            )}
+
+            {current === 'Your stances' && (
+              <>
+                <p className="text-sm text-muted">Two kinds of question are always yours to answer. Write your answer in your own words and JobPilot reuses it word for word. It never writes these for you.</p>
+                <AnswerSlots slots={STANCE_SLOTS} drafts={slots.drafts} onChange={slots.setDrafts} />
+                <Notice tone="info" title="When autopilot sends these">
+                  Autopilot sends a form with these questions only when &quot;Send my saved answers to questions only I answer&quot; is on in Settings. Required privacy and truthfulness boxes follow a second toggle called &quot;Tick required privacy and truthfulness boxes&quot;. Both are off until you turn them on.
+                </Notice>
+              </>
+            )}
+
+            {current === 'Answers in your words' && (
+              <>
+                <p className="text-sm text-muted">JobPilot adapts these to each company and keeps your facts and wording. Fill in as many as you like.</p>
+                <AnswerSlots slots={TEMPLATE_SLOTS} drafts={slots.drafts} onChange={slots.setDrafts} />
+              </>
+            )}
+
+            {current === 'Your writing' && (
               <>
                 <p className="text-sm text-muted">This step is optional, and it helps the most with how your letters sound. A few things you wrote yourself teach JobPilot your voice.</p>
                 <DocumentSection kind="writing_sample" title="Writing samples" allowPaste emptyText="Emails, posts or notes in your own words." onChange={(d) => setSamples((s) => ({ ...s, writing: d.length }))} />
@@ -277,9 +330,9 @@ export function Onboarding(): React.JSX.Element {
               </>
             )}
 
-            {step === 5 && prefs && <PreferencesStep prefs={prefs} onChange={setPrefs} />}
+            {current === 'Job preferences' && prefs && <PreferencesStep prefs={prefs} onChange={setPrefs} />}
 
-            {step === 6 && (
+            {current === 'Sources' && (
               <>
                 <p className="text-sm text-muted">Add companies you would like to work for, and job sites to search. You can add more later.</p>
                 <Companies />
@@ -287,7 +340,7 @@ export function Onboarding(): React.JSX.Element {
               </>
             )}
 
-            {step === 7 && (
+            {current === 'Finish' && (
               <Card className="space-y-3 p-5">
                 <p className="text-sm text-fg">Setup is done. This is what JobPilot does from now on.</p>
                 <ul className="list-inside list-disc space-y-1.5 text-sm text-muted">
@@ -296,16 +349,27 @@ export function Onboarding(): React.JSX.Element {
                   <li>Prepare an application and it appears in the review queue. You check it and click Submit.</li>
                   <li>Autopilot is off until you turn it on in Settings.</li>
                 </ul>
+                <div className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-fg">Applying to many jobs a day?</p>
+                    <p className="mt-0.5 text-sm text-muted">One click sets lower score lines, larger daily limits and continuous autopilot. Auto-submit starts in dry run, so forms are filled and never sent until you turn dry run off.</p>
+                  </div>
+                  <Button icon={<Gauge size={14} />} disabled={!settings} onClick={() => setPresetOpen(true)}>
+                    Set up for volume
+                  </Button>
+                </div>
               </Card>
             )}
           </div>
+
+          {presetOpen && settings && <PresetDialog current={settings} onClose={() => setPresetOpen(false)} />}
 
           <div className="mt-8 flex items-center justify-between border-t border-line pt-4">
             <Button variant="ghost" icon={<ArrowLeft size={14} />} disabled={step === 0 || busy} onClick={() => setStep(step - 1)}>
               Back
             </Button>
             <div className="flex items-center gap-2">
-              {(step === 2 || step === 4 || step === 6) && (
+              {OPTIONAL.includes(current) && (
                 <Button variant="ghost" onClick={() => setStep(step + 1)}>
                   Skip this step
                 </Button>

@@ -4,9 +4,9 @@ import { Db } from '../db/database'
 import { ProvidersRepo } from '../db/repos/providers'
 import { SettingsRepo } from '../db/repos/settings'
 import { testVault } from '../secrets'
-import { BudgetExceededError, NoModelConfiguredError } from './errors'
+import { BudgetExceededError, NoModelConfiguredError, RateLimitedError } from './errors'
 import { extractJson } from './json'
-import { LlmService } from './service'
+import { type Clock, LlmService } from './service'
 import type { LlmClient, LlmRequest } from './types'
 
 function fakeClient(calls: LlmRequest[]): LlmClient {
@@ -104,6 +104,87 @@ describe('LlmService', () => {
     // Pointing the provider somewhere else without a new key drops the old one.
     await providers.save({ id: saved.id, kind: 'openai_compatible', label: 'Elsewhere', baseUrl: 'https://example.invalid/v1' })
     expect(await providers.getApiKey(saved.id)).toBeNull()
+  })
+})
+
+describe('LlmService short rate limits', () => {
+  /** A client that fails with the given errors in order, then answers. */
+  function flaky(failures: Error[], calls: LlmRequest[]): LlmClient {
+    const good = fakeClient(calls)
+    return {
+      ...good,
+      async complete(model, req) {
+        const next = failures.shift()
+        if (next) {
+          calls.push(req)
+          throw next
+        }
+        return good.complete(model, req)
+      }
+    }
+  }
+
+  async function withFlaky(failures: Error[], clock: Clock) {
+    const db = await Db.open(null)
+    const settings = new SettingsRepo(db)
+    const providers = new ProvidersRepo(db, testVault)
+    const calls: LlmRequest[] = []
+    const llm = new LlmService(db, settings, providers, () => flaky(failures, calls), clock)
+    await providers.save({ kind: 'anthropic', label: 'Claude', apiKey: 'sk-test' })
+    return { llm, calls, db, providers, settings }
+  }
+
+  function stillClock() {
+    const sleeps: number[] = []
+    const clock: Clock = { now: () => 0, sleep: async (ms) => void sleeps.push(ms) }
+    return { clock, sleeps }
+  }
+
+  it('waits out a short retry-after and retries the call once', async () => {
+    const { clock, sleeps } = stillClock()
+    const { llm, calls } = await withFlaky([new RateLimitedError('Slow down.', 20_000)], clock)
+    const res = await llm.text(base)
+    expect(res.value).toBe('reply to hello')
+    expect(sleeps).toEqual([20_000])
+    expect(calls).toHaveLength(2)
+  })
+
+  it('throws when the retry is limited again', async () => {
+    const { clock, sleeps } = stillClock()
+    const { llm, calls } = await withFlaky([new RateLimitedError('Slow down.', 1000), new RateLimitedError('Still slow.', 1000)], clock)
+    await expect(llm.text(base)).rejects.toThrow('Still slow.')
+    expect(sleeps).toEqual([1000])
+    expect(calls).toHaveLength(2)
+  })
+
+  it('does not wait for a long retry-after or one the provider did not give', async () => {
+    const { clock, sleeps } = stillClock()
+    const long = await withFlaky([new RateLimitedError('Come back later.', 10 * 60_000)], clock)
+    await expect(long.llm.text(base)).rejects.toBeInstanceOf(RateLimitedError)
+    const none = await withFlaky([new RateLimitedError('No hint.')], clock)
+    await expect(none.llm.text(base)).rejects.toBeInstanceOf(RateLimitedError)
+    expect(sleeps).toEqual([])
+  })
+
+  it('does not wait when the run was cancelled', async () => {
+    const { clock, sleeps } = stillClock()
+    const { llm } = await withFlaky([new RateLimitedError('Slow down.', 1000)], clock)
+    const controller = new AbortController()
+    controller.abort()
+    await expect(llm.text({ ...base, signal: controller.signal })).rejects.toBeDefined()
+    expect(sleeps).toEqual([])
+  })
+
+  it('still throws at once for the daily limit set in JobPilot', async () => {
+    const { clock, sleeps } = stillClock()
+    const { llm, providers, settings, calls } = await withFlaky([], clock)
+    const p = providers.list()[0]
+    await providers.save({ id: p.id, kind: 'anthropic', label: 'Claude', requestsPerDay: 1 })
+    settings.update({ routing: { triage: null, writing: { providerId: p.id, model: 'claude-sonnet-5-5' }, extraction: null } })
+    await llm.text(base)
+    await expect(llm.text({ ...base, prompt: 'two' })).rejects.toBeInstanceOf(RateLimitedError)
+    expect(sleeps).toEqual([])
+    expect(calls).toHaveLength(1)
   })
 })
 

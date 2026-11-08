@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useBlocker, useNavigate } from 'react-router'
-import { AlertTriangle, CheckCircle2, Download, FolderOpen, Loader2, Pencil, Plus, RefreshCw, TestTube2, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FolderOpen, Gauge, Loader2, Pencil, Plus, RefreshCw, TestTube2, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { BILLING_RESPONSIBILITY, BUILTIN_PRICES, PROVIDER_LABELS } from '@shared/defaults'
 import type { DeepPartial } from '@shared/api'
@@ -17,6 +17,8 @@ import { suggestedModel } from '@renderer/lib/providers'
 import { ProviderBillingBadge } from '@renderer/components/badges'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 import { ModelPicker } from '@renderer/components/ModelPicker'
+import { PresetDialog } from '@renderer/components/PresetDialog'
+import { thresholdContext } from '@renderer/components/volumeHelpers'
 import { RestartToUpdateDialog } from '@renderer/components/RestartToUpdateDialog'
 import { KEY_STORAGE_NOTE, KeyStorageWarning, ProviderForm, describeLimits, useKeyStorageWeak } from '@renderer/components/ProviderForm'
 import { Badge, Button, Card, CardHeader, Checkbox, Chip, ErrorBlock, Field, IconButton, Input, Loading, Modal, NumberInput, Page, PageHeader, ProgressBar, Segmented, Select, TD, TH, TagInput, Textarea, Toggle } from '@renderer/components/ui'
@@ -27,8 +29,10 @@ const SECTIONS = [
   ['budget', 'Budgets'],
   ['prices', 'Prices'],
   ['preferences', 'Job preferences'],
+  ['discovery', 'Finding jobs'],
   ['thresholds', 'Thresholds'],
   ['autopilot', 'Autopilot'],
+  ['system', 'Running in the background'],
   ['browser', 'Browser'],
   ['writing', 'Writing'],
   ['eeo', 'EEO answers'],
@@ -57,6 +61,9 @@ export function SettingsPage(): React.JSX.Element {
   const [draft, setDraft] = useState<Settings | null>(null)
   const [saving, setSaving] = useState(false)
   const providers = useAsync(() => api.listProviders(), [])
+  // The scores of jobs found in the last 7 days, to show what each threshold would have passed.
+  const scores = useAsync(() => api.getAnalytics(1), [])
+  const [presetOpen, setPresetOpen] = useState(false)
   const leaving = useRef(false)
 
   useEffect(() => {
@@ -73,6 +80,8 @@ export function SettingsPage(): React.JSX.Element {
   if (!draft || !settings) return <Loading />
 
   const set = <K extends SectionKey>(key: K, patch: Partial<Settings[K]>): void => setDraft({ ...draft, [key]: { ...(draft[key] as object), ...patch } as Settings[K] })
+  /** What a threshold would have passed in the last 7 days. Empty until the counts load. */
+  const scoreLine = (threshold: number): string => (scores.data ? ` ${thresholdContext(scores.data.scoreCounts, threshold)}` : '')
 
   async function save(): Promise<void> {
     if (!draft) return
@@ -89,7 +98,23 @@ export function SettingsPage(): React.JSX.Element {
 
   return (
     <Page>
-      <PageHeader title="Settings" intro="Providers, budgets, filters, autopilot and how your applications are written." />
+      <PageHeader
+        title="Settings"
+        intro="Providers, budgets, filters, autopilot and how your applications are written."
+        actions={
+          <Button icon={<Gauge size={14} />} disabled={changed.length > 0} title={changed.length > 0 ? 'Save or discard your changes first.' : undefined} onClick={() => setPresetOpen(true)}>
+            Set up for volume
+          </Button>
+        }
+      />
+
+      {presetOpen && (
+        <PresetDialog
+          current={settings}
+          onClose={() => setPresetOpen(false)}
+          onApplied={(next) => setDraft(structuredClone(next))}
+        />
+      )}
 
       {changed.length > 0 && (
         <div className="sticky top-0 z-20 -mx-2 mb-4 flex items-center justify-between rounded-lg border border-accent/50 bg-surface px-4 py-2.5 shadow-lg">
@@ -255,25 +280,28 @@ export function SettingsPage(): React.JSX.Element {
             </div>
           </Card>
 
+          <DiscoveryCard draft={draft} set={set} />
+
           <Card id="settings-thresholds">
             <CardHeader title="Thresholds" hint="Scores run from 0 to 100." />
             <div className="grid grid-cols-2 gap-4 p-4">
               <Field label="Keyword prescore needed to reach the AI" hint="Higher means fewer tokens spent.">
                 <NumberInput value={draft.thresholds.prescoreMin} min={0} max={100} onChange={(v) => set('thresholds', { prescoreMin: v ?? 0 })} />
               </Field>
-              <Field label="Fit score for the shortlist" hint="Below this a job is archived as not a fit.">
+              <Field label="Fit score for the shortlist" hint={<>Below this a job is archived as not a fit.{scoreLine(draft.thresholds.shortlistScore)}</>}>
                 <NumberInput value={draft.thresholds.shortlistScore} min={0} max={100} onChange={(v) => set('thresholds', { shortlistScore: v ?? 0 })} />
               </Field>
-              <Field label="Fit score to draft an application automatically">
+              <Field label="Fit score to draft an application automatically" hint={scoreLine(draft.thresholds.autoPrepareScore).trim()}>
                 <NumberInput value={draft.thresholds.autoPrepareScore} min={0} max={100} onChange={(v) => set('thresholds', { autoPrepareScore: v ?? 0 })} />
               </Field>
-              <Field label="Fit score to submit automatically" hint="Only used when auto-submit is on.">
+              <Field label="Fit score to submit automatically" hint={<>Only used when auto-submit is on.{scoreLine(draft.thresholds.autoSubmitScore)}</>}>
                 <NumberInput value={draft.thresholds.autoSubmitScore} min={0} max={100} onChange={(v) => set('thresholds', { autoSubmitScore: v ?? 0 })} />
               </Field>
             </div>
           </Card>
 
           <AutopilotCard draft={draft} set={set} />
+          <BackgroundCard draft={draft} set={set} />
 
           <Card id="settings-browser">
             <CardHeader title="Browser" hint="JobPilot fills forms in a real browser window." />
@@ -603,18 +631,57 @@ function PriceRow({ model, price, custom, builtin, onSave, onReset }: { model: s
 
 function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(key: K, patch: Partial<Settings[K]>) => void }): React.JSX.Element {
   const a = draft.autopilot
+  const continuous = a.mode === 'continuous'
   const [confirmAuto, setConfirmAuto] = useState(false)
   /** Turning autopilot on, or dry run off, while auto-submit is on lets the app send applications by itself. */
   const [confirmSend, setConfirmSend] = useState<null | 'enable' | 'dryRun'>(null)
   return (
     <Card id="settings-autopilot">
-      <CardHeader title="Autopilot" hint="Runs on a schedule while the app is open." />
+      <CardHeader title="Autopilot" hint={continuous ? 'Works all day while the app is open.' : 'Runs on a schedule while the app is open.'} />
       <div className="space-y-4 p-4">
         <div className="grid grid-cols-2 gap-4">
-          <Toggle checked={a.enabled} onChange={(v) => (v && a.autoSubmit && !a.dryRun ? setConfirmSend('enable') : set('autopilot', { enabled: v }))} label="Run on a schedule" />
-          <Field label="Run every (hours)">
-            <NumberInput value={a.intervalHours} min={1} max={168} onChange={(v) => set('autopilot', { intervalHours: v ?? 6 })} />
+          <Toggle checked={a.enabled} onChange={(v) => (v && a.autoSubmit && !a.dryRun ? setConfirmSend('enable') : set('autopilot', { enabled: v }))} label={continuous ? 'Run autopilot' : 'Run on a schedule'} />
+          {!continuous && (
+            <Field label="Run every (hours)">
+              <NumberInput value={a.intervalHours} min={1} max={168} onChange={(v) => set('autopilot', { intervalHours: v ?? 6 })} />
+            </Field>
+          )}
+        </div>
+        <Toggle
+          checked={continuous}
+          onChange={(v) => set('autopilot', { mode: v ? 'continuous' : 'interval' })}
+          label="Run continuously"
+          hint="Keep finding, scoring, preparing and sending all day, within the caps below."
+        />
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Applications per company" hint="How many applications one company may get inside the cooldown. The cooldown is also under Filters.">
+            <div className="flex items-center gap-2 text-sm text-muted">
+              <NumberInput value={draft.preferences.perCompanyLimit} min={1} max={100} className="w-20" onChange={(v) => set('preferences', { perCompanyLimit: Math.max(1, v ?? 1) })} />
+              <span>{draft.preferences.perCompanyLimit === 1 ? 'application' : 'applications'} per company every</span>
+              <NumberInput value={draft.preferences.companyCooldownDays} min={0} className="w-20" onChange={(v) => set('preferences', { companyCooldownDays: v ?? 0 })} />
+              <span>days</span>
+            </div>
           </Field>
+          {continuous && (
+            <Field label="Submit tabs at once" hint="Applications filled in the browser at the same time, 1 to 3. One company is never filled twice at once.">
+              <NumberInput value={a.submitConcurrency} min={1} max={3} onChange={(v) => set('autopilot', { submitConcurrency: Math.min(3, Math.max(1, v ?? 1)) })} />
+            </Field>
+          )}
+          {continuous && (
+            <Field label="Most applications per hour" hint="Lever is held to 15 an hour, because it shows a captcha when forms are sent fast.">
+              <NumberInput value={a.hourlySubmitCap} min={0} max={1000} onChange={(v) => set('autopilot', { hourlySubmitCap: v ?? 0 })} />
+            </Field>
+          )}
+          {continuous && (
+            <Field label="Jobs scored per day" hint="The most jobs sent to the AI for scoring in one day.">
+              <NumberInput value={draft.budget.maxTriagePerDay} min={0} onChange={(v) => set('budget', { maxTriagePerDay: v ?? 0 })} />
+            </Field>
+          )}
+          {continuous && (
+            <Field label="Applications prepared per day" hint="The most applications drafted in one day.">
+              <NumberInput value={draft.budget.maxPreparePerDay} min={0} onChange={(v) => set('budget', { maxPreparePerDay: v ?? 0 })} />
+            </Field>
+          )}
         </div>
         <Toggle checked={a.autoPrepare} onChange={(v) => set('autopilot', { autoPrepare: v })} label="Draft applications automatically" hint={`For jobs that score ${draft.thresholds.autoPrepareScore} or more. Drafts wait in the review queue.`} />
 
@@ -629,7 +696,7 @@ function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends Sectio
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
             <div>
               <p className="text-fg">Auto-submit sends real applications in your name. Turn it on only after you trust the drafts.</p>
-              <p className="mt-1">Guardrails apply when it is on. It only submits jobs that score {draft.thresholds.autoSubmitScore} or more, never more than {a.dailySubmitCap} a day, and never when an answer is flagged for you. Consent boxes, terms and questions about AI use are always flagged unless you saved your own answer for them in the answer bank. Try dry run first.</p>
+              <p className="mt-1">Guardrails apply when it is on. It only submits jobs that score {draft.thresholds.autoSubmitScore} or more, never more than {a.dailySubmitCap} a day, and never when an answer is flagged for you. Consent boxes, terms and questions about AI use are left for you. Autopilot sends a form that has one only when you allow it with the options below. Try dry run first.</p>
             </div>
           </div>
           <div className={clsx('mt-4 grid grid-cols-2 gap-4', !a.autoSubmit && 'opacity-60')}>
@@ -637,10 +704,22 @@ function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends Sectio
               <Input value={draft.thresholds.autoSubmitScore} disabled readOnly />
             </Field>
             <Field label="Most applications per day">
-              <NumberInput value={a.dailySubmitCap} min={0} max={100} onChange={(v) => set('autopilot', { dailySubmitCap: v ?? 0 })} />
+              <NumberInput value={a.dailySubmitCap} min={0} max={1000} onChange={(v) => set('autopilot', { dailySubmitCap: v ?? 0 })} />
             </Field>
             <Toggle checked={a.requireNoFlags} onChange={() => undefined} disabled label="Skip applications with flagged answers" hint="Always on." />
             <Toggle checked={a.dryRun} onChange={(v) => (!v && a.autoSubmit ? setConfirmSend('dryRun') : set('autopilot', { dryRun: v }))} label="Dry run" hint="Fill the form, take a screenshot and stop before the final click." />
+            <Toggle
+              checked={a.tickRequiredConsent}
+              onChange={(v) => set('autopilot', { tickRequiredConsent: v })}
+              label="Tick required privacy and truthfulness boxes"
+              hint="Agrees to required boxes that only let the employer handle your application data or say your answers are true. It does not cover terms, waivers, arbitration, background checks or questions about AI use."
+            />
+            <Toggle
+              checked={a.sendSavedUserAnswers}
+              onChange={(v) => set('autopilot', { sendSavedUserAnswers: v })}
+              label="Send my saved answers to questions only I answer"
+              hint="Lets autopilot send a form where a question about AI use, consent or legal terms was filled from an answer you wrote yourself."
+            />
           </div>
         </div>
       </div>
@@ -662,6 +741,58 @@ function AutopilotCard({ draft, set }: { draft: Settings; set: <K extends Sectio
           onConfirm={() => set('autopilot', { autoSubmit: true })}
         />
       )}
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Finding jobs
+// ---------------------------------------------------------------------------
+
+function DiscoveryCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(key: K, patch: Partial<Settings[K]>) => void }): React.JSX.Element {
+  const d = draft.discovery
+  return (
+    <Card id="settings-discovery">
+      <CardHeader title="Finding jobs" hint="JobPilot checks each watched company board on its own schedule. A board with a good job in the last two weeks is checked about every hour, and a board with nothing good for two months about once a day." />
+      <div className="space-y-4 p-4">
+        <Toggle checked={d.autoWatchBoards} onChange={(v) => set('discovery', { autoWatchBoards: v })} label="Watch any company board that a posting links to." hint="A posting on Remotive, Hacker News or another job site often links to the employer's own board. JobPilot starts watching that board unless you blocked the company or turned its watch off before." />
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Most company boards to watch" hint="JobPilot stops adding boards by itself when this many are watched. Boards you add yourself always work.">
+            <NumberInput value={d.maxWatchedBoards} min={0} max={100000} step={100} onChange={(v) => set('discovery', { maxWatchedBoards: v ?? 0 })} />
+          </Field>
+          <Field label="Boards checked per run" hint="The boards that have waited longest go first. The rest wait for the next run.">
+            <NumberInput value={d.boardsPerRun} min={1} max={20000} step={100} onChange={(v) => set('discovery', { boardsPerRun: v ?? 1 })} />
+          </Field>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Running in the background
+// ---------------------------------------------------------------------------
+
+function BackgroundCard({ draft, set }: { draft: Settings; set: <K extends SectionKey>(key: K, patch: Partial<Settings[K]>) => void }): React.JSX.Element {
+  const { settings, appInfo } = useApp()
+  const sys = draft.system
+  /** What the system reports for the start at login entry. Null means the app can't register one. */
+  const openAtLogin = appInfo?.openAtLogin
+  let loginNote: string | null = null
+  if (openAtLogin === null) loginNote = 'This works only in the installed app.'
+  else if (openAtLogin === false && settings?.system.startAtLogin) loginNote = 'Windows has JobPilot turned off for startup. Turn it on under Settings, Apps, Startup.'
+  return (
+    <Card id="settings-system">
+      <CardHeader title="Running in the background" hint="For leaving JobPilot on all day, with autopilot doing the work." />
+      <div className="space-y-4 p-4">
+        <Toggle checked={sys.closeToTray} onChange={(v) => set('system', { closeToTray: v })} label="Run in the tray" hint="Closing the window leaves JobPilot running in the system tray. Quit it from the tray menu." />
+        <div>
+          <Toggle checked={sys.startAtLogin} onChange={(v) => set('system', { startAtLogin: v })} label="Start at login" hint="Start JobPilot when you sign in to Windows. It opens in the tray." />
+          {loginNote && <p className="mt-1 text-xs text-warn">{loginNote}</p>}
+        </div>
+        <Toggle checked={sys.keepAwake} onChange={(v) => set('system', { keepAwake: v })} label="Keep the PC awake" hint="Keep this PC from sleeping while a run is going or autopilot is on. Closing a laptop lid can still put it to sleep." />
+        <Toggle checked={sys.notifications} onChange={(v) => set('system', { notifications: v })} label="Notifications" hint="Show a Windows notification when JobPilot needs you, such as a sign-in, a captcha or a reached budget." />
+      </div>
     </Card>
   )
 }

@@ -105,6 +105,8 @@ export interface JobPreferences {
   needsVisaSponsorship: boolean
   /** Skip a company you applied to within this many days. */
   companyCooldownDays: number
+  /** How many applications one company may get within the cooldown. At least 1. */
+  perCompanyLimit: number
 }
 
 export interface Thresholds {
@@ -125,18 +127,34 @@ export interface BudgetSettings {
   maxTriagePerRun: number
   /** Max applications prepared per run. */
   maxPreparePerRun: number
+  /** Most jobs sent to AI fit scoring in one day in continuous mode. */
+  maxTriagePerDay: number
+  /** Most applications prepared in one day in continuous mode. */
+  maxPreparePerDay: number
 }
+
+export type AutopilotMode = 'interval' | 'continuous'
 
 export interface AutopilotSettings {
   enabled: boolean
+  /** Interval runs one batch every `intervalHours`. Continuous keeps workers going all day within the caps. */
+  mode: AutopilotMode
   intervalHours: number
   autoPrepare: boolean
   autoSubmit: boolean
   dailySubmitCap: number
+  /** Most applications sent in any one clock hour in continuous mode. */
+  hourlySubmitCap: number
+  /** Applications filled at once in continuous mode, 1 to 3. */
+  submitConcurrency: number
   /** Auto-submit only when no answer is flagged for your input. Always on in practice. */
   requireNoFlags: boolean
   /** Fill forms and stop before the final click. Good for testing auto-submit. */
   dryRun: boolean
+  /** Agree to required boxes that only consent to data handling or say the answers are true. Never terms, waivers or AI-use questions. */
+  tickRequiredConsent: boolean
+  /** Let autopilot send a form where a question only the person answers was filled from their own saved answer. */
+  sendSavedUserAnswers: boolean
 }
 
 export type BrowserChannel = 'chrome' | 'msedge' | 'chromium'
@@ -155,6 +173,8 @@ export interface WritingSettings {
   coverLetterLength: CoverLetterLength
   /** Generate a cover letter even when the form doesn't ask for one. */
   alwaysCoverLetter: boolean
+  /** Adapt a saved answer to a general question (why this company, about you) to the company instead of pasting it unchanged. */
+  adaptSavedAnswers: boolean
   /** Extra phrases the user never wants to see, on top of the built-in list. */
   bannedPhrases: string[]
   /** Free-form guidance, for example "dry humor is fine, never exclamation marks". */
@@ -179,6 +199,18 @@ export interface UpdateSettings {
   autoCheck: boolean
 }
 
+/** How JobPilot behaves on this PC while it runs unattended. */
+export interface SystemSettings {
+  /** Closing the window hides it to the system tray and the app keeps running. */
+  closeToTray: boolean
+  /** Start JobPilot when the user signs in to the computer. */
+  startAtLogin: boolean
+  /** Stop the computer from sleeping while a run is going or autopilot is on. */
+  keepAwake: boolean
+  /** Show a system notification when JobPilot needs the user. */
+  notifications: boolean
+}
+
 export interface Settings {
   routing: Record<LlmStage, ModelRef | null>
   /** Overrides and additions to the built-in price table, keyed by model id. */
@@ -191,7 +223,18 @@ export interface Settings {
   writing: WritingSettings
   eeo: EeoSettings
   updates: UpdateSettings
+  system: SystemSettings
+  discovery: DiscoverySettings
   onboardingDone: boolean
+}
+
+export interface DiscoverySettings {
+  /** Watch any company board that a posting links to. */
+  autoWatchBoards: boolean
+  /** No company is watched automatically once this many are watched. */
+  maxWatchedBoards: number
+  /** Most boards read in one run. The rest wait for the next run. */
+  boardsPerRun: number
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +350,52 @@ export interface Profile {
   /** Notes for the AI: things to stress, things never to mention, context it should know. */
   notesForAi: string
   voice: VoiceProfile | null
+  /** Facts that application forms ask for again and again. Collected once, in the interview. */
+  application: ApplicationFacts
+}
+
+export type AuthorizationStatus = 'citizen' | 'permanent_resident' | 'visa' | 'none'
+export type SalaryPeriod = 'year' | 'month' | 'hour'
+export type SalaryAnswerStyle = 'number' | 'range' | 'negotiable'
+export type TravelWillingness = 'none' | 'some' | 'frequent'
+export type LanguageLevel = 'basic' | 'conversational' | 'fluent' | 'native'
+
+/**
+ * The answers forms ask for repeatedly. Each one maps to a field family in fieldMap.ts. Empty strings
+ * and nulls mean "not answered", and the form field is then left for the person.
+ */
+export interface ApplicationFacts {
+  address: { street: string; city: string; region: string; postalCode: string; country: string }
+  /** Dial code such as "+1". */
+  phoneCountryCode: string
+  /** Work authorization per country. The older profile.workAuthorization stays as the summary. */
+  authorization: Array<{ country: string; status: AuthorizationStatus; needsSponsorship: boolean; notes: string }>
+  /** Expected pay per currency, used with the job's currency or country. */
+  salary: Array<{ currency: string; min: number | null; target: number | null; period: SalaryPeriod; answerStyle: SalaryAnswerStyle }>
+  noticeWeeks: number | null
+  /** ISO date, or null for "as soon as possible". */
+  earliestStart: string | null
+  relocation: { willing: boolean | null; places: string[] }
+  travel: TravelWillingness | null
+  /** Years of experience per skill, keyed by the skill as written in the profile. */
+  skillYears: Record<string, number>
+  /** Level per language in profile.languages. */
+  languageLevels: Record<string, LanguageLevel>
+  /** Security clearance held. "None" means no clearance. An empty string means not answered yet. */
+  clearance: string
+  driversLicense: boolean | null
+  over18: boolean | null
+  references: string
+  gpa: string
+  /** The answer to "how did you hear about us" when the source gives no better one. */
+  heardAbout: string
+  /**
+   * Whether family, relatives or friends work at the employers the person applies to. False answers
+   * "Do you have family working at X?" with No. Null means not answered, and those questions wait for the person.
+   */
+  relativesAtEmployers?: boolean | null
+  /** "none" means the person applies without a referral, so "Did an employee refer you?" is answered No. An empty string means not answered. */
+  referrals?: 'none' | ''
 }
 
 export interface ProfileRecord {
@@ -348,6 +437,10 @@ export interface AnswerBankEntry {
   answer: string
   /** fact: reuse word for word. template: a starting point the AI adapts per company. */
   kind: AnswerKind
+  /** What the question is about (see questionTopics.ts). Set when the answer is saved. */
+  topic?: string | null
+  /** Narrows the topic: a currency, country or skill. */
+  scope?: string | null
   timesUsed: number
   updatedAt: string
 }
@@ -364,6 +457,9 @@ export type AtsKind =
   | 'workable'
   | 'workday'
   | 'recruitee'
+  | 'rippling'
+  | 'breezy'
+  | 'personio'
   | 'unknown'
 
 export type SourceKind =
@@ -377,6 +473,13 @@ export type SourceKind =
   | 'arbeitnow'
   | 'hn_whoishiring'
   | 'adzuna'
+  | 'himalayas'
+  | 'jobicy'
+  | 'themuse'
+  | 'weworkremotely'
+  | 'rippling'
+  | 'breezy'
+  | 'personio'
   | 'manual'
 
 export interface AtsDetection {
@@ -387,6 +490,9 @@ export interface AtsDetection {
   jobId: string | null
   companyName: string | null
 }
+
+/** How a company came to be watched. */
+export type CompanyOrigin = 'manual' | 'posting_link' | 'import' | 'starter'
 
 export interface Company {
   id: string
@@ -399,6 +505,8 @@ export interface Company {
   /** Blocked companies are never shown or scored. */
   blocked: boolean
   notes: string
+  /** Where the company came from. A company found in a posting is watched without the user adding it. */
+  origin: CompanyOrigin
   createdAt: string
 }
 
@@ -410,12 +518,13 @@ export interface CompanyInput {
   watch?: boolean
   blocked?: boolean
   notes?: string
+  origin?: CompanyOrigin
 }
 
 /** A saved search against an aggregator such as Remotive or Adzuna. */
 export interface SavedSearch {
   id: string
-  source: Exclude<SourceKind, 'greenhouse' | 'lever' | 'ashby' | 'smartrecruiters' | 'workable' | 'manual'>
+  source: Exclude<SourceKind, 'greenhouse' | 'lever' | 'ashby' | 'smartrecruiters' | 'workable' | 'rippling' | 'breezy' | 'personio' | 'manual'>
   label: string
   /** Source-specific parameters: query text, location, country, category. */
   params: Record<string, string>
@@ -482,6 +591,10 @@ export interface JobSummary {
 export interface Job extends JobSummary {
   externalId: string
   applyUrl: string | null
+  /** The board token on the job's application system, such as "stripe" on Greenhouse. */
+  atsToken?: string | null
+  /** The posting's id on that system, so the same posting found through two sources is stored once. */
+  atsJobId?: string | null
   description: string
   employmentType: string | null
   fit: FitAssessment | null
@@ -520,6 +633,8 @@ export interface RawJob {
   applyUrl: string | null
   ats: AtsKind
   atsToken: string | null
+  /** The posting's id on the application system when the source knows it. */
+  atsJobId?: string | null
   description: string // plain text
   postedAt: string | null
 }
@@ -595,6 +710,14 @@ export interface PreparedAnswer {
   needsUser: boolean
   note: string | null
   lint: LintReport | null
+  /**
+   * Set when the answer was written while filling the live form, so the person never saw it on the
+   * draft. It stays set until a person saves the application, and autopilot sends nothing while an
+   * answer still has it.
+   */
+  liveOnly?: boolean
+  /** Set when the answer comes from a rule over the log of earlier applications, so it is worked out again at fill time. */
+  rule?: 'previously_applied'
 }
 
 export type ApplicationStatus =
@@ -651,6 +774,10 @@ export interface Application extends ApplicationSummary {
    * app never clicks a second time and risks a duplicate application.
    */
   submitClickedAt: string | null
+  /** Failed automatic attempts that never reached the Submit click. Autopilot gives up on the third. */
+  submitFailures: number
+  /** When autopilot filled this form in a dry run and stopped before the click. */
+  dryRunAt: string | null
   error: string | null
   notes: string
 }
@@ -670,6 +797,8 @@ export interface ApplicationQuery {
   search?: string
   limit?: number
   offset?: number
+  /** updated: most recently changed first (the default). fit: best fit first. */
+  sort?: 'updated' | 'fit'
 }
 
 export interface SubmitResult {
@@ -729,6 +858,8 @@ export interface RunOptions {
   prepare?: boolean
   submit?: boolean
   trigger?: 'manual' | 'schedule'
+  /** Reads every watched board, not only those due. For a forced full check. */
+  allBoards?: boolean
 }
 
 export interface RunStats {
@@ -751,11 +882,46 @@ export interface RunStats {
 
 export interface RunRecord {
   id: string
-  trigger: 'manual' | 'schedule'
+  trigger: 'manual' | 'schedule' | 'loop'
   startedAt: string
   finishedAt: string | null
   stats: RunStats
   error: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Continuous mode
+// ---------------------------------------------------------------------------
+
+export type WorkerName = 'discover' | 'score' | 'prepare' | 'submit'
+
+export type PauseKind = 'budget' | 'rate_limit' | 'no_model' | 'provider_errors' | 'browser_errors' | 'captcha' | 'sign_in' | 'cap'
+
+/** Why a step stopped early, and until when its worker should wait. Null means until something changes. */
+export interface PauseHint {
+  kind: PauseKind
+  until: string | null
+  /** The application form family (lever, greenhouse and so on) a captcha or sign-in pause belongs to. */
+  family?: string
+  message: string
+}
+
+export interface WorkerStatus {
+  state: 'idle' | 'working' | 'paused' | 'off'
+  /** ISO time a paused worker starts again, or null when it waits for a change. */
+  until: string | null
+  reason: string | null
+  /** What this worker finished since local midnight. */
+  doneToday: number
+  /** Items it is working on right now. */
+  active: number
+}
+
+export interface LoopStatus {
+  running: boolean
+  since: string | null
+  workers: Record<WorkerName, WorkerStatus>
+  today: { discovered: number; scored: number; prepared: number; submitted: number; errors: number; costUsd: number }
 }
 
 export type EventType =
@@ -806,8 +972,61 @@ export interface CountByKey {
   count: number
 }
 
+/** What happened in a window of time, counted in SQL. Used for "today" and "the last 7 days". */
+export interface VolumeCounts {
+  /** Jobs found in the window. */
+  discovered: number
+  /** Of those, jobs a free rule dropped: filters, keyword pre-score and duplicates. */
+  filteredOut: number
+  /** Of those, jobs that got an AI score (or an application). */
+  scored: number
+  /** Of those, jobs at or above the shortlist score (or with an application). */
+  shortlisted: number
+  /** Applications created in the window. */
+  prepared: number
+  /** Applications sent in the window, counting a Submit click that saw no confirmation. */
+  submitted: number
+  /** Applications created in the window that now need an answer or a fix from the user. */
+  needsAttention: number
+  /** Applications created in the window that now wait for review and submit. */
+  ready: number
+  /** Paid AI spend in the window. */
+  costUsd: number
+}
+
+export interface ScoreBucket {
+  from: number
+  to: number
+  count: number
+}
+
+export interface ProviderQuota {
+  providerId: string
+  label: string
+  requestsToday: number
+  /** The daily limit set for the provider, or null for none. */
+  requestsPerDay: number | null
+  costToday: number
+}
+
 export interface AnalyticsReport {
   rangeDays: number
+  /** Since local midnight. Does not depend on `rangeDays`. */
+  today: VolumeCounts
+  /** The last 7 days. Does not depend on `rangeDays`. */
+  week: VolumeCounts
+  /** Applications sent in each of the last 24 hours, oldest first. `hour` is the ISO time the hour starts. */
+  sendsByHour: Array<{ hour: string; count: number }>
+  /** Jobs found in the last 7 days with an AI score of 50 or more, in buckets of 5. The last bucket includes 100. */
+  scoreHistogram: ScoreBucket[]
+  /** The same jobs counted by exact score: index 0 is score 50, index 50 is score 100. */
+  scoreCounts: number[]
+  /** Company boards. Not limited to a time window. */
+  boards: { watched: number; failing: number; stopped: number; dueNow: number }
+  /** AI requests and spend today for each provider. */
+  quota: ProviderQuota[]
+  /** Counts over all time. */
+  totals: { submitted: number; responses: number; needsAttention: number; ready: number }
   funnel: {
     discovered: number
     filteredOut: number
@@ -871,4 +1090,64 @@ export interface PreferenceSuggestion {
   patch: {
     preferences: Partial<JobPreferences>
   }
+}
+
+// ---------------------------------------------------------------------------
+// Review exceptions
+// ---------------------------------------------------------------------------
+
+/** Why an application with nothing left for the person to answer could not be sent. */
+export type ExceptionReason =
+  | 'captcha'
+  | 'sign_in'
+  | 'multi_page'
+  | 'job_board'
+  | 'no_submit_button'
+  | 'form_rejected'
+  | 'no_confirmation'
+  | 'timed_out'
+  | 'browser'
+  | 'gave_up'
+  | 'other'
+
+/** One question that many applications ask and the person has not answered. */
+export interface NeedsYouGroup {
+  /** Stable key for the group: the topic and scope for text questions, the normalized label for the rest. */
+  key: string
+  topic: string | null
+  scope: string | null
+  label: string
+  /** Every distinct wording of the question in the group. A text group can hold several. */
+  wordings: string[]
+  required: boolean
+  type: FieldType
+  /** Set when every field in the group offers the same choices. */
+  options: string[] | null
+  /** True for questions only the person may answer (AI use, legal, consent). */
+  userOnly: boolean
+  /** How many applications ask it. */
+  count: number
+  applications: Array<{ id: string; company: string; title: string; fieldKey: string; note: string | null }>
+}
+
+export interface CouldNotSendGroup {
+  reason: ExceptionReason
+  count: number
+  applications: Array<{ id: string; company: string; title: string; error: string | null; screenshotPath: string | null; submitClickedAt: string | null }>
+}
+
+export interface SentSample {
+  id: string
+  company: string
+  title: string
+  submittedAt: string
+  screenshotPath: string | null
+}
+
+/** What the Review page shows first: questions to answer once, what could not be sent and a sample of what went out. */
+export interface ReviewExceptions {
+  needsYou: NeedsYouGroup[]
+  couldNotSend: CouldNotSendGroup[]
+  sent: { today: number; week: number; sample: SentSample[] }
+  totals: { ready: number; needsAttention: number }
 }

@@ -93,3 +93,27 @@ export class LlmFormatError extends Error {
     this.name = 'LlmFormatError'
   }
 }
+
+/**
+ * True when the model could not handle this item (it refused, or answered in a shape that could not
+ * be read). Retrying the same item rarely helps, so it counts against the item.
+ */
+export function isJobFault(err: unknown): boolean {
+  return err instanceof LlmFormatError || err instanceof LlmRefusalError
+}
+
+/**
+ * True when the provider failed rather than the item: the network dropped, the server answered with
+ * an error or timed out, or a local model is not running. Spending limits, a missing model setup and
+ * a cancelled call are not provider errors, and neither is a refusal or an unreadable reply. A run
+ * stops after a few provider errors in a row and never holds them against a job.
+ */
+export function isProviderError(err: unknown): boolean {
+  return !(
+    err instanceof LlmCancelledError ||
+    err instanceof BudgetExceededError ||
+    err instanceof RateLimitedError ||
+    err instanceof NoModelConfiguredError ||
+    isJobFault(err)
+  )
+}

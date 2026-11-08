@@ -1,4 +1,5 @@
 import type { RawJob } from '@shared/types'
+import { withAtsIdentity } from './detect'
 import { fetchJson } from './http'
 import { cleanTitle, htmlToPlain, inferRemote, toIsoDate } from './normalize'
 
@@ -52,7 +53,7 @@ export function parseAdzuna(json: { results?: AdzunaResult[] }, country = 'us'):
     const title = cleanTitle(htmlToPlain(r.title))
     const location = r.location?.display_name?.trim() || null
     const description = htmlToPlain(r.description ?? '')
-    return {
+    return withAtsIdentity({
       source: 'adzuna' as const,
       externalId: String(r.id),
       company: r.company?.display_name?.trim() || 'Unknown company',
@@ -69,7 +70,7 @@ export function parseAdzuna(json: { results?: AdzunaResult[] }, country = 'us'):
       atsToken: null,
       description,
       postedAt: toIsoDate(r.created)
-    }
+    })
   })
 }
 

@@ -3,7 +3,7 @@ import { type Db, newId, now, parseJson } from '../database'
 
 interface RunRow {
   id: string
-  trigger: 'manual' | 'schedule'
+  trigger: 'manual' | 'schedule' | 'loop'
   started_at: string
   finished_at: string | null
   stats: string
@@ -43,7 +43,7 @@ function toRecord(row: RunRow): RunRecord {
 export class RunsRepo {
   constructor(private readonly db: Db) {}
 
-  start(trigger: 'manual' | 'schedule'): RunRecord {
+  start(trigger: 'manual' | 'schedule' | 'loop'): RunRecord {
     const id = newId()
     this.db.run('INSERT INTO runs (id, trigger, started_at, stats) VALUES (:id, :trigger, :at, :stats)', {
       id,

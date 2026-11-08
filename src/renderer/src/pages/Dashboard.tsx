@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Activity, AlertTriangle, ArrowRight, Check, Inbox, Lightbulb, X } from 'lucide-react'
+import { Activity, AlertTriangle, Check, Lightbulb, Pause, Play, X } from 'lucide-react'
 import { BUCKET_LABELS } from '@shared/defaults'
-import type { EventType, FitBucket } from '@shared/types'
+import type { EventType, FitBucket, JobStage, LoopStatus, WorkerName, WorkerStatus } from '@shared/types'
 import { api } from '@renderer/lib/api'
 import { useApp } from '@renderer/lib/app'
 import { useAsync } from '@renderer/lib/hooks'
@@ -11,8 +11,10 @@ import { formatPercent, formatUsd, plural, relativeTime } from '@renderer/lib/fo
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Loading, Notice, Page, PageHeader, Stat, Toggle, type Tone } from '@renderer/components/ui'
 import { autopilotConfirmMessage } from '@renderer/lib/autopilot'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
+import { BoardHealth, QuotaCard, SendsPerHour, VolumeFunnel, WaitingOnYou } from '@renderer/components/VolumeFunnel'
 
-const WEEK = 7 * 24 * 3600 * 1000
+/** How often the counts refresh while the page is open. In continuous mode events arrive all the time, so waiting for a quiet moment would never refresh. */
+const REFRESH_MS = 15_000
 const BUCKETS: FitBucket[] = ['perfect', 'great', 'good']
 const BUCKET_COLOR: Record<FitBucket, string> = { perfect: 'text-good', great: 'text-info', good: 'text-accent-strong', weak: 'text-muted' }
 
@@ -44,32 +46,106 @@ const EVENT_LABEL: Record<EventType, string> = {
   error: 'Error'
 }
 
+const WORKER_LABEL: Record<WorkerName, string> = { discover: 'Finding jobs', score: 'Scoring', prepare: 'Preparing', submit: 'Sending' }
+const WORKER_ORDER: WorkerName[] = ['discover', 'score', 'prepare', 'submit']
+const STATE_LABEL: Record<WorkerStatus['state'], string> = { idle: 'Waiting for work', working: 'Working', paused: 'Paused', off: 'Off' }
+const STATE_TONE: Record<WorkerStatus['state'], Tone> = { idle: 'neutral', working: 'accent', paused: 'warn', off: 'neutral' }
+
+/** "09:00" for a time today, "Sun 09:00" for another day. */
+function untilLabel(iso: string): string {
+  const at = new Date(iso)
+  const time = at.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return at.toDateString() === new Date().toDateString() ? time : `${at.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`
+}
+
+/** Continuous mode: what each of the four workers is doing, why one waits, and today's counts. */
+function WorkingNow({ status, onPause, onResume }: { status: LoopStatus; onPause: (name: WorkerName) => void; onResume: (name: WorkerName) => void }): React.JSX.Element {
+  const { today } = status
+  return (
+    <Card className="mb-4">
+      <CardHeader
+        title="Working now"
+        hint={`Today: ${plural(today.discovered, 'job')} found, ${today.scored.toLocaleString('en-US')} scored, ${plural(today.prepared, 'application')} prepared, ${today.submitted} sent, ${plural(today.errors, 'error')}.`}
+        actions={<Badge tone={status.running ? 'good' : 'neutral'}>{status.running ? 'Running continuously' : 'Stopped'}</Badge>}
+      />
+      <ul className="divide-y divide-line">
+        {WORKER_ORDER.map((name) => {
+          const w = status.workers[name]
+          return (
+            <li key={name} className="flex items-center gap-3 px-4 py-2">
+              <span className="w-24 shrink-0 text-sm text-fg">{WORKER_LABEL[name]}</span>
+              <Badge tone={STATE_TONE[w.state]} className="w-32 shrink-0 justify-center">
+                {STATE_LABEL[w.state]}
+                {w.state === 'working' && w.active > 0 ? ` (${w.active})` : ''}
+              </Badge>
+              <span className="min-w-0 flex-1 truncate text-sm text-muted" title={w.reason ?? undefined}>
+                {w.reason ?? ''}
+                {w.state === 'paused' && w.until ? `${w.reason ? ' ' : ''}Back at ${untilLabel(w.until)}.` : ''}
+              </span>
+              <span className="w-24 shrink-0 text-right text-xs tabular-nums text-faint">{w.doneToday.toLocaleString('en-US')} today</span>
+              {w.state === 'paused' ? (
+                <Button size="sm" variant="secondary" className="w-20" icon={<Play size={12} />} onClick={() => onResume(name)}>
+                  Resume
+                </Button>
+              ) : (
+                <Button size="sm" variant="ghost" className="w-20" disabled={w.state === 'off' || !status.running} icon={<Pause size={12} />} onClick={() => onPause(name)}>
+                  Pause
+                </Button>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </Card>
+  )
+}
+
 export function Dashboard(): React.JSX.Element {
   const navigate = useNavigate()
   const toast = useToast()
   const { settings, updateSettings, usage } = useApp()
 
-  const queue = useAsync(() => api.listApplications({ statuses: ['ready', 'needs_attention'], limit: 100 }), [], ['applications:changed'])
-  const shortlist = useAsync(() => api.listJobs({ stages: ['shortlisted', 'preparing', 'ready'], limit: 500 }), [], ['jobs:changed'])
-  const submitted = useAsync(() => api.listApplications({ statuses: ['submitted'], limit: 500 }), [], ['applications:changed'])
+  // Every count comes from the database as a number. No list is loaded just to be counted.
+  const analytics = useAsync(() => api.getAnalytics(1), [], ['applications:changed', 'jobs:changed'])
+  const shortlist = useAsync(
+    async () => {
+      const stages: JobStage[] = ['shortlisted', 'preparing', 'ready']
+      const [all, ...byBucket] = await Promise.all([api.listJobs({ stages, limit: 1 }), ...BUCKETS.map((b) => api.listJobs({ stages, buckets: [b], limit: 1 }))])
+      return { total: all.total, byBucket: Object.fromEntries(BUCKETS.map((b, i) => [b, byBucket[i].total])) as Record<FitBucket, number> }
+    },
+    [],
+    ['jobs:changed']
+  )
   const runs = useAsync(() => api.listRuns(1), [], ['pipeline:progress'])
   const events = useAsync(() => api.listEvents({ limit: 12 }), [], ['event:new'])
   const suggestions = useAsync(() => api.listSuggestions(), [], ['jobs:changed'])
   const autopilotOn = settings?.autopilot.enabled ?? false
   const intervalHours = settings?.autopilot.intervalHours
   const nextRunAt = useAsync(() => api.getNextRunAt(), [autopilotOn, intervalHours], ['pipeline:progress'])
+  const continuous = autopilotOn && settings?.autopilot.mode === 'continuous'
+  const loop = useAsync(() => api.getLoopStatus(), [continuous], ['loop:status'])
   const [confirmAutopilot, setConfirmAutopilot] = useState(false)
 
-  const firstError = queue.error ?? shortlist.error ?? submitted.error ?? events.error
+  const reloadAnalytics = analytics.reload
+  const reloadShortlist = shortlist.reload
+  useEffect(() => {
+    const timer = setInterval(() => {
+      reloadAnalytics()
+      reloadShortlist()
+    }, REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [reloadAnalytics, reloadShortlist])
+
+  const firstError = analytics.error ?? events.error
   if (firstError) {
     return (
       <Page>
         <PageHeader title="Dashboard" />
-        <ErrorBlock message={firstError} onRetry={() => [queue, shortlist, submitted, events].forEach((s) => s.reload())} />
+        <ErrorBlock message={firstError} onRetry={() => [analytics, shortlist, events].forEach((s) => s.reload())} />
       </Page>
     )
   }
-  if (!queue.data || !shortlist.data || !submitted.data || !events.data) {
+  if (!analytics.data || !events.data) {
     return (
       <Page>
         <PageHeader title="Dashboard" />
@@ -78,29 +154,22 @@ export function Dashboard(): React.JSX.Element {
     )
   }
 
-  const ready = queue.data.items
-  const needAnswer = ready.filter((a) => a.flaggedCount > 0).length
-  const needCheck = ready.filter((a) => a.flaggedCount === 0 && a.guessCount > 0).length
-  const readyNote =
-    ready.length === 0
-      ? shortlist.data.total === 0
-        ? 'Nothing is waiting yet. Press Run now to look for jobs.'
-        : 'Nothing is waiting. Prepare an application from the shortlist.'
-      : needAnswer > 0
-        ? `${plural(needAnswer, 'application')} still ${needAnswer === 1 ? 'needs' : 'need'} an answer from you${needCheck > 0 ? `, and ${needCheck} ${needCheck === 1 ? 'has' : 'have'} guesses to check` : ''}.`
-        : needCheck > 0
-          ? `${plural(needCheck, 'application')} ${needCheck === 1 ? 'has' : 'have'} guesses to check before you submit.`
-          : 'Everything is filled in. Review and click Submit.'
-  const counts: Record<FitBucket, number> = { perfect: 0, great: 0, good: 0, weak: 0 }
-  shortlist.data.items.forEach((j) => j.fitBucket && (counts[j.fitBucket] += 1))
-  const sentApps = submitted.data.items
-  const thisWeek = sentApps.filter((a) => a.submittedAt && Date.now() - new Date(a.submittedAt).getTime() < WEEK).length
-  const responded = sentApps.filter((a) => a.outcome !== 'none' && a.outcome !== 'ghosted').length
+  const report = analytics.data
+  const counts = shortlist.data?.byBucket ?? { perfect: 0, great: 0, good: 0, weak: 0 }
+  const shortlistTotal = shortlist.data?.total ?? 0
   const lastRun = runs.data?.[0]
   const lastRunText = lastRun ? `Last run ${relativeTime(lastRun.startedAt)}.` : 'No runs yet.'
   const nextRun = settings?.autopilot.enabled ? nextRunAt.data : null
   const autoSends = !!settings && settings.autopilot.autoSubmit && !settings.autopilot.dryRun
 
+  async function setWorker(name: WorkerName, pause: boolean): Promise<void> {
+    try {
+      await (pause ? api.pauseWorker(name) : api.resumeWorker(name))
+      loop.reload()
+    } catch (err) {
+      toast.error(err)
+    }
+  }
   async function applySuggestion(id: string, patch: Parameters<typeof updateSettings>[0]): Promise<void> {
     if (await updateSettings(patch)) {
       await api.dismissSuggestion(id).catch(toast.error)
@@ -118,7 +187,7 @@ export function Dashboard(): React.JSX.Element {
   }
 
   return (
-    <Page>
+    <Page wide>
       <PageHeader title="Dashboard" intro="What needs you today and how the search is going." />
 
       {settings && !settings.onboardingDone && (
@@ -137,36 +206,60 @@ export function Dashboard(): React.JSX.Element {
         </div>
       )}
 
-      <div className="mb-4 grid grid-cols-3 gap-4">
-        <Card className="col-span-1 flex flex-col justify-between p-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs text-muted">
-              <Inbox size={14} /> Ready to submit
-            </div>
-            <p className="mt-1 text-4xl font-semibold tabular-nums tracking-tight text-fg">{ready.length}</p>
-            <p className="mt-1 text-sm text-muted">
-              {readyNote}
-            </p>
-          </div>
-          <Button variant="primary" className="mt-4 self-start" disabled={ready.length === 0} onClick={() => navigate('/review')} icon={<ArrowRight size={14} />}>
-            Open review queue
-          </Button>
-        </Card>
+      {settings?.autopilot.dryRun && (
+        <div className="mb-4">
+          <Notice
+            tone="warn"
+            action={
+              <Button size="sm" onClick={() => navigate('/settings')}>
+                Open Settings
+              </Button>
+            }
+          >
+            Dry run is on. Forms are filled and never sent. Turn it off in Settings when the fills look right.
+          </Notice>
+        </div>
+      )}
 
-        <Card className="col-span-1 p-4">
+      {continuous && loop.data && <WorkingNow status={loop.data} onPause={(name) => void setWorker(name, true)} onResume={(name) => void setWorker(name, false)} />}
+
+      <VolumeFunnel analytics={report} />
+
+      <div className="mb-4 grid grid-cols-3 gap-4">
+        <WaitingOnYou totals={report.totals} onOpen={() => navigate('/review')} />
+        <div className="col-span-2">
+          <SendsPerHour sends={report.sendsByHour} />
+        </div>
+      </div>
+
+      <div className="mb-4 grid grid-cols-3 gap-4">
+        <QuotaCard quota={report.quota} usage={usage} />
+        <BoardHealth boards={report.boards} onOpen={() => navigate('/sources')} />
+      </div>
+
+      {lastRun?.stats.stoppedForRateLimit && (
+        <div className="mb-4">
+          <Notice tone="warn" title="An AI provider's limit was reached">
+            The last run paused AI work when the limit was reached. The rest continues on the next run.
+          </Notice>
+        </div>
+      )}
+
+      <div className="mb-4 grid grid-cols-2 gap-4">
+        <Card className="p-4">
           <p className="text-xs text-muted">Shortlist</p>
           <div className="mt-2 grid grid-cols-3 gap-2">
             {BUCKETS.map((b) => (
               <button key={b} onClick={() => navigate(`/jobs?fit=${b}`)} className="rounded-md px-2 py-1.5 text-left hover:bg-hover">
-                <p className={`text-2xl font-semibold tabular-nums ${BUCKET_COLOR[b]}`}>{counts[b]}</p>
+                <p className={`text-2xl font-semibold tabular-nums ${BUCKET_COLOR[b]}`}>{counts[b].toLocaleString('en-US')}</p>
                 <p className="text-xs text-muted">{BUCKET_LABELS[b]}</p>
               </button>
             ))}
           </div>
-          <p className="mt-3 text-xs text-faint">{plural(shortlist.data.total, 'job')} waiting for you or autopilot.</p>
+          <p className="mt-3 text-xs text-faint">{plural(shortlistTotal, 'job')} waiting for you or autopilot.</p>
         </Card>
 
-        <Card className="col-span-1 p-4">
+        <Card className="p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted">Autopilot</p>
             <Badge tone={settings?.autopilot.enabled ? 'good' : 'neutral'}>{settings?.autopilot.enabled ? 'On' : 'Off'}</Badge>
@@ -178,10 +271,20 @@ export function Dashboard(): React.JSX.Element {
                 if (enabled && autoSends) setConfirmAutopilot(true)
                 else void updateSettings({ autopilot: { enabled } })
               }}
-              label={settings?.autopilot.enabled ? (settings.autopilot.intervalHours === 1 ? 'Runs every hour' : `Runs every ${settings.autopilot.intervalHours} hours`) : 'Runs only when you press Run now'}
+              label={
+                settings?.autopilot.enabled
+                  ? settings.autopilot.mode === 'continuous'
+                    ? 'Runs continuously'
+                    : settings.autopilot.intervalHours === 1
+                      ? 'Runs every hour'
+                      : `Runs every ${settings.autopilot.intervalHours} hours`
+                  : 'Runs only when you press Run now'
+              }
               hint={
                 settings?.autopilot.enabled
-                  ? nextRun
+                  ? continuous
+                    ? 'Keeps working all day within your limits.'
+                    : nextRun
                     ? `${new Date(nextRun).getTime() <= Date.now() ? 'The next run is due now' : `Next run ${relativeTime(nextRun)}`}. ${lastRunText}`
                     : lastRunText
                   : lastRunText
@@ -196,17 +299,9 @@ export function Dashboard(): React.JSX.Element {
         </Card>
       </div>
 
-      {lastRun?.stats.stoppedForRateLimit && (
-        <div className="mb-4">
-          <Notice tone="warn" title="An AI provider's limit was reached">
-            The last run paused AI work when the limit was reached. The rest continues on the next run.
-          </Notice>
-        </div>
-      )}
-
       <div className="mb-6 grid grid-cols-4 gap-4">
-        <Stat label="Applied this week" value={thisWeek} hint={`${sentApps.length} in total`} />
-        <Stat label="Reply rate" value={sentApps.length ? formatPercent(responded / sentApps.length) : '-'} hint={`${plural(responded, 'reply', 'replies')} to ${plural(sentApps.length, 'application')}`} />
+        <Stat label="Applied this week" value={report.week.submitted.toLocaleString('en-US')} hint={`${report.totals.submitted.toLocaleString('en-US')} in total`} />
+        <Stat label="Reply rate" value={report.totals.submitted ? formatPercent(report.totals.responses / report.totals.submitted) : '-'} hint={`${plural(report.totals.responses, 'reply', 'replies')} to ${plural(report.totals.submitted, 'application')}`} />
         <Stat label="Estimated spend today" value={formatUsd(usage?.todayUsd)} hint={usage ? `${usage.dailyBudgetUsd > 0 ? `Budget ${formatUsd(usage.dailyBudgetUsd)} a day` : 'No daily limit'}${usage.freeCallsToday > 0 ? `. ${plural(usage.freeCallsToday, 'free call')} today` : ''}` : undefined} tone={usage && usage.dailyBudgetUsd > 0 && usage.todayUsd >= usage.dailyBudgetUsd ? 'bad' : undefined} />
         <Stat label="Estimated spend this month" value={formatUsd(usage?.monthUsd)} hint={usage ? (usage.monthlyBudgetUsd > 0 ? `Budget ${formatUsd(usage.monthlyBudgetUsd)} a month` : 'No monthly limit') : undefined} />
       </div>

@@ -3,14 +3,22 @@ import { bucketFor } from '@shared/defaults'
 import type { FitAssessment, Job, JobPreferences, JobStage, Profile } from '@shared/types'
 import type { AppContext } from '../context'
 import { SCORE_MOVABLE_STAGES } from '../db/repos/jobs'
-import { BudgetExceededError, LlmCancelledError, LlmFormatError, LlmRefusalError, NoModelConfiguredError, RateLimitedError } from '../llm/errors'
+import { BudgetExceededError, LlmCancelledError, LlmFormatError, NoModelConfiguredError, RateLimitedError, isJobFault } from '../llm/errors'
 import { trimDescription } from '../util/text'
 import { renderProfile } from '../writing/prompts'
 
 /** Bump when the rubric or the prompt layout changes, so cached scores from the old one aren't reused. */
-export const TRIAGE_PROMPT_VERSION = 'triage-v1'
+export const TRIAGE_PROMPT_VERSION = 'triage-v2'
+/** The same, for the prompt that scores several jobs in one call. */
+export const TRIAGE_BATCH_PROMPT_VERSION = 'triage-batch-v1'
 
 export const TRIAGE_CONCURRENCY = 4
+/**
+ * Jobs scored per call on a free provider, where requests are the scarce thing. Five keeps the reply
+ * short (about 150 tokens a job, so it fits any output limit) and limits what one bad job can
+ * spoil, since a reply that cannot be read costs a retry of every job in the batch.
+ */
+export const TRIAGE_BATCH_SIZE = 5
 const DESCRIPTION_CHARS = 4000
 
 /**
@@ -25,6 +33,11 @@ export const fitSchema = z.object({
   dealbreakers: z.array(z.string()),
   seniorityFit: z.enum(['under', 'match', 'over', 'unknown']),
   keywords: z.array(z.string())
+})
+
+/** Fields of one score, plus the id of the job it belongs to. */
+export const batchFitSchema = z.object({
+  scores: z.array(fitSchema.extend({ id: z.string() }))
 })
 
 /** Identical for every job, so providers can cache it. */
@@ -63,6 +76,13 @@ Fields
 - seniorityFit: "match" when the level fits. "over" when the role is more senior than the candidate. "under" when the role is more junior than the candidate. "unknown" when the posting does not say.
 - keywords: up to 8 terms from the posting that are true for the candidate and worth repeating in an application.`
 
+/** The same rubric for a call that scores several postings. Identical for every batch, so providers can cache it. */
+export const TRIAGE_BATCH_SYSTEM = `${TRIAGE_SYSTEM}
+
+Several postings in one reply
+- Score each posting under JOB on its own. Do not compare postings with each other, and do not let one posting change another's score.
+- Reply with JSON only: {"scores": [...]}. Add one entry per posting, with the posting's id in "id" and every field above.`
+
 function list(label: string, items: string[]): string | null {
   return items.length ? `${label}: ${items.join(', ')}` : null
 }
@@ -81,13 +101,15 @@ export function preferencesSummary(prefs: JobPreferences): string {
   return lines.length ? lines.join('\n') : 'No stated preferences.'
 }
 
-/** The candidate and their preferences. Stable across jobs. */
+/** The candidate and their preferences. Stable across jobs. Only what bears on fit, so facts, links and voice stay out. */
 export function triageContext(profile: Profile, prefs: JobPreferences): string {
-  return `CANDIDATE PROFILE\n${renderProfile(profile)}\n\nCANDIDATE PREFERENCES\n${preferencesSummary(prefs)}`
+  return `CANDIDATE PROFILE\n${renderProfile(profile, 'fit')}\n\nCANDIDATE PREFERENCES\n${preferencesSummary(prefs)}`
 }
 
-/** The only part that changes from job to job. */
-export function triagePrompt(job: Pick<Job, 'company' | 'title' | 'location' | 'remote' | 'salaryMin' | 'salaryMax' | 'salaryCurrency' | 'employmentType' | 'postedAt' | 'description'>): string {
+type PostingFields = Pick<Job, 'company' | 'title' | 'location' | 'remote' | 'salaryMin' | 'salaryMax' | 'salaryCurrency' | 'employmentType' | 'postedAt' | 'description'>
+
+/** One posting as text. */
+function postingBlock(job: PostingFields): string {
   const lines = [`Company: ${job.company}`, `Title: ${job.title}`]
   if (job.location) lines.push(`Location: ${job.location}`)
   if (job.remote !== 'unknown') lines.push(`Work type: ${job.remote}`)
@@ -98,7 +120,18 @@ export function triagePrompt(job: Pick<Job, 'company' | 'title' | 'location' | '
   if (job.employmentType) lines.push(`Employment type: ${job.employmentType}`)
   if (job.postedAt) lines.push(`Posted: ${job.postedAt.slice(0, 10)}`)
   lines.push(`Posting:\n"""\n${trimDescription(job.description, DESCRIPTION_CHARS)}\n"""`)
-  return `JOB\n${lines.join('\n')}\n\nScore this job for the candidate.`
+  return lines.join('\n')
+}
+
+/** The only part that changes from job to job. */
+export function triagePrompt(job: PostingFields): string {
+  return `JOB\n${postingBlock(job)}\n\nScore this job for the candidate.`
+}
+
+/** Several postings, each under a short id the model echoes back. */
+export function triageBatchPrompt(jobs: Array<{ id: string; job: PostingFields }>): string {
+  const blocks = jobs.map((j) => `JOB ${j.id}\n${postingBlock(j.job)}`)
+  return `${blocks.join('\n\n')}\n\nScore each job above for the candidate.`
 }
 
 function clip(items: string[], max: number): string[] {
@@ -122,6 +155,26 @@ export function toAssessment(raw: z.infer<typeof fitSchema>, shortlistScore: num
 
 /** Provider errors (not the job's fault) in one run before scoring stops. */
 const MAX_PROVIDER_ERRORS = 3
+/** Postings the provider rejected one after another, with no score between, before scoring stops. A run of them points at the setup (a wrong key or model), not at the postings. */
+const MAX_REJECTIONS_IN_A_ROW = 5
+
+const REQUEST_REJECTED_STATUSES = new Set([400, 413, 422])
+const CONTENT_FILTER = /content[_ -]?(?:filter|policy)/i
+
+/**
+ * True when the provider answered that it will not take this request: HTTP 400, 413 or 422, or a
+ * content filter. Sending the same posting again gets the same answer, so it counts against the job
+ * like an unreadable reply, and it is not a provider outage.
+ */
+export function isRequestRejection(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const { status, code, message } = err as { status?: unknown; code?: unknown; message?: unknown }
+  if (typeof status === 'number' && REQUEST_REJECTED_STATUSES.has(status)) return true
+  return CONTENT_FILTER.test(String(code ?? '')) || CONTENT_FILTER.test(String(message ?? ''))
+}
+
+/** A failure that belongs to the posting: the model could not handle it, or the provider rejected it. */
+const isPostingFault = (err: unknown): boolean => isJobFault(err) || isRequestRejection(err)
 
 export interface ScoreResult {
   job: Job
@@ -132,6 +185,19 @@ export interface ScoreResult {
   tokens: number
 }
 
+/** The stage a job moves to after scoring, or undefined when it is already past the early stages. */
+function stageAfterScore(job: Job, score: number, shortlistScore: number): JobStage | undefined {
+  return SCORE_MOVABLE_STAGES.includes(job.stage) ? (score >= shortlistScore ? 'shortlisted' : 'scored') : undefined
+}
+
+/** The result for a job already scored against the current profile, or null when it needs a call. Moves the job if its stage is behind. */
+function alreadyScored(ctx: AppContext, job: Job, version: number, shortlistScore: number, force: boolean | undefined): ScoreResult | null {
+  if (force || !job.fit || ctx.jobs.scoredProfileVersion(job.id) !== version) return null
+  const stage = stageAfterScore(job, job.fit.score, shortlistScore)
+  if (stage && stage !== job.stage) ctx.jobs.moveStage(job.id, stage, SCORE_MOVABLE_STAGES)
+  return { job: ctx.jobs.get(job.id)!, called: false, cached: true, costUsd: 0, tokens: 0 }
+}
+
 /**
  * Scores one job. A job already scored against the current profile version is not sent again unless
  * `force` is set. Moves the job to shortlisted or scored when it is still in an early stage.
@@ -139,14 +205,8 @@ export interface ScoreResult {
 export async function scoreJobWithAi(ctx: AppContext, job: Job, options: { force?: boolean; signal?: AbortSignal } = {}): Promise<ScoreResult> {
   const { profile, version } = ctx.profile.get()
   const { thresholds, preferences } = ctx.settings.get()
-  const stageFor = (score: number): JobStage | undefined =>
-    SCORE_MOVABLE_STAGES.includes(job.stage) ? (score >= thresholds.shortlistScore ? 'shortlisted' : 'scored') : undefined
-
-  if (!options.force && job.fit && ctx.jobs.scoredProfileVersion(job.id) === version) {
-    const stage = stageFor(job.fit.score)
-    if (stage && stage !== job.stage) ctx.jobs.moveStage(job.id, stage, SCORE_MOVABLE_STAGES)
-    return { job: ctx.jobs.get(job.id)!, called: false, cached: true, costUsd: 0, tokens: 0 }
-  }
+  const done = alreadyScored(ctx, job, version, thresholds.shortlistScore, options.force)
+  if (done) return done
 
   const outcome = await ctx.llm.json({
     task: 'triage',
@@ -162,8 +222,91 @@ export async function scoreJobWithAi(ctx: AppContext, job: Job, options: { force
     effort: 'low'
   })
   const fit = toAssessment(outcome.value, thresholds.shortlistScore)
-  ctx.jobs.saveFit(job.id, fit, version, stageFor(fit.score))
+  ctx.jobs.saveFit(job.id, fit, version, stageAfterScore(job, fit.score, thresholds.shortlistScore))
   return { job: ctx.jobs.get(job.id)!, called: true, cached: outcome.cached, costUsd: outcome.costUsd, tokens: outcome.tokens }
+}
+
+/** What happened to one job in a batch. An error here is the job's own fault (an unreadable or missing score, or a request the provider rejected). */
+export type JobScoreOutcome = { job: Job; result: ScoreResult } | { job: Job; error: unknown }
+
+/**
+ * Scores several jobs. With more than one job to send, one call covers them all. A job already
+ * scored for the current profile is skipped, as with scoreJobWithAi. A job the reply has no usable
+ * score for gets its own error, and the others keep their scores. When the whole reply cannot be
+ * read, or the provider rejects the request (HTTP 400, 413, 422 or a content filter), each job is
+ * sent on its own, so the failure lands on the job that caused it.
+ *
+ * A failure that is not the job's fault (the budget, a rate limit, a provider error) stops the work
+ * and comes back as `fatal`. Jobs scored before it are still in `outcomes`.
+ */
+export async function scoreJobsWithAi(
+  ctx: AppContext,
+  jobs: Job[],
+  options: { force?: boolean; signal?: AbortSignal } = {}
+): Promise<{ outcomes: JobScoreOutcome[]; fatal: unknown }> {
+  const { profile, version } = ctx.profile.get()
+  const { thresholds, preferences } = ctx.settings.get()
+  const outcomes: JobScoreOutcome[] = []
+  const pending: Job[] = []
+  for (const job of jobs) {
+    const done = alreadyScored(ctx, job, version, thresholds.shortlistScore, options.force)
+    if (done) outcomes.push({ job, result: done })
+    else pending.push(job)
+  }
+
+  const scoreEach = async (list: Job[]): Promise<unknown> => {
+    for (const job of list) {
+      try {
+        outcomes.push({ job, result: await scoreJobWithAi(ctx, job, options) })
+      } catch (err) {
+        if (!isPostingFault(err)) return err
+        outcomes.push({ job, error: err })
+      }
+    }
+    return null
+  }
+
+  if (pending.length <= 1) return { outcomes, fatal: await scoreEach(pending) }
+
+  const labeled = pending.map((job, i) => ({ id: `job${i + 1}`, job }))
+  let outcome
+  try {
+    outcome = await ctx.llm.json({
+      task: 'triage',
+      stage: 'triage',
+      jobId: null,
+      signal: options.signal,
+      promptVersion: TRIAGE_BATCH_PROMPT_VERSION,
+      system: TRIAGE_BATCH_SYSTEM,
+      context: triageContext(profile, preferences),
+      prompt: triageBatchPrompt(labeled),
+      schema: batchFitSchema,
+      schemaName: 'job_fits',
+      // Five replies of about 150 tokens each, plus room for the model to think.
+      maxTokens: 4000,
+      effort: 'low'
+    })
+  } catch (err) {
+    if (!isPostingFault(err)) return { outcomes, fatal: err }
+    // The reply was unreadable or the provider rejected the batch. One posting may be the cause, so each goes on its own.
+    return { outcomes, fatal: await scoreEach(pending) }
+  }
+
+  const byId = new Map<string, z.infer<typeof batchFitSchema>['scores'][number]>()
+  for (const score of outcome.value.scores) if (!byId.has(score.id)) byId.set(score.id, score)
+  // One call served every job, so its cost and tokens are split between them.
+  const share = { costUsd: outcome.costUsd / labeled.length, tokens: Math.round(outcome.tokens / labeled.length) }
+  for (const { id, job } of labeled) {
+    const raw = byId.get(id)
+    if (!raw) {
+      outcomes.push({ job, error: new LlmFormatError(`The model's reply had no score for this job (${id}).`, '') })
+      continue
+    }
+    const fit = toAssessment(raw, thresholds.shortlistScore)
+    ctx.jobs.saveFit(job.id, fit, version, stageAfterScore(job, fit.score, thresholds.shortlistScore))
+    outcomes.push({ job, result: { job: ctx.jobs.get(job.id)!, called: true, cached: outcome.cached, ...share } })
+  }
+  return { outcomes, fatal: null }
 }
 
 export interface TriageSummary {
@@ -177,12 +320,27 @@ export interface TriageSummary {
   /** The provider's rate or daily limit was reached. Scoring stopped without counting a failure. */
   stoppedForRateLimit: boolean
   rateLimitMessage: string | null
+  /** When the provider said to try again, in milliseconds, if it said. */
+  rateLimitRetryAfterMs: number | null
   noModel: boolean
+  /**
+   * Calls that failed because the provider failed (not the job). One call counts once, however many
+   * jobs it carried, so a single timeout on a batch of five is one error. The orchestrator stops after
+   * three in a row.
+   */
+  providerErrors: number
+  /** Scoring halted after three provider errors in a row. */
+  stoppedForProviderErrors: boolean
   /** First few error messages, for the activity log. */
   errorMessages: string[]
 }
 
-/** Scores jobs four at a time. Stops starting new jobs when the budget runs out, the provider's limit is reached or no model is set up. */
+/**
+ * Scores jobs. A paid provider gets one job per call, four calls at a time. A free provider gets up
+ * to TRIAGE_BATCH_SIZE jobs per call and one call at a time, since requests are what a free tier
+ * limits and the pacing in LlmService spaces them. Stops starting new jobs when the budget runs
+ * out, the provider's limit is reached or no model is set up.
+ */
 export async function triageJobs(
   ctx: AppContext,
   jobs: Job[],
@@ -198,14 +356,21 @@ export async function triageJobs(
     budgetMessage: null,
     stoppedForRateLimit: false,
     rateLimitMessage: null,
+    rateLimitRetryAfterMs: null,
     noModel: false,
+    providerErrors: 0,
+    stoppedForProviderErrors: false,
     errorMessages: []
   }
+  const free = ctx.llm.isFreeStage('triage')
+  const batchSize = free ? TRIAGE_BATCH_SIZE : 1
   let next = 0
   let done = 0
   let halted = false
   // Errors from the provider rather than the job (it's down, the key is wrong, the network failed).
   let providerErrors = 0
+  // Postings the provider rejected since the last score.
+  let rejections = 0
   // Cancels calls still waiting for their turn when the run is cancelled or triage halts.
   const stop = new AbortController()
   const onAbort = () => stop.abort()
@@ -214,63 +379,100 @@ export async function triageJobs(
     halted = true
     stop.abort()
   }
+  const label = (job: Job) => `${job.title} at ${job.company}`
+  const addMessage = (message: string) => {
+    if (summary.errorMessages.length < 3) summary.errorMessages.push(message)
+  }
+
+  const onScored = (job: Job, result: ScoreResult) => {
+    // Three errors in a row stop the run. A call that worked breaks the row.
+    providerErrors = 0
+    rejections = 0
+    summary.scored += 1
+    summary.costUsd += result.costUsd
+    summary.tokens += result.tokens
+    const fit = result.job.fit
+    if (fit && result.job.stage === 'shortlisted') {
+      summary.shortlisted += 1
+      ctx.events.add('shortlisted', `${job.title} at ${job.company} scored ${fit.score}. ${fit.summary}`, job.id, { score: fit.score })
+    }
+  }
+
+  /** A failure that is not the job's fault, for the jobs it left unscored. */
+  const onFatal = (err: unknown, unscored: Job[]) => {
+    if (err instanceof LlmCancelledError) {
+      // Never sent. The jobs stay where they were for the next run.
+    } else if (err instanceof BudgetExceededError) {
+      halt()
+      summary.stoppedForBudget = true
+      summary.budgetMessage = err.message
+    } else if (err instanceof RateLimitedError) {
+      halt()
+      summary.stoppedForRateLimit = true
+      summary.rateLimitMessage ??= err.message
+      summary.rateLimitRetryAfterMs ??= err.retryAfterMs
+    } else if (err instanceof NoModelConfiguredError) {
+      halt()
+      summary.noModel = true
+      summary.errorMessages.push(err.message)
+    } else {
+      // The provider failed, not the job. Don't hold it against the job, and stop after a few
+      // in a row so a provider that's down doesn't burn through the whole list.
+      summary.errors += unscored.length
+      summary.providerErrors += 1
+      providerErrors += 1
+      addMessage(`${unscored[0] ? label(unscored[0]) : 'Scoring'}: ${(err as Error).message}`)
+      if (providerErrors >= MAX_PROVIDER_ERRORS) {
+        summary.errorMessages.push(`Scoring stopped after ${MAX_PROVIDER_ERRORS} errors from your AI provider. Check that it's running and the key works, then run again.`)
+        summary.stoppedForProviderErrors = true
+        halt()
+      }
+    }
+  }
+
   const worker = async () => {
     while (!halted && !stop.signal.aborted && next < jobs.length) {
-      const queued = jobs[next++]
-      // The list was read when triage started. Skip a job the user dismissed (or that moved on) since.
-      const job = ctx.jobs.get(queued.id)
-      if (!job || job.stage !== queued.stage) {
-        done += 1
-        options.onProgress?.(done, jobs.length)
-        continue
-      }
-      try {
-        const result = await scoreJobWithAi(ctx, job, { signal: stop.signal })
-        summary.scored += 1
-        summary.costUsd += result.costUsd
-        summary.tokens += result.tokens
-        const fit = result.job.fit
-        if (fit && result.job.stage === 'shortlisted') {
-          summary.shortlisted += 1
-          ctx.events.add('shortlisted', `${job.title} at ${job.company} scored ${fit.score}. ${fit.summary}`, job.id, { score: fit.score })
+      const group: Job[] = []
+      while (group.length < batchSize && next < jobs.length) {
+        const queued = jobs[next++]
+        // The list was read when triage started. Skip a job the user dismissed (or that moved on) since.
+        const job = ctx.jobs.get(queued.id)
+        if (!job || job.stage !== queued.stage) {
+          done += 1
+          options.onProgress?.(done, jobs.length)
+          continue
         }
-      } catch (err) {
-        if (err instanceof LlmCancelledError) {
-          // Never sent. The job stays where it was for the next run.
-        } else if (err instanceof BudgetExceededError) {
-          halt()
-          summary.stoppedForBudget = true
-          summary.budgetMessage = err.message
-        } else if (err instanceof RateLimitedError) {
-          halt()
-          summary.stoppedForRateLimit = true
-          summary.rateLimitMessage ??= err.message
-        } else if (err instanceof NoModelConfiguredError) {
-          halt()
-          summary.noModel = true
-          summary.errorMessages.push(err.message)
-        } else if (err instanceof LlmFormatError || err instanceof LlmRefusalError) {
-          // The model couldn't handle this posting. That counts against the job.
-          ctx.jobs.recordTriageFailure(job.id)
-          summary.errors += 1
-          if (summary.errorMessages.length < 3) summary.errorMessages.push(`${job.title} at ${job.company}: ${(err as Error).message}`)
+        group.push(job)
+      }
+      if (group.length === 0) continue
+      const { outcomes, fatal } = await scoreJobsWithAi(ctx, group, { signal: stop.signal })
+      for (const outcome of outcomes) {
+        if ('result' in outcome) {
+          onScored(outcome.job, outcome.result)
         } else {
-          // The provider failed, not the job. Don't hold it against the job, and stop after a few
-          // in a row so a provider that's down doesn't burn through the whole list.
+          // The model couldn't handle this posting. That counts against the job.
+          ctx.jobs.recordTriageFailure(outcome.job.id)
           summary.errors += 1
-          providerErrors += 1
-          if (summary.errorMessages.length < 3) summary.errorMessages.push(`${job.title} at ${job.company}: ${(err as Error).message}`)
-          if (providerErrors >= MAX_PROVIDER_ERRORS) {
-            summary.errorMessages.push(`Scoring stopped after ${MAX_PROVIDER_ERRORS} errors from your AI provider. Check that it's running and the key works, then run again.`)
-            halt()
+          addMessage(`${label(outcome.job)}: ${(outcome.error as Error).message}`)
+          if (isRequestRejection(outcome.error)) {
+            rejections += 1
+            if (rejections >= MAX_REJECTIONS_IN_A_ROW && !halted) {
+              summary.errorMessages.push(`Scoring stopped after ${MAX_REJECTIONS_IN_A_ROW} postings in a row were rejected by your AI provider. Check the model and the key in Settings, then run again.`)
+              summary.stoppedForProviderErrors = true
+              halt()
+            }
           }
         }
       }
-      done += 1
+      if (fatal) {
+        const handled = new Set(outcomes.map((o) => o.job.id))
+        onFatal(fatal, group.filter((j) => !handled.has(j.id)))
+      }
+      done += group.length
       options.onProgress?.(done, jobs.length)
     }
   }
-  const count = Math.max(1, Math.min(options.concurrency ?? TRIAGE_CONCURRENCY, jobs.length))
+  const count = Math.max(1, Math.min(options.concurrency ?? (free ? 1 : TRIAGE_CONCURRENCY), jobs.length))
   try {
     await Promise.all(Array.from({ length: count }, worker))
   } finally {

@@ -129,6 +129,7 @@ export function rawFromJsonLd(posting: Json, url: string): RawJob {
     applyUrl: asString(posting.url) ?? url,
     ats: detected?.ats ?? 'unknown',
     atsToken: detected?.token ?? null,
+    atsJobId: detected?.jobId ?? null,
     description,
     postedAt: toIsoDate(asString(posting.datePosted))
   }
@@ -173,6 +174,7 @@ export function rawFromPage(html: string, url: string): RawJob {
     applyUrl: url,
     ats: detected?.ats ?? 'unknown',
     atsToken: detected?.token ?? null,
+    atsJobId: detected?.jobId ?? null,
     description,
     postedAt: null
   }

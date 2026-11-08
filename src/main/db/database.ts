@@ -1,76 +1,62 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import initSqlJs, { type Database, type SqlValue } from 'sql.js'
-import { MIGRATIONS } from './schema'
+import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
+import { MIGRATIONS, type Migration } from './schema'
 
-const MAX_SAVE_DELAY_MS = 3000
+type SqlValue = string | number | null | Uint8Array
+type Bound = SQLInputValue
+/** The arguments for a statement call: the values, or one object of named values. */
+type Bindings = Bound[]
 
 export type Params = Record<string, SqlValue | boolean | undefined> | Array<SqlValue | boolean | undefined>
 
+/** The argument type of a function migration, whatever schema.ts declares it as. */
+type MigrationHandle = Parameters<Extract<Migration, (...args: never[]) => unknown>>[0]
+
+const STATEMENT_CACHE_LIMIT = 200
+
 /**
- * A small wrapper around sql.js (SQLite compiled to WebAssembly).
+ * A small wrapper around Node's built-in SQLite (node:sqlite).
  *
- * The whole database lives in memory and is written to disk shortly after each
- * change, and again on close. For one person's job search this stays small
- * (tens of megabytes at most), and it avoids native modules that need
- * rebuilding for every Electron version.
+ * Writes go straight to the database file, which runs in WAL mode, so a committed write is already
+ * durable. There is no in-memory copy and no periodic save. The earlier version kept the whole
+ * database in memory (sql.js) and rewrote the file after each change, with a temp file and a
+ * recovery path for a failed rename. Both are gone: SQLite's journal gives the same crash safety
+ * without rewriting the file, and the rewrite cost grows with the number of jobs.
  */
 export class Db {
-  private saveTimer: NodeJS.Timeout | null = null
-  private dirty = false
-  /** When the oldest unsaved change happened. Saves can't be put off past MAX_SAVE_DELAY_MS. */
-  private dirtySince: number | null = null
-  private lastSaveError: Error | null = null
+  private lastError: Error | null = null
   private inTransaction = false
+  private closed = false
+  private readonly statements = new Map<string, StatementSync>()
 
   private constructor(
-    private readonly db: Database,
-    private readonly filePath: string | null,
-    private readonly saveDelayMs: number
+    private readonly db: DatabaseSync,
+    private readonly filePath: string | null
   ) {}
 
-  /** Opens (or creates) the database file. Pass null for an in-memory database, used in tests. */
-  static async open(filePath: string | null, options: { saveDelayMs?: number } = {}): Promise<Db> {
-    const SQL = await initSqlJs()
-    let db: Database
-    const load = (file: string): Database => {
-      const loaded = new SQL.Database(fs.readFileSync(file))
-      // sql.js reads lazily, so query once to find out now whether the file is usable.
-      loaded.exec('SELECT count(*) FROM sqlite_master')
-      return loaded
-    }
-    if (filePath && fs.existsSync(filePath)) {
-      const tmp = `${filePath}.tmp`
-      let fromTmp: Database | null = null
-      // A save that failed at the rename leaves the newest data in the temp file. Use it when it is
-      // newer than the main file and intact. A half written temp file fails the check.
-      if (fs.existsSync(tmp) && fs.statSync(tmp).mtimeMs > fs.statSync(filePath).mtimeMs) {
-        try {
-          const candidate = load(tmp)
-          const check = candidate.exec('PRAGMA quick_check')
-          if (check[0]?.values[0]?.[0] === 'ok') fromTmp = candidate
-          else candidate.close()
-        } catch {
-          // Unusable. Fall back to the main file.
-        }
+  /**
+   * Opens (or creates) the database file. Pass null for an in-memory database, used in tests.
+   * A file written by the sql.js version opens as is. saveDelayMs is accepted for old callers and ignored.
+   */
+  static async open(filePath: string | null, _options: { saveDelayMs?: number } = {}): Promise<Db> {
+    if (filePath) fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    // sql.js ran with foreign keys off and the data was written that way, so they stay off.
+    const db = new DatabaseSync(filePath ?? ':memory:', { enableForeignKeyConstraints: false })
+    try {
+      db.exec('PRAGMA busy_timeout = 5000')
+      if (filePath) {
+        // The first query on a file reads it, so this also fails here when the file is not a database.
+        db.exec('PRAGMA journal_mode = WAL')
+        db.exec('PRAGMA synchronous = NORMAL')
       }
-      if (fromTmp) {
-        db = fromTmp
-      } else {
-        try {
-          db = load(filePath)
-        } catch (err) {
-          // The main file is damaged. An older temp copy is still better than nothing.
-          if (!fs.existsSync(tmp)) throw err
-          db = load(tmp)
-        }
-      }
-    } else {
-      db = new SQL.Database()
+      const instance = new Db(db, filePath)
+      instance.migrate()
+      return instance
+    } catch (err) {
+      db.close()
+      throw err
     }
-    const instance = new Db(db, filePath, options.saveDelayMs ?? 400)
-    instance.migrate()
-    return instance
   }
 
   private migrate(): void {
@@ -79,21 +65,21 @@ export class Db {
     let version = row ? Number(row.value) : 0
     // Migration 1 creates meta itself, so drop the bootstrap table on a fresh database.
     if (version === 0) this.db.exec('DROP TABLE meta')
+    const handle = migrationHandle(this.db)
     while (version < MIGRATIONS.length) {
       this.db.exec('BEGIN')
       try {
         const migration = MIGRATIONS[version]
         if (typeof migration === 'string') this.db.exec(migration)
-        else migration(this.db)
+        else migration(handle)
         version += 1
-        this.db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", [String(version)])
+        this.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)", [String(version)])
         this.db.exec('COMMIT')
       } catch (err) {
-        this.db.exec('ROLLBACK')
+        if (this.db.isTransaction) this.db.exec('ROLLBACK')
         throw new Error(`Database migration ${version + 1} failed: ${(err as Error).message}`)
       }
     }
-    this.markDirty()
   }
 
   get schemaVersion(): number {
@@ -102,129 +88,148 @@ export class Db {
   }
 
   run(sql: string, params?: Params): void {
-    this.db.run(sql, normalizeParams(params))
-    this.markDirty()
-  }
-
-  all<T = Record<string, unknown>>(sql: string, params?: Params): T[] {
-    const stmt = this.db.prepare(sql)
     try {
       const bound = normalizeParams(params)
-      if (bound) stmt.bind(bound)
-      const rows: T[] = []
-      while (stmt.step()) rows.push(stmt.getAsObject() as T)
-      return rows
-    } finally {
-      stmt.free()
+      // Without parameters the text may hold several statements, as it could with sql.js.
+      if (bound === undefined) this.db.exec(sql)
+      else this.statement(sql).run(...bound)
+      this.lastError = null
+    } catch (err) {
+      this.lastError = err as Error
+      throw err
     }
   }
 
+  all<T = Record<string, unknown>>(sql: string, params?: Params): T[] {
+    const bound = normalizeParams(params)
+    const rows = this.statement(sql).all(...(bound ?? []))
+    // node:sqlite rows have no prototype. Copy them into plain objects like the callers expect.
+    return rows.map((r) => ({ ...r }) as T)
+  }
+
   get<T = Record<string, unknown>>(sql: string, params?: Params): T | undefined {
-    return this.all<T>(sql, params)[0]
+    const bound = normalizeParams(params)
+    const row = this.statement(sql).get(...(bound ?? []))
+    return row ? ({ ...row } as T) : undefined
   }
 
   /** Runs fn inside a transaction. Nested calls join the outer transaction. */
   transaction<T>(fn: () => T): T {
     if (this.inTransaction) return fn()
     this.inTransaction = true
-    this.db.exec('BEGIN')
-    let result: T
     try {
-      result = fn()
-      this.db.exec('COMMIT')
-    } catch (err) {
+      this.db.exec('BEGIN')
       try {
-        this.db.exec('ROLLBACK')
-      } finally {
-        this.inTransaction = false
-      }
-      throw err
-    }
-    // Clear the flag before scheduling the save, or markDirty would skip it.
-    this.inTransaction = false
-    this.markDirty()
-    return result
-  }
-
-  private markDirty(): void {
-    this.dirty = true
-    this.dirtySince ??= Date.now()
-    if (!this.filePath || this.inTransaction) return
-    if (this.saveTimer) clearTimeout(this.saveTimer)
-    // Wait for a quiet moment, but never longer than MAX_SAVE_DELAY_MS during a busy run.
-    const waited = Date.now() - this.dirtySince
-    const delay = waited >= MAX_SAVE_DELAY_MS ? 0 : Math.min(this.saveDelayMs, MAX_SAVE_DELAY_MS - waited)
-    this.saveTimer = setTimeout(() => this.flushFromTimer(), delay)
-  }
-
-  /** Timer saves must not throw. A failed save (a locked file on Windows, say) is retried. */
-  private flushFromTimer(): void {
-    try {
-      this.flush()
-      this.lastSaveError = null
-    } catch (err) {
-      this.lastSaveError = err as Error
-      this.saveTimer = setTimeout(() => this.flushFromTimer(), 1000)
-    }
-  }
-
-  /** The last error from a background save, if the most recent one failed. */
-  get saveError(): Error | null {
-    return this.lastSaveError
-  }
-
-  /** Writes the database to disk now. Safe to call often. */
-  flush(): void {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = null
-    }
-    if (!this.filePath || !this.dirty) return
-    const data = this.db.export()
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true })
-    // Write to a temp file first so a crash mid-write never corrupts the real file.
-    const tmp = `${this.filePath}.tmp`
-    fs.writeFileSync(tmp, data)
-    // Windows can refuse a rename for a moment while another program (an antivirus scan) holds
-    // the file. Retry briefly. If it still fails, the timer retries the whole save later, and the
-    // real file is never left half written.
-    for (let attempt = 0; ; attempt++) {
-      try {
-        fs.renameSync(tmp, this.filePath)
-        break
+        const result = fn()
+        this.db.exec('COMMIT')
+        this.lastError = null
+        return result
       } catch (err) {
-        if (attempt >= 4) throw err
-        const until = Date.now() + 50 * (attempt + 1)
-        while (Date.now() < until) {
-          // Short synchronous wait. flush() must stay synchronous so it can run during quit.
+        // SQLite rolls back on its own for some errors, so only roll back an open transaction.
+        // A failed rollback must not hide the error that caused it.
+        try {
+          if (this.db.isTransaction) this.db.exec('ROLLBACK')
+        } catch {
+          // Keep the original error.
         }
+        throw err
       }
+    } catch (err) {
+      this.lastError = err as Error
+      throw err
+    } finally {
+      this.inTransaction = false
     }
-    this.dirty = false
-    this.dirtySince = null
+  }
+
+  /** The last error from a write, if the most recent write failed. */
+  get saveError(): Error | null {
+    return this.lastError
+  }
+
+  /**
+   * Moves the write-ahead log into the database file. Committed writes are already durable, so this
+   * only keeps the log short. Safe to call often. It never throws.
+   */
+  flush(): void {
+    if (this.closed || !this.filePath) return
+    try {
+      this.db.exec('PRAGMA wal_checkpoint(PASSIVE)')
+    } catch (err) {
+      this.lastError = err as Error
+    }
   }
 
   close(): void {
-    this.flush()
+    if (this.closed) return
+    if (this.filePath) {
+      try {
+        // Leave one self-contained file behind instead of a file plus a -wal file.
+        this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+      } catch (err) {
+        this.lastError = err as Error
+      }
+    }
+    this.closed = true
+    this.statements.clear()
     this.db.close()
+  }
+
+  private statement(sql: string): StatementSync {
+    let stmt = this.statements.get(sql)
+    if (!stmt) {
+      // Dynamic SQL (long IN lists, say) would fill the cache with one-off statements.
+      if (this.statements.size >= STATEMENT_CACHE_LIMIT) this.statements.clear()
+      stmt = this.db.prepare(sql)
+      this.statements.set(sql, stmt)
+    }
+    return stmt
   }
 }
 
-function normalizeParams(params?: Params): SqlValue[] | Record<string, SqlValue> | undefined {
+function normalizeParams(params?: Params): Bindings | undefined {
   if (!params) return undefined
-  const fix = (v: SqlValue | boolean | undefined): SqlValue => {
+  const fix = (v: SqlValue | boolean | undefined): Bound => {
     if (v === undefined) return null
-    if (typeof v === 'boolean') return v ? 1 : 0
+    if (typeof v === 'boolean') return v ? 1n : 0n
+    // node:sqlite binds every JS number as a double, which a TEXT column or an untyped expression
+    // would keep as '1.0'. sql.js bound whole numbers as integers, so do the same through bigint.
+    if (typeof v === 'number' && Number.isSafeInteger(v)) return BigInt(v)
     return v
   }
   if (Array.isArray(params)) return params.map(fix)
-  const out: Record<string, SqlValue> = {}
-  for (const [k, v] of Object.entries(params)) {
-    // Allow callers to write { id } for a statement that uses :id.
-    const key = k.startsWith(':') || k.startsWith('$') || k.startsWith('@') ? k : `:${k}`
-    out[key] = fix(v)
+  // node:sqlite binds bare keys such as { id } to :id, @id or $id.
+  const out: Record<string, Bound> = {}
+  for (const [k, v] of Object.entries(params)) out[k] = fix(v)
+  // The statement methods take the named object as their first argument. Their types only allow it in an overload.
+  return [out] as unknown as Bindings
+}
+
+/**
+ * What function migrations get. They were written for the sql.js Database object, so this offers
+ * the same exec, run and prepare calls (step, getAsObject, free) on top of node:sqlite.
+ */
+export function migrationHandle(db: DatabaseSync): MigrationHandle {
+  const handle = {
+    exec(sql: string): void {
+      db.exec(sql)
+    },
+    run(sql: string, params?: Params): void {
+      const bound = normalizeParams(params)
+      if (bound === undefined) db.exec(sql)
+      else db.prepare(sql).run(...bound)
+    },
+    prepare(sql: string) {
+      const rows = db.prepare(sql).all()
+      let index = -1
+      return {
+        step: () => ++index < rows.length,
+        getAsObject: () => ({ ...rows[index] }),
+        free: () => true
+      }
+    }
   }
-  return out
+  return handle as unknown as MigrationHandle
 }
 
 /** ISO timestamp, the only time format stored in the database. */

@@ -225,6 +225,70 @@ describe('ApplicationsRepo', () => {
   })
 })
 
+describe('ApplicationsRepo sending records', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString()
+
+  it('reports the last send to a company, counting a Submit click as well as a confirmed submission', async () => {
+    const { ctx } = await makeTestEnv()
+    const a = ingestRaw(ctx, makeRaw({ company: 'Acme, Inc.', externalId: 'a' })).job
+    const b = ingestRaw(ctx, makeRaw({ company: 'Acme', externalId: 'b' })).job
+    const appA = ctx.applications.create(a.id)
+    const appB = ctx.applications.create(b.id)
+    expect(ctx.applications.lastSentAt('acme')).toBeNull()
+    ctx.applications.update(appA.id, { submitClickedAt: daysAgo(3) })
+    expect(ctx.applications.lastSentAt('acme')).toBe(ctx.applications.get(appA.id)!.submitClickedAt)
+    ctx.applications.update(appB.id, { status: 'submitted', submittedAt: daysAgo(9) })
+    // The click is newer than the submission.
+    expect(ctx.applications.lastSentAt('acme')).toBe(ctx.applications.get(appA.id)!.submitClickedAt)
+    expect(ctx.applications.lastSentAt('globex')).toBeNull()
+  })
+
+  it('lists the jobs of sent or clicked applications', async () => {
+    const { ctx } = await makeTestEnv()
+    const sent = ingestRaw(ctx, makeRaw({ externalId: 's', url: 'https://example.com/jobs/s' })).job
+    const clicked = ingestRaw(ctx, makeRaw({ externalId: 'c', url: 'https://example.com/jobs/c' })).job
+    const idle = ingestRaw(ctx, makeRaw({ externalId: 'i', url: 'https://example.com/jobs/i' })).job
+    ctx.applications.update(ctx.applications.create(sent.id).id, { status: 'submitted' })
+    ctx.applications.update(ctx.applications.create(clicked.id).id, { submitClickedAt: daysAgo(1) })
+    ctx.applications.create(idle.id)
+    expect(ctx.applications.sentTargets().map((t) => t.url).sort()).toEqual(['https://example.com/jobs/c', 'https://example.com/jobs/s'])
+  })
+
+  it('leaves out applications autopilot already dry-ran when asked', async () => {
+    const { ctx } = await makeTestEnv()
+    const ids = ['x', 'y'].map((id) => {
+      const job = ingestRaw(ctx, makeRaw({ externalId: id })).job
+      const app = ctx.applications.create(job.id)
+      return ctx.applications.update(app.id, { status: 'ready' }).id
+    })
+    ctx.applications.update(ids[0], { dryRunAt: daysAgo(0) })
+    expect(ctx.applications.listReady()).toHaveLength(2)
+    expect(ctx.applications.listReady({ skipDryRun: true }).map((a) => a.id)).toEqual([ids[1]])
+  })
+
+  it('stores the failure count and the dry-run time', async () => {
+    const { ctx } = await makeTestEnv()
+    const job = ingestRaw(ctx, makeRaw({ externalId: 'z' })).job
+    const app = ctx.applications.create(job.id)
+    expect(app).toMatchObject({ submitFailures: 0, dryRunAt: null })
+    const at = new Date().toISOString()
+    expect(ctx.applications.update(app.id, { submitFailures: 2, dryRunAt: at })).toMatchObject({ submitFailures: 2, dryRunAt: at })
+    expect(ctx.applications.update(app.id, { dryRunAt: null }).dryRunAt).toBeNull()
+  })
+})
+
+describe('JobsRepo prepare failures', () => {
+  it('clears every failure count at once', async () => {
+    const { ctx } = await makeTestEnv()
+    const jobs = ['p', 'q'].map((id) => ingestRaw(ctx, makeRaw({ externalId: id })).job)
+    for (const job of jobs) ctx.jobs.recordPrepareFailure(job.id)
+    const count = (id: string) => ctx.db.get<{ n: number }>('SELECT prepare_failures AS n FROM jobs WHERE id = :id', { id })?.n
+    expect(jobs.map((j) => count(j.id))).toEqual([1, 1])
+    ctx.jobs.resetAllPrepareFailures()
+    expect(jobs.map((j) => count(j.id))).toEqual([0, 0])
+  })
+})
+
 describe('EventsRepo and RunsRepo', () => {
   it('writes events, pushes them to the UI and filters the list', async () => {
     const { ctx, pushed } = await makeTestEnv()

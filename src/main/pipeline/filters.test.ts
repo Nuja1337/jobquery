@@ -163,6 +163,25 @@ describe('applyFilters', () => {
     expect(reasonOf(job({ company: 'Other' }), prefs(), c)).toBeNull()
   })
 
+  it('lets a company have perCompanyLimit applications inside the cooldown', () => {
+    const ago = [3, 20, 200]
+    // The company was applied to 3 and 20 days ago, and once more 200 days ago.
+    const c = fctx({
+      lastAppliedAt: (norm) => (norm === 'acme' ? new Date(NOW - ago[0] * DAY).toISOString() : null),
+      appliedCount: (norm, sinceMs) => (norm === 'acme' ? ago.filter((d) => NOW - d * DAY >= sinceMs).length : 0)
+    })
+    const acme = job({ company: 'Acme Inc' })
+    expect(reasonOf(acme, prefs({ companyCooldownDays: 90, perCompanyLimit: 1 }), c)).toBe('applied to this company 3 days ago')
+    expect(reasonOf(acme, prefs({ companyCooldownDays: 90, perCompanyLimit: 2 }), c)).toBe('applied to this company 3 days ago')
+    expect(reasonOf(acme, prefs({ companyCooldownDays: 90, perCompanyLimit: 3 }), c)).toBeNull()
+    // A shorter window sees only the first application.
+    expect(reasonOf(acme, prefs({ companyCooldownDays: 10, perCompanyLimit: 2 }), c)).toBeNull()
+    expect(reasonOf(acme, prefs({ companyCooldownDays: 10, perCompanyLimit: 1 }), c)).toBe('applied to this company 3 days ago')
+    // A saved setting from before the limit existed counts as one.
+    const old = { ...prefs({ companyCooldownDays: 90 }), perCompanyLimit: undefined } as unknown as JobPreferences
+    expect(reasonOf(acme, old, c)).toBe('applied to this company 3 days ago')
+  })
+
   it('groups reasons that differ by a number', () => {
     expect(groupReason('posted 45 days ago')).toBe('posted too long ago')
     expect(groupReason('applied to this company 20 days ago')).toBe('applied to this company recently')

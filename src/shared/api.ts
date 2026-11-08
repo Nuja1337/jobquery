@@ -10,8 +10,10 @@ import type {
   ApplicationQuery,
   ApplicationSummary,
   AtsDetection,
+  AtsKind,
   Company,
   CompanyInput,
+  CompanyOrigin,
   DocumentInput,
   DocumentKind,
   DocumentRecord,
@@ -21,6 +23,7 @@ import type {
   JobQuery,
   JobSummary,
   LintReport,
+  LoopStatus,
   PipelineProgress,
   PreferenceSuggestion,
   PreparedAnswer,
@@ -30,14 +33,87 @@ import type {
   ProviderInput,
   RunOptions,
   RunRecord,
+  ReviewExceptions,
   RunStats,
   SavedSearch,
   Settings,
   SubmitMode,
   SubmitResult,
   UpdateStatus,
-  UsageSummary
+  UsageSummary,
+  WorkerName
 } from './types'
+
+/** Which companies the Sources page lists. A blocked company never counts as watched. */
+export type CompanyStateFilter = 'all' | 'watched' | 'unwatched' | 'blocked' | 'stopped' | 'failing'
+
+export interface CompanyQuery {
+  /** Starts at 1. */
+  page?: number
+  /** Defaults to 50, at most 200. */
+  pageSize?: number
+  /** Matches the name or the board token. */
+  search?: string
+  ats?: AtsKind | 'all'
+  origin?: CompanyOrigin | 'all'
+  /**
+   * stopped: not watched, with a board state that has 5 or more failures in a row.
+   * failing: watched, with 1 to 4 failures in a row.
+   */
+  state?: CompanyStateFilter
+}
+
+/** A company with what the last board checks found. The board fields are empty until a board state exists. */
+export interface CompanyWithBoard extends Company {
+  lastCheckedAt: string | null
+  nextCheckAt: string | null
+  intervalMinutes: number | null
+  failures: number
+  lastError: string | null
+  liveJobs: number
+  relevantJobs: number
+}
+
+/** Totals over all companies, whatever the filters say. */
+export interface CompanyCounts {
+  total: number
+  watched: number
+  blocked: number
+  fromPostings: number
+  stopped: number
+  failing: number
+  /** Open postings on watched boards. */
+  liveJobs: number
+  /** Postings on watched boards that are shortlisted or further. */
+  relevantJobs: number
+  /** The soonest next check among watched boards the app can read, or null. */
+  nextCheckAt: string | null
+}
+
+export interface CompanyPage {
+  items: CompanyWithBoard[]
+  /** Companies matching the filters, over all pages. */
+  total: number
+  counts: CompanyCounts
+}
+
+export type BulkCompanyAction = 'watch' | 'unwatch' | 'block' | 'unblock' | 'delete'
+
+/** One line of a pasted list, read but not yet checked on the network. */
+export type BoardImportLine = { ats: AtsKind; token: string; name: string | null; line: string } | { line: string; error: string }
+
+export interface BoardRef {
+  ats: AtsKind
+  token: string
+}
+
+/** What checking one board found. */
+export type BoardProbe = BoardRef & ({ ok: true; name: string | null; jobs: number } | { ok: false; error: string })
+
+export interface BoardAddCounts {
+  added: number
+  skipped: number
+}
 
 export type DeepPartial<T> = T extends Array<infer _U>
   ? T
@@ -54,6 +130,11 @@ export interface AppInfo {
    * fallback). API keys are then only obscured on disk, and the UI should say so.
    */
   secureKeyStorage: boolean
+  /**
+   * Whether Windows will start JobPilot at sign-in right now. Null when the app can't register
+   * itself, as in development or on a system without this feature.
+   */
+  openAtLogin: boolean | null
 }
 
 export interface ProviderTestResult {
@@ -107,9 +188,20 @@ export interface Api {
   listSearches(): Promise<SavedSearch[]>
   saveSearch(search: Omit<SavedSearch, 'id' | 'lastRunAt'> & { id?: string }): Promise<SavedSearch>
   deleteSearch(id: string): Promise<void>
-  listCompanies(): Promise<Company[]>
+  /** One page of companies with their board state. With no query, the first 50 by name. */
+  listCompanies(query?: CompanyQuery): Promise<CompanyPage>
   saveCompany(input: CompanyInput & { id?: string }): Promise<Company>
   deleteCompany(id: string): Promise<void>
+  /** Applies one action to many companies at once. Returns how many changed. */
+  bulkCompanies(input: { ids: string[]; action: BulkCompanyAction }): Promise<{ changed: number }>
+  /** Watches every board in the starter pack. Boards you already have keep their settings. */
+  addStarterPack(group: 'games' | 'tech' | 'all'): Promise<BoardAddCounts>
+  /** Reads a pasted list of careers links, posting links and ats:token lines. Makes no requests. */
+  parseBoardImport(text: string): Promise<BoardImportLine[]>
+  /** Checks up to 500 boards one after another. Each result is also pushed on 'boards:probe' with the token. */
+  probeBoards(entries: BoardRef[], token: string): Promise<BoardProbe[]>
+  /** Watches boards that were checked. */
+  importBoards(entries: Array<BoardRef & { name: string | null }>): Promise<BoardAddCounts>
   detectAts(url: string): Promise<AtsDetection | null>
   /** Fetches one posting by URL, stores it and runs it through the free filters. */
   addJobByUrl(url: string): Promise<Job>
@@ -140,12 +232,33 @@ export interface Api {
   /** Saves the cover letter as a PDF and returns the path. */
   exportCoverLetterPdf(applicationId: string): Promise<string>
 
+  // Review
+  /** Questions many applications ask, applications that could not be sent by reason, and a sample of what was sent. */
+  listExceptions(): Promise<ReviewExceptions>
+  /**
+   * Answers one question for every application that asks it (the `key` of a group from listExceptions).
+   * `ready` counts the applications that have nothing else flagged afterwards. `skipped` counts the ones
+   * whose form does not accept the answer, that are open in the browser, whose job closed, or that ask a
+   * wording the person did not see. `wordings` are the questions the person saw in the group.
+   */
+  answerGroup(input: { key: string; value: string; saveToBank: boolean; wordings: string[] }): Promise<{ updated: number; ready: number; skipped: number }>
+  /** Puts applications that failed for a passing reason back in the queue. The rest are left alone and counted as skipped. */
+  retryLater(ids: string[]): Promise<{ updated: number; skipped: number }>
+  /** Turns auto-submit off, logs it, and keeps the note on the application. */
+  reportWrongSubmission(id: string, note: string): Promise<void>
+
   // Pipeline
   runPipeline(options: RunOptions): Promise<RunStats>
   cancelPipeline(): Promise<void>
   getPipelineStatus(): Promise<PipelineProgress>
   /** When autopilot runs next, as an ISO time, or null when autopilot is off. */
   getNextRunAt(): Promise<string | null>
+  /** The four workers of continuous mode: what each is doing, why one is paused, and today's counts. */
+  getLoopStatus(): Promise<LoopStatus>
+  /** Stops one worker until resumeWorker. Only meaningful while continuous mode runs. */
+  pauseWorker(name: WorkerName): Promise<void>
+  /** Lifts a pause on one worker, including a pause the app set itself. */
+  resumeWorker(name: WorkerName): Promise<void>
   listRuns(limit: number): Promise<RunRecord[]>
   listEvents(query: { limit: number; types?: EventType[]; jobId?: string }): Promise<EventRecord[]>
   /** Filter changes suggested by the jobs you dismissed. Accepting one calls updateSettings. */
@@ -176,10 +289,16 @@ export type ApiMethod = keyof Api
 /** Events pushed from main to renderer. */
 export interface PushEvents {
   'pipeline:progress': PipelineProgress
+  /** Continuous mode: a worker started, stopped, paused or resumed, or today's counts moved. */
+  'loop:status': LoopStatus
   'event:new': EventRecord
   'jobs:changed': { jobIds: string[] }
   'applications:changed': { applicationIds: string[] }
   'update:status': UpdateStatus
+  /** Settings changed outside the window, for example from the tray menu. */
+  'settings:changed': Settings
+  /** One board checked during probeBoards. */
+  'boards:probe': { token: string; done: number; total: number; result: BoardProbe }
 }
 
 export type PushChannel = keyof PushEvents

@@ -8,7 +8,6 @@ import type {
   Application,
   ApplicationSummary,
   AtsDetection,
-  Company,
   DocumentRecord,
   EventRecord,
   FitAssessment,
@@ -16,6 +15,7 @@ import type {
   JobSummary,
   LintIssue,
   LintReport,
+  LoopStatus,
   PipelineProgress,
   PreparedAnswer,
   ProfileRecord,
@@ -24,15 +24,19 @@ import type {
   SavedSearch,
   Settings,
   UpdateStatus,
-  UsageSummary
+  UsageSummary,
+  WorkerName,
+  WorkerStatus
 } from '@shared/types'
 import { RELEASES_URL } from '@shared/defaults'
+import { TRANSIENT_REASONS, classifyReason } from '@shared/reviewReasons'
 import {
   MODEL_LISTS,
   buildAnalytics,
   demoProfile,
   emptyLint,
   initialApplications,
+  initialExceptionApplications,
   initialBank,
   initialCompanies,
   initialDocuments,
@@ -47,6 +51,8 @@ import {
   makeAnswers,
   makeFit
 } from './mockData'
+import { createMockCompanies, detectMock } from './mockCompanies'
+import { acceptsMockValue, buildMockExceptions, mockGroupKey, mockWordingKey } from './mockReview'
 
 const DEMO_VERSION = '0.1.0 (demo)'
 
@@ -118,7 +124,7 @@ function toJobSummary(j: Job): JobSummary {
 }
 
 function toAppSummary(a: Application): ApplicationSummary {
-  const { coverLetter: _a, coverLetterLint: _b, answers: _c, formFields: _d, resumeDocId: _e, confirmation: _f, screenshotPath: _g, submitClickedAt: _j, error: _h, notes: _i, ...rest } = a
+  const { coverLetter: _a, coverLetterLint: _b, answers: _c, formFields: _d, resumeDocId: _e, confirmation: _f, screenshotPath: _g, submitClickedAt: _j, submitFailures: _k, dryRunAt: _l, error: _h, notes: _i, ...rest } = a
   return rest
 }
 
@@ -133,15 +139,18 @@ export function createMockBridge(): Bridge {
     : { profile: demoProfile(), version: 3, updatedAt: iso(2 * 86_400_000) }
   let documents = startOnboarding ? [] : initialDocuments()
   let bank: AnswerBankEntry[] = startOnboarding ? [] : initialBank()
-  let companies: Company[] = startOnboarding ? [] : initialCompanies()
   let searches: SavedSearch[] = startOnboarding ? [] : initialSearches()
   const jobs: Job[] = startOnboarding ? [] : initialJobs()
   const applications: Application[] = startOnboarding ? [] : initialApplications(jobs)
+  if (!startOnboarding) applications.push(...initialExceptionApplications(jobs))
   const events: EventRecord[] = startOnboarding ? [] : initialEvents()
   let suggestions = startOnboarding ? [] : initialSuggestions()
   const runs = startOnboarding ? [] : initialRuns()
   let progress: PipelineProgress = { runId: null, phase: 'idle', message: 'Idle', done: 0, total: 0 }
   let cancelled = false
+  /** Workers the demo user paused. */
+  const pausedWorkers = new Set<WorkerName>()
+  const loopSince = iso(95 * 60_000)
   let extraSpend = 0
   let freeCallsToday = startOnboarding ? 0 : 12
   let updateStatus = initialUpdateStatus(params.get('update'))
@@ -150,10 +159,32 @@ export function createMockBridge(): Bridge {
   function emit<C extends PushChannel>(channel: C, payload: PushEvents[C]): void {
     listeners.get(channel)?.forEach((l) => (l as (p: PushEvents[C]) => void)(payload))
   }
+  const companyApi = createMockCompanies(startOnboarding ? [] : initialCompanies(), emit, (prefix) => uid(prefix))
   function setUpdateStatus(next: UpdateStatus): UpdateStatus {
     updateStatus = next
     emit('update:status', { ...next })
     return { ...next }
+  }
+  const loopOn = (): boolean => settings.autopilot.enabled && settings.autopilot.mode === 'continuous'
+  /** A believable status for the demo: scoring waits for the daily limit, the other workers are busy. */
+  function loopStatus(): LoopStatus {
+    const midnight = new Date()
+    midnight.setHours(24, 0, 0, 0)
+    const worker = (patch: Partial<WorkerStatus>): WorkerStatus => ({ state: 'idle', until: null, reason: null, doneToday: 0, active: 0, ...patch })
+    const workers: LoopStatus['workers'] = {
+      discover: worker({ state: 'idle', doneToday: 212 }),
+      score: worker({ state: 'paused', until: midnight.toISOString(), reason: 'The daily scoring limit of 3000 jobs is reached.', doneToday: 3000 }),
+      prepare: worker({ state: 'working', doneToday: 118, active: 2 }),
+      submit: worker({ state: 'working', doneToday: 96, active: settings.autopilot.submitConcurrency })
+    }
+    for (const name of pausedWorkers) workers[name] = { ...workers[name], state: 'paused', until: null, reason: 'Paused by you.', active: 0 }
+    if (!settings.autopilot.autoSubmit) workers.submit = worker({ state: 'off', reason: 'Auto-submit is off.' })
+    return {
+      running: loopOn(),
+      since: loopOn() ? loopSince : null,
+      workers: loopOn() ? workers : { discover: worker({ state: 'off' }), score: worker({ state: 'off' }), prepare: worker({ state: 'off' }), submit: worker({ state: 'off' }) },
+      today: { discovered: 212, scored: 3000, prepared: 118, submitted: 96, errors: 4, costUsd: 0.84 }
+    }
   }
   function addEvent(type: EventRecord['type'], jobId: string | null, message: string): void {
     const ev: EventRecord = { id: uid('ev'), at: iso(0), type, jobId, message, data: null }
@@ -220,7 +251,7 @@ export function createMockBridge(): Bridge {
 
   const api: Api = {
     async getAppInfo(): Promise<AppInfo> {
-      return { version: DEMO_VERSION, dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\JobPilot', platform: 'win32', secureKeyStorage: true }
+      return { version: DEMO_VERSION, dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\JobPilot', platform: 'win32', secureKeyStorage: true, openAtLogin: settings.system.startAtLogin }
     },
     async openExternal(url) {
       window.open(url, '_blank', 'noopener')
@@ -237,6 +268,7 @@ export function createMockBridge(): Bridge {
     },
     async updateSettings(patch: DeepPartial<Settings>) {
       settings = merge(settings, patch)
+      emit('loop:status', loopStatus())
       return structuredClone(settings)
     },
     async removePriceOverride(model: string) {
@@ -354,43 +386,10 @@ export function createMockBridge(): Bridge {
     async deleteSearch(id) {
       searches = searches.filter((s) => s.id !== id)
     },
-    async listCompanies() {
-      return structuredClone(companies)
-    },
-    async saveCompany(input) {
-      const existing = input.id ? companies.find((c) => c.id === input.id) : undefined
-      const next: Company = {
-        id: existing?.id ?? uid('co'),
-        name: input.name ?? existing?.name ?? 'Unnamed company',
-        ats: input.ats ?? existing?.ats ?? 'unknown',
-        atsToken: input.atsToken ?? existing?.atsToken ?? null,
-        careersUrl: input.careersUrl ?? existing?.careersUrl ?? null,
-        watch: input.watch ?? existing?.watch ?? true,
-        blocked: input.blocked ?? existing?.blocked ?? false,
-        notes: input.notes ?? existing?.notes ?? '',
-        createdAt: existing?.createdAt ?? iso(0)
-      }
-      companies = existing ? companies.map((c) => (c.id === next.id ? next : c)) : [...companies, next]
-      return next
-    },
-    async deleteCompany(id) {
-      companies = companies.filter((c) => c.id !== id)
-    },
+    ...companyApi,
     async detectAts(url): Promise<AtsDetection | null> {
       await sleep(350)
-      let u: URL
-      try {
-        u = new URL(url)
-      } catch {
-        return null
-      }
-      const parts = u.pathname.split('/').filter(Boolean)
-      const titleCase = (s: string): string => s.replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-      if (/greenhouse\.io$/.test(u.hostname) && parts[0]) return { ats: 'greenhouse', token: parts[0], jobId: parts[2] ?? null, companyName: titleCase(parts[0]) }
-      if (u.hostname === 'jobs.lever.co' && parts[0]) return { ats: 'lever', token: parts[0], jobId: parts[1] ?? null, companyName: titleCase(parts[0]) }
-      if (u.hostname === 'jobs.ashbyhq.com' && parts[0]) return { ats: 'ashby', token: parts[0], jobId: parts[1] ?? null, companyName: titleCase(parts[0]) }
-      if (/smartrecruiters\.com$/.test(u.hostname) && parts[0]) return { ats: 'smartrecruiters', token: parts[0], jobId: null, companyName: titleCase(parts[0]) }
-      return { ats: 'unknown', token: null, jobId: null, companyName: titleCase(u.hostname.replace(/^(www|careers|jobs)\./, '').split('.')[0]) }
+      return detectMock(url)
     },
     async addJobByUrl(url) {
       await sleep(700)
@@ -480,7 +479,7 @@ export function createMockBridge(): Bridge {
         coverLetter: `Hello ${j.company} team,\n\nI read the posting for the ${j.title} role and the work looks close to what I have been doing for the last three years. At Fieldstone Analytics I rebuilt our dashboard in React and TypeScript, which cut load time from six seconds to under two.\n\nI would be glad to talk about how I could help.\n\nBest,\nAlex`,
         coverLetterLint: { score: 93, issues: [], stats: { words: 62, sentences: 4, avgSentenceWords: 15.5, sentenceLengthStdDev: 5, paragraphs: 3 } },
         answers, formFields: answers.map((a) => ({ key: a.fieldKey, label: a.label, type: a.type, required: a.required, options: a.options, placeholder: null, maxLength: null, fileHint: null })),
-        resumeDocId: 'doc_resume1', confirmation: null, screenshotPath: null, submitClickedAt: null, error: null, notes: ''
+        resumeDocId: 'doc_resume1', confirmation: null, screenshotPath: null, submitClickedAt: null, submitFailures: 0, dryRunAt: null, error: null, notes: ''
       }
       applications.unshift(app)
       j.stage = 'ready'
@@ -498,7 +497,7 @@ export function createMockBridge(): Bridge {
         const s = q.search.toLowerCase()
         items = items.filter((a) => `${a.company} ${a.title}`.toLowerCase().includes(s))
       }
-      items = [...items].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      items = [...items].sort((a, b) => (q.sort === 'fit' ? (b.fitScore ?? 0) - (a.fitScore ?? 0) || a.createdAt.localeCompare(b.createdAt) : b.updatedAt.localeCompare(a.updatedAt)))
       const off = q.offset ?? 0
       return { items: items.slice(off, off + (q.limit ?? 200)).map(toAppSummary), total: items.length }
     },
@@ -593,6 +592,60 @@ export function createMockBridge(): Bridge {
       return `C:\\Users\\Demo\\Documents\\cover-letter-${appById(id).company.toLowerCase().replace(/\W+/g, '-')}.pdf`
     },
 
+    async listExceptions() {
+      return buildMockExceptions(applications)
+    },
+    async answerGroup({ key, value, saveToBank, wordings }) {
+      if (!value.trim()) throw new Error('Write an answer first.')
+      const group = buildMockExceptions(applications).needsYou.find((g) => g.key === key)
+      if (!group) return { updated: 0, ready: 0, skipped: 0 }
+      let updated = 0
+      let ready = 0
+      let skipped = 0
+      for (const id of new Set(group.applications.map((a) => a.id))) {
+        const a = appById(id)
+        let touched = false
+        for (const ans of a.answers) {
+          if (!answerNeedsUser(ans) || mockGroupKey(ans.label, ans.type).key !== key || !wordings.some((w) => mockWordingKey(w) === mockWordingKey(ans.label)) || !acceptsMockValue(ans, value)) continue
+          Object.assign(ans, { value, source: 'user', confidence: 1, needsUser: false, note: null })
+          touched = true
+        }
+        if (!touched) {
+          skipped += 1
+          continue
+        }
+        updated += 1
+        touchApp(a)
+        if (a.status === 'ready') ready += 1
+      }
+      if (saveToBank && updated > 0) {
+        bank = [...bank, { id: uid('ans'), question: group.label, answer: value, kind: group.type === 'textarea' ? 'template' : 'fact', topic: group.topic, scope: group.scope, timesUsed: 0, updatedAt: iso(0) }]
+      }
+      return { updated, ready, skipped }
+    },
+    async retryLater(ids) {
+      let updated = 0
+      for (const id of new Set(ids)) {
+        const a = applications.find((x) => x.id === id)
+        if (!a || a.status !== 'needs_attention' || a.submitClickedAt || a.answers.some(answerNeedsUser)) continue
+        if (!TRANSIENT_REASONS.includes(classifyReason(a.error))) continue
+        Object.assign(a, { status: 'ready', submitMode: null, submitFailures: 0, error: null })
+        touchApp(a)
+        updated += 1
+      }
+      return { updated, skipped: new Set(ids).size - updated }
+    },
+    async reportWrongSubmission(id, note) {
+      const a = appById(id)
+      if (!note.trim()) throw new Error('Write one line about what was wrong.')
+      settings = merge(settings, { autopilot: { autoSubmit: false } })
+      a.error = note.trim()
+      addEvent('submit_failed', a.jobId, `Auto-submit paused. You reported a wrong submission to ${a.company} for ${a.title}. ${note.trim()}`)
+      emit('settings:changed', structuredClone(settings))
+      emit('loop:status', loopStatus())
+      touchApp(a)
+    },
+
     async runPipeline(options): Promise<RunStats> {
       if (progress.phase !== 'idle') throw new Error('A run is already in progress.')
       cancelled = false
@@ -638,6 +691,17 @@ export function createMockBridge(): Bridge {
     },
     async getPipelineStatus() {
       return progress
+    },
+    async getLoopStatus() {
+      return loopStatus()
+    },
+    async pauseWorker(name) {
+      pausedWorkers.add(name)
+      emit('loop:status', loopStatus())
+    },
+    async resumeWorker(name) {
+      pausedWorkers.delete(name)
+      emit('loop:status', loopStatus())
     },
     async listRuns(limit) {
       return runs.slice(0, limit)

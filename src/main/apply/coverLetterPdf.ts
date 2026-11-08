@@ -37,14 +37,19 @@ export function coverLetterHtml(text: string, profile: Profile): string {
   </body></html>`
 }
 
-/** Renders the cover letter to a PDF with the headless browser and returns the file path. */
+/**
+ * Renders the cover letter to a PDF with the headless browser and returns the file path. Each
+ * application gets its own folder, so two applications to one company never share a file. The
+ * file name stays clean because the employer sees it when the letter is uploaded.
+ */
 export async function renderCoverLetterPdf(
   browser: BrowserManager,
   settings: BrowserSettings,
-  args: { text: string; profile: Profile; company: string; outDir: string }
+  args: { text: string; profile: Profile; company: string; outDir: string; applicationId?: string }
 ): Promise<string> {
-  fs.mkdirSync(args.outDir, { recursive: true })
-  const outPath = path.join(args.outDir, coverLetterFileName(args.profile, args.company))
+  const dir = args.applicationId ? path.join(args.outDir, args.applicationId.replace(/[^A-Za-z0-9_-]+/g, '')) : args.outDir
+  fs.mkdirSync(dir, { recursive: true })
+  const outPath = path.join(dir, coverLetterFileName(args.profile, args.company))
   const page = await browser.headlessPage(settings)
   try {
     await page.setContent(coverLetterHtml(args.text, args.profile), { waitUntil: 'load' })

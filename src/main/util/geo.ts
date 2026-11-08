@@ -38,7 +38,12 @@ const COUNTRIES: Array<{ country: string; pattern: RegExp }> = [
   { country: 'Australia', pattern: /\b(australia|sydney|melbourne|brisbane|perth)\b/i },
   { country: 'New Zealand', pattern: /\b(new zealand|auckland|wellington)\b/i },
   { country: 'Brazil', pattern: /\b(brazil|brasil|são paulo|sao paulo)\b/i },
-  { country: 'Mexico', pattern: /\b(mexico|méxico|mexico city|guadalajara)\b/i }
+  { country: 'Mexico', pattern: /\b(mexico|méxico|mexico city|guadalajara)\b/i },
+  { country: 'Finland', pattern: /\b(finland|helsinki|espoo|tampere)\b/i },
+  { country: 'Denmark', pattern: /\b(denmark|copenhagen|aarhus)\b/i },
+  { country: 'Norway', pattern: /\b(norway|oslo|bergen)\b/i },
+  { country: 'Italy', pattern: /\b(italy|italia|rome|milan|milano|turin)\b/i },
+  { country: 'Austria', pattern: /\b(austria|vienna|wien|graz)\b/i }
 ]
 
 const US_CODE = new RegExp(`,\\s*(${Object.keys(US_STATES).join('|')})\\b`)
@@ -53,8 +58,8 @@ export function countryOf(location: string): string | null {
   // Country words win over state names ("Georgia" the country is rare in job posts, so US wins below).
   for (const { country, pattern } of COUNTRIES) {
     if (country !== 'United States' && pattern.test(text)) {
-      // "Cambridge, MA" and "London, ON" are North American, not British.
-      if (country === 'United Kingdom' && (US_CODE.test(text) || CA_CODE.test(text))) continue
+      // "Cambridge, MA", "London, ON", "Vienna, VA" and "Rome, GA" are North American.
+      if ((country === 'United Kingdom' || country === 'Austria' || country === 'Italy') && (US_CODE.test(text) || CA_CODE.test(text))) continue
       return country
     }
   }
@@ -90,4 +95,45 @@ export function regionOf(location: string): string | null {
     if (new RegExp(`\\b${name}\\b`).test(lower)) return c
   }
   return null
+}
+
+/** ISO 4217 currency of each country, for the countries the job boards use most. */
+const CURRENCY_BY_COUNTRY: Record<string, string> = {
+  'United States': 'USD', Canada: 'CAD', 'United Kingdom': 'GBP', Ireland: 'EUR', Germany: 'EUR', France: 'EUR',
+  Netherlands: 'EUR', Sweden: 'SEK', Finland: 'EUR', Denmark: 'DKK', Norway: 'NOK', Poland: 'PLN', Spain: 'EUR',
+  Italy: 'EUR', Portugal: 'EUR', Switzerland: 'CHF', Austria: 'EUR', Australia: 'AUD', 'New Zealand': 'NZD',
+  Japan: 'JPY', Singapore: 'SGD', India: 'INR', Brazil: 'BRL', Mexico: 'MXN', Israel: 'ILS'
+}
+
+/** The currency of a country, given its name or any location in it. Null when it isn't one of the known countries. */
+export function currencyOf(countryOrLocation: string | null | undefined): string | null {
+  const text = (countryOrLocation ?? '').trim()
+  if (!text) return null
+  const country = countryOf(text) ?? text
+  return CURRENCY_BY_COUNTRY[country] ?? null
+}
+
+/**
+ * The country a job is in: read from its location, or the board's own country when the location
+ * doesn't say ("Remote"). Null when neither names one.
+ */
+export function jobCountry(location: string | null | undefined, boardCountry?: string | null): string | null {
+  const fromLocation = location ? countryOf(location) : null
+  if (fromLocation) return fromLocation
+  const hint = (boardCountry ?? '').trim()
+  return hint ? countryOf(hint) : null
+}
+
+/** Names a region can be written as: "CA" gives ["CA", "California"], "California" gives ["California", "CA"]. */
+export function regionNames(region: string): string[] {
+  const text = region.trim()
+  if (!text) return []
+  const upper = text.toUpperCase()
+  const name = US_STATES[upper] ?? CA_PROVINCES[upper]
+  if (name) return [text, name.replace(/\b\w/g, (c) => c.toUpperCase())]
+  const lower = text.toLowerCase()
+  for (const [code, full] of [...Object.entries(US_STATES), ...Object.entries(CA_PROVINCES)]) {
+    if (full === lower) return [text, code]
+  }
+  return [text]
 }

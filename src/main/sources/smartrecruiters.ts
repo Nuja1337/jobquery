@@ -72,6 +72,7 @@ export function parseSmartRecruitersPosting(
     applyUrl: detail?.applyUrl || url,
     ats: 'smartrecruiters',
     atsToken: companyId,
+    atsJobId: item.id,
     description,
     postedAt: toIsoDate(item.releasedDate)
   }

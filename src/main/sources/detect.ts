@@ -16,6 +16,9 @@ function result(ats: AtsKind, token: string | null, jobId: string | null): AtsDe
   return { ats, token, jobId, companyName: token ? prettifyToken(token) || null : null }
 }
 
+/** Hosts under breezy.hr that are the vendor's own sites, not a company's board. */
+const BREEZY_RESERVED = new Set(['www', 'app', 'api', 'help', 'support', 'blog', 'marketplace'])
+
 function segments(url: URL): string[] {
   return url.pathname.split('/').filter(Boolean).map((s) => decodeURIComponent(s))
 }
@@ -87,8 +90,53 @@ export function detectAts(input: string): AtsDetection | null {
     return result('recruitee', token, parts[0] === 'o' ? (parts[1] ?? null) : null)
   }
 
+  // Rippling: ats.rippling.com/[{locale}/]{slug}/jobs/{uuid}, api.rippling.com/platform/api/ats/v1/board/{slug}/jobs/{uuid}
+  if (host === 'ats.rippling.com' || host === 'api.rippling.com') {
+    let rest = parts
+    if (host === 'api.rippling.com') {
+      const board = parts.indexOf('board')
+      if (board === -1) return null
+      rest = parts.slice(board + 1)
+    } else if (/^[a-z]{2}-[a-z]{2}$/i.test(rest[0] ?? '') && rest.length > 1) {
+      rest = rest.slice(1)
+    }
+    const token = rest[0]
+    if (!token) return null
+    return result('rippling', token, rest[1] === 'jobs' ? (rest[2] ?? null) : null)
+  }
+
+  // Breezy: {slug}.breezy.hr/p/{id}-{title}. The id is the leading run of hex digits.
+  if (host.endsWith('.breezy.hr') && !BREEZY_RESERVED.has(host.split('.')[0])) {
+    const token = host.split('.')[0]
+    const jobId = parts[0] === 'p' ? (/^[0-9a-f]{8,}/i.exec(parts[1] ?? '')?.[0].toLowerCase() ?? null) : null
+    return result('breezy', token, jobId)
+  }
+
+  // Personio: {slug}.jobs.personio.de/job/{id}, also on .com
+  const personio = /^([a-z0-9-]+)\.jobs\.personio\.(?:de|com)$/.exec(host)
+  if (personio) {
+    return result('personio', personio[1], parts[0] === 'job' && /^\d+$/.test(parts[1] ?? '') ? parts[1] : null)
+  }
+
   return null
 }
 
 /** Board APIs the pipeline can read. Workday and Recruitee are only detected. */
-export const READABLE_ATS: AtsKind[] = ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable']
+export const READABLE_ATS: AtsKind[] = ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable', 'rippling', 'breezy', 'personio']
+
+/**
+ * Fills in the employer's application system for a posting from a job board, when its apply link or
+ * posting link points at one and names the posting. The source and external id stay as they are.
+ * A posting with no such link comes back unchanged.
+ */
+export function withAtsIdentity<T extends { url: string; applyUrl: string | null; ats: AtsKind; atsToken: string | null; atsJobId?: string | null }>(raw: T): T {
+  for (const link of [raw.applyUrl, raw.url]) {
+    if (!link) continue
+    const found = detectAts(link)
+    if (!found?.token || !found.jobId) continue
+    // Workable shortcodes are upper case on the board's own API.
+    const atsJobId = found.ats === 'workable' ? found.jobId.toUpperCase() : found.jobId
+    return { ...raw, ats: found.ats, atsToken: found.token, atsJobId }
+  }
+  return raw
+}

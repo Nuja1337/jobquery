@@ -88,6 +88,31 @@ export function initialSettings(onboardingDone: boolean): Settings {
 
 export function demoProfile(): Profile {
   return {
+    application: {
+      address: { street: 'Oderberger Strasse 12', city: 'Berlin', region: 'Berlin', postalCode: '10435', country: 'Germany' },
+      phoneCountryCode: '+49',
+      authorization: [
+        { country: 'Germany', status: 'citizen', needsSponsorship: false, notes: 'EU citizen.' },
+        { country: 'Spain', status: 'citizen', needsSponsorship: false, notes: 'EU citizen.' },
+        { country: 'United States', status: 'none', needsSponsorship: true, notes: '' }
+      ],
+      salary: [
+        { currency: 'EUR', min: 80000, target: 90000, period: 'year', answerStyle: 'range' },
+        { currency: 'USD', min: 100000, target: 115000, period: 'year', answerStyle: 'number' }
+      ],
+      noticeWeeks: 4,
+      earliestStart: null,
+      relocation: { willing: true, places: ['Spain', 'Netherlands'] },
+      travel: 'some',
+      skillYears: { React: 8, TypeScript: 6, 'Node.js': 5, GraphQL: 4, PostgreSQL: 4, Playwright: 3 },
+      languageLevels: { English: 'fluent', Spanish: 'native', German: 'conversational' },
+      clearance: 'None',
+      driversLicense: true,
+      over18: true,
+      references: 'Available on request.',
+      gpa: '',
+      heardAbout: 'Job board'
+    },
     fullName: 'Alex Rivera',
     email: 'alex.rivera@example.com',
     phone: '+49 151 5550 0142',
@@ -171,9 +196,9 @@ export function initialDocuments(): Array<DocumentRecord & { text: string }> {
 
 export function initialBank(): AnswerBankEntry[] {
   return [
-    { id: 'ans1', question: 'Are you legally authorized to work in the EU?', answer: 'Yes. I am an EU citizen and need no sponsorship.', kind: 'fact', timesUsed: 14, updatedAt: iso(20 * DAY) },
-    { id: 'ans2', question: 'What is your notice period?', answer: 'Four weeks.', kind: 'fact', timesUsed: 9, updatedAt: iso(20 * DAY) },
-    { id: 'ans3', question: 'Why do you want to work here?', answer: 'Start with one specific thing the company ships that I have used or read about, then connect it to a project of mine with a number attached. Keep it to three sentences.', kind: 'template', timesUsed: 6, updatedAt: iso(6 * DAY) }
+    { id: 'ans1', question: 'Are you legally authorized to work in the EU?', answer: 'Yes. I am an EU citizen and need no sponsorship.', kind: 'fact', topic: 'authorization', scope: null, timesUsed: 14, updatedAt: iso(20 * DAY) },
+    { id: 'ans2', question: 'What is your notice period?', answer: 'Four weeks.', kind: 'fact', topic: 'notice_period', scope: null, timesUsed: 9, updatedAt: iso(20 * DAY) },
+    { id: 'ans3', question: 'Why do you want to work here?', answer: 'Start with one specific thing the company ships that I have used or read about, then connect it to a project of mine with a number attached. Keep it to three sentences.', kind: 'template', topic: 'why_company', scope: null, timesUsed: 6, updatedAt: iso(6 * DAY) }
   ]
 }
 
@@ -187,12 +212,14 @@ export function initialCompanies(): Company[] {
     watch,
     blocked,
     notes: '',
+    origin: 'manual',
     createdAt: iso(20 * DAY)
   })
   return [
     c('Northwind Labs', 'greenhouse', 'northwindlabs', 'https://boards.greenhouse.io/northwindlabs'),
     c('Fieldnote', 'ashby', 'fieldnote', 'https://jobs.ashbyhq.com/fieldnote'),
     c('Kestrel Data', 'lever', 'kestrel', 'https://jobs.lever.co/kestrel'),
+    { ...c('Lumen Robotics', 'greenhouse', 'lumenrobotics', 'https://boards.greenhouse.io/lumenrobotics', false), origin: 'posting_link' },
     c('Orbital Freight', 'greenhouse', 'orbitalfreight', 'https://boards.greenhouse.io/orbitalfreight', false),
     c('Acme Staffing', 'unknown', null, 'https://acmestaffing.example.com/careers', false, true)
   ]
@@ -493,6 +520,8 @@ export function initialApplications(jobs: Job[]): Application[] {
       confirmation: s.status === 'submitted' ? 'Thanks for applying. We will be in touch.' : null,
       screenshotPath: s.status === 'submitted' ? `C:\\Users\\Demo\\AppData\\Roaming\\JobPilot\\screenshots\\${s.id}.png` : null,
       submitClickedAt: null,
+      submitFailures: 0,
+      dryRunAt: null,
       error: null,
       notes: s.notes ?? ''
     }
@@ -588,8 +617,45 @@ export function buildAnalytics(rangeDays: number): AnalyticsReport {
   const scale = (n: number): number => Math.max(1, Math.round(n * k))
   const outcomes = <T extends string>(rows: Array<[T, number, number, number]>): Array<{ submitted: number; responses: number; interviews: number } & Record<'k', T>> =>
     rows.map(([key, s, r, i]) => ({ k: key, submitted: scale(s), responses: Math.min(scale(r), scale(s)), interviews: Math.min(scale(i), scale(r)) }))
+  // Demo numbers for the volume view. Today is a slice of the week.
+  const volume = (n: number): AnalyticsReport['today'] => ({
+    discovered: Math.round(discovered * n),
+    filteredOut: Math.round(filteredOut * n),
+    scored: Math.round(scored * n),
+    shortlisted: Math.round(shortlisted * n),
+    prepared: Math.round(prepared * n),
+    submitted: Math.round(submitted * n),
+    needsAttention: Math.round(6 * n),
+    ready: Math.round(9 * n),
+    costUsd: Math.round(prepared * n * 4) / 100
+  })
+  const hourStart = new Date()
+  hourStart.setMinutes(0, 0, 0)
+  const sendsByHour = Array.from({ length: 24 }, (_, i) => {
+    const h = new Date(hourStart.getTime() - (23 - i) * 3_600_000)
+    const daytime = h.getHours() >= 8 && h.getHours() <= 22
+    return { hour: h.toISOString(), count: daytime ? Math.round(rnd() * 6) : 0 }
+  })
+  const scoreCounts = Array.from({ length: 101 }, (_, score) => (score < 50 ? 0 : Math.max(0, Math.round((100 - score) / 4 + rnd() * 3))))
+  const scoreHistogram = Array.from({ length: 10 }, (_, i) => {
+    const from = 50 + i * 5
+    const to = from + 5
+    const count = scoreCounts.slice(from, to === 100 ? 101 : to).reduce((sum, n) => sum + n, 0)
+    return { from, to, count }
+  })
   return {
     rangeDays,
+    today: volume(1 / 7),
+    week: volume(1),
+    sendsByHour,
+    scoreHistogram,
+    scoreCounts,
+    boards: { watched: 1480, failing: 12, stopped: 31, dueNow: 96 },
+    quota: [
+      { providerId: 'p-gemini', label: 'Google Gemini (free tier)', requestsToday: 188, requestsPerDay: 250, costToday: 0 },
+      { providerId: 'p-claude', label: 'Anthropic (Claude)', requestsToday: 42, requestsPerDay: null, costToday: 1.37 }
+    ],
+    totals: { submitted, responses, needsAttention: 6, ready: 9 },
     funnel: { discovered, filteredOut, prescoredOut, duplicates, scored, shortlisted, dismissed: Math.round(shortlisted * 0.22), prepared, submitted, responses, interviews, offers },
     daily,
     outcomesByBucket: outcomes<FitBucket>([['perfect', 6, 4, 3], ['great', 14, 5, 2], ['good', 12, 2, 0], ['weak', 2, 0, 0]]).map((r) => ({ bucket: r.k, submitted: r.submitted, responses: r.responses, interviews: r.interviews })),
@@ -642,4 +708,115 @@ export const MODEL_LISTS: Record<string, string[]> = {
   openrouter: ['anthropic/claude-sonnet-5-5', 'openai/gpt-5-mini', 'meta-llama/llama-3.3-70b-instruct', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemini-2.0-flash-exp:free', 'mistralai/mistral-small-3.2-24b-instruct:free'],
   ollama: ['llama3.1:8b', 'qwen2.5:14b', 'mistral:7b'],
   openai_compatible: ['default']
+}
+
+// ---------------------------------------------------------------------------
+// Review exceptions: a busy day of autopilot, for the exceptions-first Review page
+// ---------------------------------------------------------------------------
+
+type QuestionSpec = { label: string; type?: PreparedAnswer['type']; options?: string[]; note?: string }
+
+/**
+ * Applications that autopilot prepared in bulk. Some wait on a question many of them share, some
+ * could not be sent, and some went out today. New jobs are added to `jobs` for them.
+ */
+export function initialExceptionApplications(jobs: Job[]): Application[] {
+  const template = jobs.find((j) => j.stage === 'applied') ?? jobs[0]
+  const out: Application[] = []
+  let n = 0
+
+  const make = (company: string, status: ApplicationStatus, patch: { asks?: QuestionSpec[]; error?: string; clicked?: boolean; mode?: Application['submitMode']; sentAgo?: number; failures?: number; fit?: number }): void => {
+    n += 1
+    const id = `app_x${n}`
+    const jobId = `job_x${n}`
+    const title = ['Frontend Engineer', 'Software Engineer, Web', 'Senior Frontend Engineer', 'Product Engineer'][n % 4]
+    const fitScore = patch.fit ?? 70 + ((n * 7) % 25)
+    const job: Job = {
+      ...template,
+      id: jobId,
+      externalId: `ext-x${n}`,
+      company,
+      title,
+      url: `https://jobs.example.com/${company.toLowerCase().replace(/\W+/g, '-')}/x${n}`,
+      applyUrl: null,
+      stage: status === 'submitted' ? 'applied' : 'ready',
+      fitScore,
+      fitBucket: fitScore >= 85 ? 'perfect' : 'good',
+      starred: false,
+      applicationId: id,
+      discoveredAt: iso(6 * HOUR),
+      updatedAt: iso(HOUR)
+    }
+    jobs.push(job)
+    const base = makeAnswers('clean', company).filter((a) => !['salary', 'start_date', 'work_auth'].includes(a.fieldKey))
+    const asks: PreparedAnswer[] = (patch.asks ?? []).map((q, i) => ({
+      fieldKey: `ask_${n}_${i}`,
+      label: q.label,
+      type: q.type ?? 'text',
+      required: true,
+      options: q.options ?? [],
+      value: '',
+      source: 'ai',
+      confidence: 0,
+      needsUser: true,
+      note: q.note ?? null,
+      lint: null
+    }))
+    const answers = [...base, ...asks]
+    const sent = patch.sentAgo != null
+    out.push({
+      id,
+      jobId,
+      company,
+      title,
+      fitScore,
+      fitBucket: job.fitBucket,
+      status,
+      outcome: 'none',
+      submitMode: patch.mode ?? (sent ? 'auto' : null),
+      flaggedCount: answers.filter(answerNeedsUser).length,
+      guessCount: answers.filter(isGuess).length,
+      submittedAt: sent ? iso(patch.sentAgo ?? 0) : null,
+      outcomeAt: null,
+      createdAt: iso(7 * HOUR),
+      updatedAt: iso(sent ? (patch.sentAgo ?? 0) : n * MIN),
+      coverLetter: COVER_LETTER(company, title),
+      coverLetterLint: { score: 94, issues: [], stats: { words: 118, sentences: 8, avgSentenceWords: 14.8, sentenceLengthStdDev: 5.2, paragraphs: 4 } },
+      answers,
+      formFields: FIELDS,
+      resumeDocId: 'doc_resume1',
+      confirmation: sent ? 'Thanks for applying. We will be in touch.' : null,
+      screenshotPath: sent || patch.clicked ? `C:\\Users\\Demo\\AppData\\Roaming\\JobPilot\\screenshots\\${id}.png` : null,
+      submitClickedAt: patch.clicked ? iso(40 * MIN) : null,
+      submitFailures: patch.failures ?? 0,
+      dryRunAt: null,
+      error: patch.error ?? null,
+      notes: ''
+    })
+  }
+
+  const usd = ['Expected salary (USD)', 'Salary expectations in USD *', 'What is your desired salary in USD?']
+  ;['Brightside Labs', 'Cobalt Systems', 'Fernhill', 'Gannet Health', 'Hollis & Reed', 'Ivory Works', 'Juno Bank'].forEach((c, i) => make(c, 'needs_attention', { asks: [{ label: usd[i % 3] }] }))
+  ;['Kestrel Maps', 'Larch Cloud', 'Mistral Ops'].forEach((c) => make(c, 'needs_attention', { asks: [{ label: 'Expected salary (GBP)' }] }))
+  ;['Nimbus Pay', 'Orchard AI', 'Pylon Data', 'Quill Docs'].forEach((c) =>
+    make(c, 'needs_attention', { asks: [{ label: 'Did you use AI tools to write this application?', type: 'radio', options: ['Yes', 'No'], note: 'This employer asks about AI use in applications. Read their policy and answer this yourself.' }] })
+  )
+  ;['Rook Games', 'Sorrel Foods', 'Tern Travel'].forEach((c) => make(c, 'needs_attention', { asks: [{ label: 'Earliest start date', type: 'date' }] }))
+  ;['Umber Design', 'Vireo Energy'].forEach((c) => make(c, 'needs_attention', { asks: [{ label: 'Preferred pronouns' }] }))
+  make('Wren Analytics', 'needs_attention', { asks: [{ label: 'Preferred pronouns' }, { label: 'Expected salary (USD)' }] })
+
+  make('Xylo Security', 'needs_attention', { error: 'The site asked for a captcha. Solve it in the browser window and press submit.', mode: 'auto' })
+  make('Yarrow Health', 'needs_attention', { error: 'The site asked for a captcha. Solve it in the browser window and press submit.', mode: 'auto' })
+  make('Zinc Robotics', 'needs_attention', { error: 'This site wants you to sign in first. Sign in in the browser window, then press Fill again. The browser remembers the login next time.', mode: 'auto' })
+  make('Amber Freight', 'needs_attention', { error: 'This site wants you to sign in first. Sign in in the browser window, then press Fill again. The browser remembers the login next time.', mode: 'auto' })
+  make('Birch Capital', 'needs_attention', { error: 'This site wants you to sign in first. Sign in in the browser window, then press Fill again. The browser remembers the login next time.', mode: 'auto' })
+  make('Cedar Learning', 'needs_attention', { error: 'This form has more than one page. Use Fill and let me submit, then press Next and Submit in the browser.', mode: 'auto' })
+  make('Dune Mobility', 'needs_attention', { error: 'Timed out while filling the form.', mode: 'auto' })
+  make('Elm Street Games', 'needs_attention', { error: 'Timed out while filling the form.', mode: 'auto' })
+  make('Fable Press', 'needs_attention', { error: "Couldn't open or fill the form. Could not open a browser. Install Chrome or Edge.", mode: 'auto' })
+  make('Garnet Labs', 'needs_attention', { error: 'No confirmation page appeared. Check the browser window to see what happened.', mode: 'auto', clicked: true })
+  make('Harbor Logistics', 'needs_attention', { error: "Couldn't open or fill the form. The page would not load. It failed 3 times, so autopilot left it for you.", mode: 'auto', failures: 3 })
+
+  ;[12, 25, 41, 63, 88, 120, 170].forEach((minutes, i) => make(['Iris Biotech', 'Jade Software', 'Kite Media', 'Lumen Grid', 'Moss Interactive', 'Nova Pay', 'Opal Cloud'][i], 'submitted', { sentAgo: minutes * MIN }))
+  return out
 }

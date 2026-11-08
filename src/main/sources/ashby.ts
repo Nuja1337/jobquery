@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto'
 import type { RawJob } from '@shared/types'
 import { prettifyToken } from './detect'
-import { fetchJson } from './http'
+import { type BoardChanges, type BoardReadState, fetchConditional, fetchJson } from './http'
 import { cleanTitle, findSalaryInText, inferRemote, toIsoDate } from './normalize'
 
 // Public job board API: https://api.ashbyhq.com/posting-api/job-board/{org}?includeCompensation=true
@@ -85,6 +86,7 @@ export function parseAshbyJob(job: AshbyJob, org: string, companyName?: string |
     applyUrl: job.applyUrl || `${url}/application`,
     ats: 'ashby',
     atsToken: org,
+    atsJobId: job.id,
     description,
     postedAt: toIsoDate(job.publishedAt)
   }
@@ -100,4 +102,21 @@ export async function fetchAshbyBoard(org: string, companyName?: string | null, 
     { timeoutMs: 60_000, signal }
   )
   return parseAshby(json, org, companyName)
+}
+
+/** Reads a board only when its ETag changed. A changed board comes back whole, since Ashby lists every posting with its text. */
+export async function fetchAshbyBoardChanges(
+  org: string,
+  companyName: string | null | undefined,
+  state: BoardReadState,
+  signal?: AbortSignal
+): Promise<BoardChanges> {
+  const result = await fetchConditional<{ jobs?: AshbyJob[] }>(
+    `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(org)}?includeCompensation=true`,
+    { etag: state.etag, lastModified: state.lastModified, timeoutMs: 60_000, signal }
+  )
+  if (result.status === 304) return { changed: false }
+  const listHash = createHash('sha1').update(JSON.stringify(result.json)).digest('hex')
+  if (listHash === state.listHash) return { changed: false, etag: result.etag, lastModified: result.lastModified, listHash }
+  return { changed: true, jobs: parseAshby(result.json, org, companyName), etag: result.etag, lastModified: result.lastModified, listHash }
 }

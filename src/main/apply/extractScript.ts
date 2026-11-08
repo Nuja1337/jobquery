@@ -20,9 +20,10 @@ export interface ExtractedField {
 }
 
 export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
-  // Labels keep a trailing "*" until isRequired has seen it. clean() drops it for display.
+  // Labels keep a trailing "*" until isRequired has seen it. clean() drops it for display. Lever
+  // marks required questions with "✱" and puts helper text after it, so the label ends there.
   const tidy = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const clean = (s) => tidy(s).replace(/\s*\*\s*$/, '').trim();
+  const clean = (s) => tidy(tidy(s).split('✱')[0]).replace(/\s*\*\s*$/, '').trim();
   const isVisible = (el) => {
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
@@ -34,23 +35,30 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
     if (!el.dataset.jpId) { el.dataset.jpId = 'jp' + (counter++); }
     return el.dataset.jpId;
   };
-  const textOfIds = (ids) => ids.split(/\s+/).map((id) => {
-    const n = document.getElementById(id);
-    return n ? n.textContent : '';
-  }).join(' ');
+  // Text of an element without SVG icons, whose fallback text ("SVGs not supported by this browser.") isn't a label.
+  const textOf = (node) => {
+    if (!node) return '';
+    const copy = node.cloneNode(true);
+    copy.querySelectorAll('svg').forEach((n) => n.remove());
+    return (copy.textContent || '').replace(/SVGs not supported by this browser\.?/gi, ' ');
+  };
+  const textOfIds = (ids) => ids.split(/\s+/).map((id) => textOf(document.getElementById(id))).join(' ');
 
   const labelFor = (el) => {
     const labelledBy = el.getAttribute('aria-labelledby');
     if (labelledBy) { const t = tidy(textOfIds(labelledBy)); if (t) return t; }
     if (el.id) {
       const lab = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
-      if (lab) { const t = tidy(lab.textContent); if (t) return t; }
+      if (lab) { const t = tidy(textOf(lab)); if (t) return t; }
     }
     const wrap = el.closest('label');
     if (wrap) {
+      // A wrapping label can hold a title element plus upload or status text. The title wins.
+      const head = Array.from(wrap.querySelectorAll('[class*="label" i]')).find((n) => !n.contains(el) && !n.querySelector('input, select, textarea') && tidy(textOf(n)));
+      if (head) return tidy(textOf(head));
       const copy = wrap.cloneNode(true);
       copy.querySelectorAll('input, select, textarea, option').forEach((n) => n.remove());
-      const t = tidy(copy.textContent);
+      const t = tidy(textOf(copy));
       if (t) return t;
     }
     const aria = el.getAttribute('aria-label');
@@ -59,14 +67,31 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
     let node = el.parentElement;
     for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
       const cand = node.querySelector('label, legend, [class*="label" i], [class*="question" i], h3, h4');
-      if (cand && !cand.contains(el)) { const t = tidy(cand.textContent); if (t && t.length < 400) return t; }
+      if (cand && !cand.contains(el)) { const t = tidy(textOf(cand)); if (t && t.length < 400) return t; }
     }
     return tidy(el.getAttribute('placeholder') || el.getAttribute('name') || el.id || '');
   };
 
-  const groupLabel = (el) => {
+  // The question of a radio or checkbox group. The labels of the group's own options are never
+  // the question, even when they look like one (Ashby styles both the same way).
+  const groupLabel = (el, peers, optionTexts) => {
+    const ownsOption = (n) =>
+      peers.some((p) => n.contains(p) || (p.id && n.getAttribute('for') === p.id)) || optionTexts.has(clean(textOf(n)));
+    const firstTitle = (root, selector) => {
+      for (const cand of Array.from(root.querySelectorAll(selector))) {
+        if (cand.contains(el) || cand.querySelector('input') || ownsOption(cand)) continue;
+        const t = tidy(textOf(cand));
+        if (t && t.length < 400) return t;
+      }
+      return '';
+    };
     const fs = el.closest('fieldset');
-    if (fs) { const lg = fs.querySelector('legend'); if (lg) { const t = tidy(lg.textContent); if (t) return t; } }
+    if (fs) {
+      const lg = fs.querySelector('legend');
+      if (lg) { const t = tidy(textOf(lg)); if (t) return t; }
+      const t = firstTitle(fs, 'label, [class*="label" i], [class*="question" i], [class*="title" i], h3, h4');
+      if (t) return t;
+    }
     const group = el.closest('[role="radiogroup"], [role="group"]');
     if (group) {
       const lb = group.getAttribute('aria-labelledby');
@@ -76,14 +101,14 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
     }
     let node = el.parentElement;
     for (let depth = 0; node && depth < 5; depth++, node = node.parentElement) {
-      const cand = node.querySelector('legend, [class*="label" i], [class*="question" i], h3, h4, p');
-      if (cand && !cand.contains(el) && !cand.querySelector('input')) { const t = tidy(cand.textContent); if (t && t.length < 400) return t; }
+      const t = firstTitle(node, 'legend, [class*="label" i], [class*="question" i], h3, h4, p');
+      if (t) return t;
     }
     return tidy(el.name || '');
   };
 
   const isRequired = (el, label) =>
-    el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test(label || '') || /\(required\)/i.test(label || '');
+    el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test(label || '') || /✱/.test(label || '') || /\(required\)/i.test(label || '');
 
   const fileHint = (text) => {
     const t = (text || '').toLowerCase();
@@ -109,6 +134,12 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
     const type = (el.getAttribute('type') || (tag === 'input' ? 'text' : tag)).toLowerCase();
     if (['hidden', 'submit', 'button', 'image', 'reset', 'search', 'password'].includes(type)) continue;
     if (el.disabled) continue;
+    // Greenhouse puts a hidden required helper input next to each custom dropdown. It isn't a field.
+    // Only inputs are skipped. select2 keeps the real <select> at 1px with aria-hidden, and it is the field.
+    if (tag === 'input' && type !== 'file' && type !== 'radio' && type !== 'checkbox') {
+      if (el.getAttribute('aria-hidden') === 'true') continue;
+      if (el.getAttribute('tabindex') === '-1' && window.getComputedStyle(el).opacity === '0') continue;
+    }
     if (type !== 'file' && !isVisible(el) && !(type === 'radio' || type === 'checkbox')) continue;
 
     if (type === 'radio' || type === 'checkbox') {
@@ -125,10 +156,11 @@ export const EXTRACT_FIELDS_SCRIPT = String.raw`(() => {
       }
       if (doneGroups.has(type + ':' + name)) continue;
       doneGroups.add(type + ':' + name);
-      const rawLabel = groupLabel(el);
+      const options = peers.map((p) => clean(labelFor(p)));
+      const rawLabel = groupLabel(el, peers, new Set(options.filter(Boolean)));
       fields.push({
         key: uniqueKey(name || rawLabel), jpId: idFor(el), label: clean(rawLabel), type: type === 'radio' ? 'radio' : 'checkboxes',
-        required: peers.some((p) => isRequired(p, rawLabel)), options: peers.map((p) => clean(labelFor(p))), optionIds: peers.map(idFor),
+        required: peers.some((p) => isRequired(p, rawLabel)), options, optionIds: peers.map(idFor),
         placeholder: null, maxLength: null, fileHint: null, hasValue: peers.some((p) => p.checked)
       });
       continue;

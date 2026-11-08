@@ -5,7 +5,10 @@ import type {
   FitAssessment,
   FitBucket,
   LlmTask,
-  SourceKind
+  ProviderQuota,
+  ScoreBucket,
+  SourceKind,
+  VolumeCounts
 } from '@shared/types'
 import type { AppContext } from './context'
 import { RESPONSE_OUTCOMES } from './db/repos/applications'
@@ -14,6 +17,10 @@ import { costOf, priceFor } from './llm/pricing'
 import { groupReason } from './pipeline/filters'
 
 const DAY_MS = 86_400_000
+const HOUR_MS = 3_600_000
+/** Scores below this are not counted in the score histogram. Nothing under the lowest shortlist setting matters. */
+const HISTOGRAM_FROM = 50
+const HISTOGRAM_STEP = 5
 const FALLBACK_TRIAGE_TOKENS = 2500
 const BUCKETS: FitBucket[] = ['perfect', 'great', 'good', 'weak']
 /** Reached an interview or further. */
@@ -232,8 +239,16 @@ export function getAnalytics(ctx: AppContext, rangeDays: number): AnalyticsRepor
     .map((a) => (Date.parse(a.outcome_at!) - Date.parse(a.submitted_at!)) / DAY_MS)
     .filter((d) => Number.isFinite(d) && d >= 0)
 
+  const now = Date.now()
   return {
     rangeDays: days,
+    today: volumeCounts(ctx, startOfToday.toISOString(), thresholds.shortlistScore),
+    week: volumeCounts(ctx, new Date(now - 7 * DAY_MS).toISOString(), thresholds.shortlistScore),
+    sendsByHour: sendsByHour(ctx, now),
+    ...scoreHistogram(ctx, new Date(now - 7 * DAY_MS).toISOString()),
+    boards: boardHealth(ctx, new Date(now).toISOString()),
+    quota: providerQuota(ctx, startOfToday.toISOString()),
+    totals: allTimeTotals(ctx),
     funnel,
     daily: dayKeys.map((k) => daily.get(k)!),
     outcomesByBucket: BUCKETS.map((b) => byBucket.get(b)!),
@@ -280,4 +295,111 @@ function averageTriageCall(ctx: AppContext, prices: Parameters<typeof priceFor>[
     // No model set up yet, so there is no price to estimate with.
   }
   return { tokens: FALLBACK_TRIAGE_TOKENS, usd: free ? 0 : usd }
+}
+
+/**
+ * Counts for everything since `since`. Job steps follow the jobs found in the window, so each is a
+ * subset of the one before it. Applications are counted by when they were created or sent.
+ */
+function volumeCounts(ctx: AppContext, since: string, shortlistScore: number): VolumeCounts {
+  const jobs = ctx.db.get<Record<string, number | null>>(
+    `SELECT COUNT(*) AS discovered,
+       COALESCE(SUM(j.stage IN ('filtered_out', 'prescored_out', 'duplicate')), 0) AS filtered_out,
+       COALESCE(SUM(j.fit_score IS NOT NULL OR a.id IS NOT NULL), 0) AS scored,
+       COALESCE(SUM(j.fit_score >= :shortlist OR a.id IS NOT NULL), 0) AS shortlisted
+     FROM jobs j LEFT JOIN applications a ON a.job_id = j.id WHERE j.discovered_at >= :since`,
+    { since, shortlist: shortlistScore }
+  )
+  const apps = ctx.db.get<Record<string, number | null>>(
+    `SELECT COUNT(*) AS prepared,
+       COALESCE(SUM(status = 'needs_attention'), 0) AS needs_attention,
+       COALESCE(SUM(status = 'ready'), 0) AS ready
+     FROM applications WHERE created_at >= :since`,
+    { since }
+  )
+  const cost = ctx.db.get<{ usd: number | null }>('SELECT SUM(cost_usd) AS usd FROM llm_calls WHERE cache_hit = 0 AND at >= :since', { since })
+  const n = (row: Record<string, number | null> | undefined, key: string): number => Number(row?.[key] ?? 0)
+  return {
+    discovered: n(jobs, 'discovered'),
+    filteredOut: n(jobs, 'filtered_out'),
+    scored: n(jobs, 'scored'),
+    shortlisted: n(jobs, 'shortlisted'),
+    prepared: n(apps, 'prepared'),
+    submitted: ctx.applications.countSubmittedSince(since),
+    needsAttention: n(apps, 'needs_attention'),
+    ready: n(apps, 'ready'),
+    costUsd: cost?.usd ?? 0
+  }
+}
+
+/** Sends in each of the last 24 hours, oldest first, with zeros filled in. */
+function sendsByHour(ctx: AppContext, now: number): Array<{ hour: string; count: number }> {
+  const thisHour = Math.floor(now / HOUR_MS) * HOUR_MS
+  const first = thisHour - 23 * HOUR_MS
+  const rows = ctx.db.all<{ hour: string; n: number }>(
+    `SELECT substr(COALESCE(submitted_at, submit_clicked_at), 1, 13) AS hour, COUNT(*) AS n
+     FROM applications
+     WHERE submitted_at >= :since OR submit_clicked_at >= :since
+     GROUP BY hour`,
+    { since: new Date(first).toISOString() }
+  )
+  const byHour = new Map(rows.map((r) => [r.hour, r.n]))
+  return Array.from({ length: 24 }, (_, i) => {
+    const hour = new Date(first + i * HOUR_MS).toISOString()
+    return { hour, count: byHour.get(hour.slice(0, 13)) ?? 0 }
+  })
+}
+
+/** Jobs found in the window with a score of 50 or more, by bucket and by exact score. */
+function scoreHistogram(ctx: AppContext, since: string): { scoreHistogram: ScoreBucket[]; scoreCounts: number[] } {
+  const rows = ctx.db.all<{ score: number; n: number }>(
+    'SELECT fit_score AS score, COUNT(*) AS n FROM jobs WHERE discovered_at >= :since AND fit_score >= :min GROUP BY fit_score',
+    { since, min: HISTOGRAM_FROM }
+  )
+  const scoreCounts = new Array<number>(100 - HISTOGRAM_FROM + 1).fill(0)
+  for (const r of rows) scoreCounts[Math.min(100, r.score) - HISTOGRAM_FROM] += r.n
+  const buckets: ScoreBucket[] = []
+  for (let from = HISTOGRAM_FROM; from < 100; from += HISTOGRAM_STEP) {
+    const to = from + HISTOGRAM_STEP
+    let count = 0
+    // The last bucket also holds 100.
+    for (let score = from; score < to || (to === 100 && score === 100); score++) count += scoreCounts[score - HISTOGRAM_FROM] ?? 0
+    buckets.push({ from, to, count })
+  }
+  return { scoreHistogram: buckets, scoreCounts }
+}
+
+/** Watched, failing, stopped and due boards. The first three follow the Sources page. */
+function boardHealth(ctx: AppContext, nowIso: string): { watched: number; failing: number; stopped: number; dueNow: number } {
+  const counts = ctx.companies.counts()
+  const due = ctx.db.get<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM companies c JOIN board_state b ON b.company_id = c.id
+     WHERE c.watch = 1 AND c.blocked = 0 AND c.ats_token IS NOT NULL AND c.ats != 'unknown' AND b.next_check_at <= :now`,
+    { now: nowIso }
+  )
+  return { watched: counts.watched, failing: counts.failing, stopped: counts.stopped, dueNow: due?.n ?? 0 }
+}
+
+/** Requests and spend today for each provider, against the daily limit set on the provider. */
+function providerQuota(ctx: AppContext, since: string): ProviderQuota[] {
+  const rows = ctx.db.all<{ id: string; label: string; requests_per_day: number | null; n: number; usd: number | null }>(
+    `SELECT p.id, p.label, p.requests_per_day, COUNT(c.id) AS n, SUM(c.cost_usd) AS usd
+     FROM providers p LEFT JOIN llm_calls c ON c.provider_id = p.id AND c.cache_hit = 0 AND c.at >= :since
+     GROUP BY p.id ORDER BY n DESC, p.label`,
+    { since }
+  )
+  return rows.map((r) => ({ providerId: r.id, label: r.label, requestsToday: r.n, requestsPerDay: r.requests_per_day, costToday: r.usd ?? 0 }))
+}
+
+function allTimeTotals(ctx: AppContext): AnalyticsReport['totals'] {
+  const placeholders = RESPONSE_OUTCOMES.map((o) => `'${o}'`).join(', ')
+  const row = ctx.db.get<Record<string, number | null>>(
+    `SELECT COALESCE(SUM(submitted_at IS NOT NULL), 0) AS submitted,
+       COALESCE(SUM(submitted_at IS NOT NULL AND outcome IN (${placeholders})), 0) AS responses,
+       COALESCE(SUM(status = 'needs_attention'), 0) AS needs_attention,
+       COALESCE(SUM(status = 'ready'), 0) AS ready
+     FROM applications`
+  )
+  const n = (key: string): number => Number(row?.[key] ?? 0)
+  return { submitted: n('submitted'), responses: n('responses'), needsAttention: n('needs_attention'), ready: n('ready') }
 }

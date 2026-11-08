@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
-import type { RawJob } from '@shared/types'
+import type { RawJob, SourceKind } from '@shared/types'
+
+/** Sources that come from saved searches on job boards. They have no board of their own. */
+export const SEARCH_SOURCES: SourceKind[] = ['remotive', 'remoteok', 'arbeitnow', 'hn_whoishiring', 'adzuna']
 
 const COMPANY_SUFFIXES = new Set([
   'inc', 'incorporated', 'llc', 'ltd', 'limited', 'gmbh', 'corp', 'corporation', 'co', 'company',
@@ -31,11 +34,12 @@ export function normalizeText(text: string): string {
  * The same posting from the same source always produces the same key.
  * A posting on an ATS board is keyed by the board token, not the company name, so renaming a
  * watched company or pasting a link to the same posting gives the same key.
- * Aggregator postings have no board token and keep the company name in the key.
+ * Aggregator postings keep the company name in the key, even when their link shows which ATS the
+ * employer uses. Their ats and token describe the employer's board, not the source.
  */
 export function canonicalKey(raw: Pick<RawJob, 'source' | 'company' | 'externalId'> & Partial<Pick<RawJob, 'ats' | 'atsToken'>>): string {
   const token = raw.atsToken?.trim()
-  if (raw.ats && raw.ats !== 'unknown' && token) return `${raw.source}:${token.toLowerCase()}:${raw.externalId}`
+  if (raw.ats && raw.ats !== 'unknown' && token && !SEARCH_SOURCES.includes(raw.source)) return `${raw.source}:${token.toLowerCase()}:${raw.externalId}`
   return `${raw.source}:${normalizeCompany(raw.company)}:${raw.externalId}`
 }
 

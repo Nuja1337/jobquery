@@ -3,9 +3,15 @@
 // An entry is either SQL or a function that gets the open database, for changes that need code.
 
 import { createHash } from 'node:crypto'
-import type { Database } from 'sql.js'
 
-export type Migration = string | ((db: Database) => void)
+/** What a function migration gets: the calls the early migrations used, provided by database.ts. */
+export interface MigrationDb {
+  exec(sql: string): void
+  run(sql: string, params?: Array<string | number | null | boolean | undefined> | Record<string, string | number | null | boolean | undefined>): void
+  prepare(sql: string): { step(): boolean; getAsObject(): Record<string, unknown>; free(): boolean }
+}
+
+export type Migration = string | ((db: MigrationDb) => void)
 
 export const MIGRATIONS: Migration[] = [
   /* 1: initial schema */ `
@@ -209,7 +215,60 @@ export const MIGRATIONS: Migration[] = [
 
   /* 3: last_seen_at and dismissed_at, board-based job keys, full-description content hashes */ migrateJobKeysAndHashes,
 
-  /* 4: free-tier providers (billing, request limits), per-call provider id and free flag, scoring failure count */ addFreeTierColumns
+  /* 4: free-tier providers (billing, request limits), per-call provider id and free flag, scoring failure count */ addFreeTierColumns,
+
+  /* 5: how many times preparing an application failed for a job, so runs stop paying to retry it */ `
+  ALTER TABLE jobs ADD COLUMN prepare_failures INTEGER NOT NULL DEFAULT 0;
+  `,
+
+  /* 6: failed auto-submit attempts per application, and when autopilot last did a dry run of it */ `
+  ALTER TABLE applications ADD COLUMN submit_failures INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE applications ADD COLUMN dry_run_at TEXT;
+  `,
+
+  /* 7: board scan index, and the posting id on the application system so one posting found twice is stored once */ `
+  CREATE INDEX idx_jobs_board ON jobs(source, ats_token);
+  ALTER TABLE jobs ADD COLUMN ats_job_id TEXT;
+  -- A posting read from its own board already has the posting id as its external id. Fill it before the index exists.
+  UPDATE jobs SET ats_job_id = external_id WHERE source = ats AND ats_token IS NOT NULL
+    AND ats IN ('greenhouse', 'lever', 'ashby', 'workable', 'smartrecruiters');
+  CREATE INDEX idx_jobs_ats_job ON jobs(ats, ats_token, ats_job_id);
+  `,
+
+  /* 8: per-board check state, so thousands of watched boards are read when they may have changed, and where a company came from */ `
+  CREATE TABLE board_state (
+    company_id        TEXT PRIMARY KEY,
+    origin            TEXT NOT NULL DEFAULT 'manual',   -- manual | posting_link | import | starter
+    etag              TEXT,
+    last_modified     TEXT,
+    list_hash         TEXT,
+    last_checked_at   TEXT,
+    next_check_at     TEXT NOT NULL,
+    last_changed_at   TEXT,
+    interval_minutes  INTEGER NOT NULL DEFAULT 360,
+    failures          INTEGER NOT NULL DEFAULT 0,
+    last_status       INTEGER,
+    last_error        TEXT,
+    live_jobs         INTEGER NOT NULL DEFAULT 0,
+    relevant_jobs     INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX idx_board_state_due ON board_state(next_check_at);
+  ALTER TABLE companies ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual';
+  -- Companies that exist already get a state. Watched ones are due on the first run. Having a state
+  -- also keeps posting links from switching watch back on for a company the user turned off.
+  INSERT INTO board_state (company_id, origin, next_check_at)
+    SELECT id, 'manual', '1970-01-01T00:00:00.000Z' FROM companies WHERE ats_token IS NOT NULL;
+  `,
+
+  /* 9: saved answers get a topic and a scope, so a question finds its answer however the form words it */ `
+  ALTER TABLE answer_bank ADD COLUMN topic TEXT;
+  ALTER TABLE answer_bank ADD COLUMN scope TEXT;
+  CREATE INDEX idx_answer_bank_topic ON answer_bank(topic, scope);
+  `,
+
+  /* 10: who started the last submit attempt, so a form a person had open is never put back in the queue */ `
+  ALTER TABLE applications ADD COLUMN last_attempt_by TEXT;
+  `
 ]
 
 /**
@@ -217,7 +276,7 @@ export const MIGRATIONS: Migration[] = [
  * triage_failures to jobs. Ollama and any provider whose address is on this computer become
  * 'free'. Everything else stays 'paid', which is what the app assumed before.
  */
-function addFreeTierColumns(db: Database): void {
+function addFreeTierColumns(db: MigrationDb): void {
   db.exec(`
     ALTER TABLE providers ADD COLUMN billing TEXT NOT NULL DEFAULT 'paid';
     ALTER TABLE providers ADD COLUMN requests_per_minute INTEGER;
@@ -271,7 +330,7 @@ interface KeyRow {
  * whose new hash differs was merged only because its first 600 characters matched. It goes back to
  * 'new' so the next run looks at it.
  */
-function migrateJobKeysAndHashes(db: Database): void {
+function migrateJobKeysAndHashes(db: MigrationDb): void {
   db.exec(`
     ALTER TABLE jobs ADD COLUMN last_seen_at TEXT;
     ALTER TABLE jobs ADD COLUMN dismissed_at TEXT;

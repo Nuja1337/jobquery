@@ -3,20 +3,23 @@ import { useBlocker } from 'react-router'
 import { Wand2 } from 'lucide-react'
 import type { Profile, ProfileRecord } from '@shared/types'
 import { api } from '@renderer/lib/api'
+import { useApp } from '@renderer/lib/app'
 import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { relativeTime } from '@renderer/lib/format'
 import { AnswerBank } from '@renderer/components/AnswerBank'
+import { ApplicationFactsEditor } from '@renderer/components/ApplicationFactsEditor'
 import { DocumentSection } from '@renderer/components/DocumentSection'
 import { ProfileEditor, cleanProfile } from '@renderer/components/ProfileEditor'
 import { VoiceCard } from '@renderer/components/VoiceCard'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
 import { Button, Card, ErrorBlock, Loading, Page, PageHeader, Tabs } from '@renderer/components/ui'
 
-type TabId = 'profile' | 'documents' | 'voice' | 'answers'
+type TabId = 'profile' | 'applying' | 'documents' | 'voice' | 'answers'
 
 export function ProfilePage(): React.JSX.Element {
   const toast = useToast()
+  const { settings } = useApp()
   const [tab, setTab] = useState<TabId>('profile')
   const rec = useAsync(() => api.getProfile(), [])
   const [draft, setDraft] = useState<Profile | null>(null)
@@ -87,11 +90,11 @@ export function ProfilePage(): React.JSX.Element {
         title="Profile and materials"
         intro="What JobPilot knows about you and writes from."
         actions={
-          tab === 'profile' && <span className="text-xs text-faint">{saved.updatedAt ? `Saved ${relativeTime(saved.updatedAt)}` : 'Not saved yet'}</span>
+          (tab === 'profile' || tab === 'applying') && <span className="text-xs text-faint">{saved.updatedAt ? `Saved ${relativeTime(saved.updatedAt)}` : 'Not saved yet'}</span>
         }
       />
 
-      {tab === 'profile' && dirty && (
+      {(tab === 'profile' || tab === 'applying') && dirty && (
         <div className="sticky top-0 z-20 -mx-2 mb-4 flex items-center justify-between rounded-lg border border-accent/50 bg-surface px-4 py-2.5 shadow-lg">
           <p className="text-sm text-fg">You have unsaved changes.</p>
           <div className="flex gap-2">
@@ -126,6 +129,7 @@ export function ProfilePage(): React.JSX.Element {
           onChange={setTab}
           items={[
             { id: 'profile', label: 'Profile' },
+            { id: 'applying', label: 'Applying' },
             { id: 'documents', label: 'Documents' },
             { id: 'voice', label: 'Voice' },
             { id: 'answers', label: 'Answer bank' }
@@ -147,6 +151,16 @@ export function ProfilePage(): React.JSX.Element {
             </Button>
           </Card>
           <ProfileEditor value={draft} onChange={setDraft} />
+        </>
+      )}
+
+      {tab === 'applying' && (
+        <>
+          <Card className="mb-4 p-4">
+            <p className="text-sm font-medium text-fg">Answers for application forms</p>
+            <p className="text-xs text-faint">Forms ask for these again and again. JobPilot answers from here, and a form waits for you only when a fact is missing.</p>
+          </Card>
+          <ApplicationFactsEditor profile={draft} onChange={setDraft} defaultCurrency={settings?.preferences.salaryCurrency} />
         </>
       )}
 

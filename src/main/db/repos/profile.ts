@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { EMPTY_PROFILE } from '@shared/defaults'
-import type { Profile, ProfileRecord } from '@shared/types'
+import { EMPTY_APPLICATION_FACTS, EMPTY_PROFILE } from '@shared/defaults'
+import type { ApplicationFacts, Profile, ProfileRecord } from '@shared/types'
 import { type Db, now, parseJson } from '../database'
 
 interface ProfileRow {
@@ -26,13 +26,30 @@ function fitHash(p: Profile): string {
   return createHash('sha1').update(JSON.stringify(relevant)).digest('hex')
 }
 
+/** Fills what a profile saved before the interview existed (or by an older version) lacks. */
+function withApplicationDefaults(stored: Partial<ApplicationFacts> | undefined): ApplicationFacts {
+  const base = structuredClone(EMPTY_APPLICATION_FACTS)
+  const s = stored ?? {}
+  return {
+    ...base,
+    ...s,
+    address: { ...base.address, ...(s.address ?? {}) },
+    relocation: { ...base.relocation, ...(s.relocation ?? {}) },
+    authorization: Array.isArray(s.authorization) ? s.authorization : base.authorization,
+    salary: Array.isArray(s.salary) ? s.salary : base.salary,
+    skillYears: { ...base.skillYears, ...(s.skillYears ?? {}) },
+    languageLevels: { ...base.languageLevels, ...(s.languageLevels ?? {}) }
+  }
+}
+
 function withDefaults(stored: Partial<Profile>): Profile {
   const base = structuredClone(EMPTY_PROFILE)
   return {
     ...base,
     ...stored,
     links: { ...base.links, ...(stored.links ?? {}) },
-    workAuthorization: { ...base.workAuthorization, ...(stored.workAuthorization ?? {}) }
+    workAuthorization: { ...base.workAuthorization, ...(stored.workAuthorization ?? {}) },
+    application: withApplicationDefaults(stored.application)
   }
 }
 

@@ -65,9 +65,10 @@ describe('sponsorship questions', () => {
 describe('years of experience', () => {
   it('fills the total only when no skill is named', () => {
     expect(map(field('How many years of experience do you have?', 'number'))?.value).toBe('12')
-    expect(map(field('How many years of experience do you have with Rust?', 'number'))).toBeNull()
-    expect(map(field('Years of experience in Kubernetes'))).toBeNull()
-    expect(map(field('How many years of Python experience do you have?', 'number'))).toBeNull()
+    // A skill the profile has no years for is the person's to answer, never the total.
+    expect(map(field('How many years of experience do you have with Rust?', 'number'))).toMatchObject({ value: '', needsUser: true })
+    expect(map(field('Years of experience in Kubernetes'))).toMatchObject({ value: '', needsUser: true })
+    expect(map(field('How many years of Python experience do you have?', 'number'))).toMatchObject({ value: '', needsUser: true })
     expect(map(field('Years of professional experience', 'number'))?.value).toBe('12')
   })
 })

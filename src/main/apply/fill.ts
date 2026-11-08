@@ -1,5 +1,6 @@
-import type { Frame, Page } from 'playwright-core'
+import type { Frame, Locator, Page } from 'playwright-core'
 import type { FieldType, FormField, PreparedAnswer } from '@shared/types'
+import { countryOf, regionOf } from '../util/geo'
 import { jaccard, normalizeQuestion } from '../util/text'
 import type { ExtractedField } from './extractScript'
 import { pickOption } from './fieldMap'
@@ -19,6 +20,28 @@ export function toFormField(f: ExtractedField): FormField {
   }
 }
 
+/**
+ * The options a dropdown offers right now. They come from the dropdown's own list (the id in
+ * aria-controls or aria-owns), because pages can hold other hidden option lists, such as the
+ * country list of a phone number widget. Read this after opening the dropdown, since some
+ * libraries only set the attribute then.
+ */
+async function ownOptions(frame: Frame, box: Locator): Promise<Locator> {
+  const attr = (await box.getAttribute('aria-controls').catch(() => null)) || (await box.getAttribute('aria-owns').catch(() => null))
+  const id = attr?.trim().split(/\s+/)[0]
+  if (id) {
+    const quoted = id.replace(/["\\]/g, '\\$&')
+    // A list that isn't in the page yet is not a reason to read some other list.
+    if ((await frame.locator(`[id="${quoted}"]`).count().catch(() => 0)) > 0) return frame.locator(`[id="${quoted}"] [role="option"]`)
+  }
+  return frame.locator('[role="option"]:visible')
+}
+
+async function optionTexts(options: Locator): Promise<string[]> {
+  const texts = await options.allInnerTexts().catch(() => [] as string[])
+  return texts.map((t) => t.replace(/\s+/g, ' ').trim())
+}
+
 /** Opens each custom dropdown briefly to read its options, since they aren't in the DOM until opened. */
 export async function readComboboxOptions(frame: Frame, fields: ExtractedField[]): Promise<void> {
   for (const field of fields) {
@@ -27,8 +50,8 @@ export async function readComboboxOptions(frame: Frame, fields: ExtractedField[]
       const box = frame.locator(sel(field.jpId))
       await box.click({ timeout: 2000 })
       await frame.waitForTimeout(350)
-      const texts = await frame.locator('[role="option"]').allInnerTexts()
-      field.options = [...new Set(texts.map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, 200)
+      const texts = await optionTexts(await ownOptions(frame, box))
+      field.options = [...new Set(texts.filter(Boolean))].slice(0, 200)
       await box.press('Escape').catch(() => {})
     } catch {
       // Leave options empty. The filler will type the answer and pick the closest suggestion.
@@ -90,7 +113,7 @@ async function fillOne(frame: Frame, field: ExtractedField, answer: PreparedAnsw
 
   switch (field.type) {
     case 'file': {
-      const path = field.fileHint === 'cover_letter' ? files.coverLetter : field.fileHint === 'resume' ? files.resume : value || null
+      const path = filePathFor(field, answer, files)
       if (!path) throw new Error('No file to upload')
       await loc.setInputFiles(path)
       return
@@ -129,34 +152,117 @@ async function fillOne(frame: Frame, field: ExtractedField, answer: PreparedAnsw
     }
     case 'checkbox': {
       if (value === 'true') await checkInput(frame, field.jpId)
-      else await frame.locator(sel(field.jpId)).uncheck({ force: true }).catch(() => {})
+      else await uncheckInput(frame, field.jpId)
       return
     }
     case 'combobox': {
-      await loc.click()
-      await loc.fill(value.slice(0, 40))
-      await frame.waitForTimeout(450)
-      // Pick the suggestion that matches the answer, compared whole word by word. Pressing Enter
-      // would take whatever suggestion is first, which can be the wrong one.
-      const options = frame.locator('[role="option"]:visible')
-      const texts = (await options.allInnerTexts().catch(() => [] as string[])).map((t) => t.replace(/\s+/g, ' ').trim())
-      if (texts.length === 0) {
-        // A free-text box with no suggestion list keeps what was typed.
-        await loc.press('Tab').catch(() => {})
-        return
-      }
-      const picked = texts.includes(value) ? value : pickOption(texts.filter(Boolean), value)
-      if (!picked) {
-        await loc.press('Escape').catch(() => {})
-        throw new Error(`"${value}" is not one of the options`)
-      }
-      await options.nth(texts.indexOf(picked)).click()
+      await fillCombobox(frame, loc, field, value)
       return
     }
     default: {
       await loc.fill(value)
     }
   }
+}
+
+/** A trailing phone dial code, such as the " +1" in "United States +1". */
+const DIAL_CODE = /\s*\(?\+\d[\d\s-]*\)?\s*$/
+
+export function stripDialCode(text: string): string {
+  return text.replace(DIAL_CODE, '').trim()
+}
+
+const LOCATION_LABEL = /location|city|where (are )?you (are )?(based|located)|where do you (live|reside)/i
+
+const firstSegment = (text: string) => text.split(',')[0].trim().toLowerCase()
+
+function namesPlace(suggestion: string, place: string): boolean {
+  const escaped = place.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const aliases = place === 'United States' ? '|usa|u\\.s\\.a?\\.?' : ''
+  return new RegExp(`(^|[^a-z])(${escaped}${aliases})([^a-z]|$)`).test(suggestion.toLowerCase())
+}
+
+/**
+ * Picks the suggestion that matches the wanted value, or null. A dial code is ignored on both
+ * sides ("United States" picks "United States +1" but not "United States Minor Outlying Islands +1").
+ * For a location, the suggestion's city must be the wanted city. When several cities share a
+ * name, the one in the wanted country wins, then the wanted region.
+ */
+export function chooseSuggestion(texts: string[], value: string, locationLike: boolean): string | null {
+  const options = texts.filter(Boolean)
+  const lower = value.trim().toLowerCase()
+  const exact = options.find((t) => t.toLowerCase() === lower)
+  if (exact) return exact
+  const bare = stripDialCode(value).toLowerCase()
+  const dial = options.find((t) => stripDialCode(t).toLowerCase() === bare)
+  if (dial) return dial
+  if (locationLike) {
+    const city = firstSegment(value)
+    const kept = options.filter((t) => firstSegment(t) === city)
+    if (kept.length === 1) return kept[0]
+    if (kept.length > 1) {
+      // Narrow to the wanted country first, then to the wanted region.
+      const country = countryOf(value)
+      const inCountry = country ? kept.filter((t) => namesPlace(t, country)) : []
+      const pool = inCountry.length ? inCountry : kept
+      const region = regionOf(value)
+      return (region ? pool.find((t) => regionOf(t) === region) : undefined) ?? pool[0]
+    }
+  }
+  return pickOption(options, value) ?? (bare !== lower ? pickOption(options, stripDialCode(value)) : null)
+}
+
+/** Types into a search box and waits up to about 3 seconds for a suggestion that matches. */
+async function typeAndWait(
+  frame: Frame,
+  box: Locator,
+  search: string,
+  value: string,
+  locationLike: boolean
+): Promise<{ options: Locator; texts: string[]; picked: string | null }> {
+  await box.fill('')
+  await box.pressSequentially(search.slice(0, 40), { delay: 40 })
+  const deadline = Date.now() + 3000
+  let texts: string[] = []
+  let same = 0
+  for (;;) {
+    const options = await ownOptions(frame, box)
+    const now = await optionTexts(options)
+    same = now.length > 0 && now.join('|') === texts.join('|') ? same + 1 : 0
+    texts = now
+    const picked = chooseSuggestion(texts, value, locationLike)
+    if (picked) return { options, texts, picked }
+    // A list that has stopped changing and has nothing to pick won't get better.
+    if (same >= 3 || Date.now() >= deadline) return { options, texts, picked: null }
+    await frame.waitForTimeout(150)
+  }
+}
+
+async function fillCombobox(frame: Frame, box: Locator, field: ExtractedField, rawValue: string): Promise<void> {
+  const value = rawValue.trim()
+  const locationLike = LOCATION_LABEL.test(field.label)
+  await box.click()
+  let result = await typeAndWait(frame, box, stripDialCode(value) || value, value, locationLike)
+  if (!result.picked && locationLike) {
+    // Geocoding boxes often search the city alone better than "City, State".
+    const city = value.split(',')[0].trim()
+    if (city && city !== value) result = await typeAndWait(frame, box, city, value, locationLike)
+  }
+  // Pressing Enter would take whatever suggestion is first, which can be the wrong one.
+  if (result.texts.length === 0 && field.options.length === 0) {
+    // A free-text box with no suggestion list keeps what was typed.
+    await box.press('Tab').catch(() => {})
+    return
+  }
+  if (!result.picked) {
+    await box.press('Escape').catch(() => {})
+    throw new Error(`"${value}" is not one of the options`)
+  }
+  await result.options.nth(result.texts.indexOf(result.picked)).click()
+}
+
+function filePathFor(field: ExtractedField, answer: PreparedAnswer, files: FillFiles): string | null {
+  return field.fileHint === 'cover_letter' ? files.coverLetter : field.fileHint === 'resume' ? files.resume : answer.value || null
 }
 
 async function checkInput(frame: Frame, jpId: string): Promise<void> {
@@ -167,6 +273,20 @@ async function checkInput(frame: Frame, jpId: string): Promise<void> {
   } catch {
     await input.click({ force: true })
   }
+}
+
+/**
+ * Unticks a box that the page ticked ahead of time. If it is still ticked afterwards this throws,
+ * so the box shows up as a fill failure and the form is not sent with an agreement the person never gave.
+ */
+async function uncheckInput(frame: Frame, jpId: string): Promise<void> {
+  const input = frame.locator(sel(jpId)).first()
+  const ticked = () => input.isChecked({ timeout: 1000 }).catch(() => false)
+  if (!(await ticked())) return
+  await input.uncheck({ force: true, timeout: 3000 }).catch(() => {})
+  // A styled box can ignore uncheck. Click it, but only while it is still ticked.
+  if (await ticked()) await input.click({ force: true, timeout: 3000 }).catch(() => {})
+  if (await ticked()) throw new Error("Couldn't untick this box")
 }
 
 function parseList(value: string): string[] {
@@ -189,6 +309,8 @@ export async function fillForm(
   for (const { field, answer } of pairs) {
     const isFile = field.type === 'file'
     if (!isFile && (answer.needsUser || answer.value === '')) continue
+    // An optional upload with nothing to upload is left empty. A required one fails below.
+    if (isFile && !field.required && !filePathFor(field, answer, files)) continue
     try {
       await fillOne(frame, field, answer, files)
     } catch (err) {

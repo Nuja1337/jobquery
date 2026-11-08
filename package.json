@@ -7,7 +7,7 @@
   "author": "Nuja1337",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "electron-vite dev",
@@ -35,9 +35,6 @@
       "out/**/*",
       "!out/smoke/**",
       "package.json"
-    ],
-    "asarUnpack": [
-      "node_modules/sql.js/dist/*.wasm"
     ],
     "publish": [
       {
@@ -75,7 +72,6 @@
     "mammoth": "^1.13.0",
     "openai": "^7.45.1",
     "playwright-core": "^1.64.1",
-    "sql.js": "^1.15.2",
     "unpdf": "^2.1.0",
     "zod": "^4.6.7"
   },
@@ -85,7 +81,6 @@
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^6.1.2",
     "clsx": "^2.1.1",
     "electron": "^45.2.0",

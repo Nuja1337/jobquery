@@ -1,4 +1,5 @@
 import type { RawJob } from '@shared/types'
+import { withAtsIdentity } from './detect'
 import { fetchJson } from './http'
 import { cleanTitle, htmlToPlain, parseSalary, toIsoDate } from './normalize'
 
@@ -32,7 +33,7 @@ export function parseRemotive(json: { jobs?: RemotiveJob[] }): RawJob[] {
   return (json.jobs ?? []).map((j) => {
     const salary = parseSalary(j.salary, { fieldOnly: true, defaultCurrency: 'USD' })
     const location = j.candidate_required_location?.trim() || null
-    return {
+    return withAtsIdentity({
       source: 'remotive' as const,
       externalId: String(j.id),
       company: j.company_name.trim(),
@@ -49,7 +50,7 @@ export function parseRemotive(json: { jobs?: RemotiveJob[] }): RawJob[] {
       atsToken: null,
       description: htmlToPlain(j.description ?? ''),
       postedAt: toIsoDate(j.publication_date)
-    }
+    })
   })
 }
 

@@ -11,6 +11,9 @@ import type {
   JobStage,
   LintReport,
   PreparedAnswer,
+  SentSample,
+  SourceKind,
+  AtsKind,
   SubmitMode
 } from '@shared/types'
 import { type Db, type Params, newId, now, parseJson } from '../database'
@@ -29,6 +32,9 @@ interface ApplicationRow {
   submit_mode: SubmitMode | null
   submitted_at: string | null
   submit_clicked_at: string | null
+  submit_failures: number
+  dry_run_at: string | null
+  last_attempt_by: 'user' | 'autopilot' | null
   confirmation: string | null
   screenshot_path: string | null
   error: string | null
@@ -41,6 +47,31 @@ interface ApplicationRow {
   fit_bucket: FitBucket | null
 }
 
+/** The job of a sent application, with the fields that decide its application address. */
+export interface SentTarget {
+  applicationId: string
+  source: SourceKind
+  externalId: string
+  url: string
+  applyUrl: string | null
+  ats: AtsKind
+  atsToken: string | null
+}
+
+/** What the Review page needs from an open application, without the cover letter and the form. */
+export interface ReviewRow {
+  id: string
+  jobId: string
+  company: string
+  title: string
+  status: ApplicationStatus
+  answers: PreparedAnswer[]
+  error: string | null
+  screenshotPath: string | null
+  submitMode: SubmitMode | null
+  submitClickedAt: string | null
+}
+
 /** Everything a caller may change. The preparer and the submitter use the fields beyond ApplicationPatch. */
 export interface ApplicationUpdate extends ApplicationPatch {
   coverLetterLint?: LintReport | null
@@ -48,6 +79,10 @@ export interface ApplicationUpdate extends ApplicationPatch {
   submitMode?: SubmitMode | null
   submittedAt?: string | null
   submitClickedAt?: string | null
+  submitFailures?: number
+  dryRunAt?: string | null
+  /** Who started the last submit attempt. A person who had the tab may have sent the form by hand. */
+  lastAttemptBy?: 'user' | 'autopilot' | null
   confirmation?: string | null
   screenshotPath?: string | null
   error?: string | null
@@ -105,6 +140,8 @@ function toApplication(row: ApplicationRow): Application {
     confirmation: row.confirmation,
     screenshotPath: row.screenshot_path,
     submitClickedAt: row.submit_clicked_at,
+    submitFailures: row.submit_failures,
+    dryRunAt: row.dry_run_at,
     error: row.error,
     notes: row.notes
   }
@@ -160,8 +197,9 @@ export class ApplicationsRepo {
     const offset = Math.max(0, query.offset ?? 0)
     const total =
       this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM applications a JOIN jobs j ON j.id = a.job_id ${whereSql}`, params as Params)?.n ?? 0
+    const order = query.sort === 'fit' ? 'j.fit_score DESC, a.created_at, a.id' : 'a.updated_at DESC'
     const rows = this.db.all<ApplicationRow>(
-      `${SELECT_APP} ${whereSql} ORDER BY a.updated_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      `${SELECT_APP} ${whereSql} ORDER BY ${order} LIMIT ${limit} OFFSET ${offset}`,
       params as Params
     )
     return { items: rows.map(toSummary), total }
@@ -208,6 +246,9 @@ export class ApplicationsRepo {
     }
     if (patch.submittedAt !== undefined) set('submitted_at', 'submittedAt', patch.submittedAt)
     if (patch.submitClickedAt !== undefined) set('submit_clicked_at', 'submitClickedAt', patch.submitClickedAt)
+    if (patch.submitFailures !== undefined) set('submit_failures', 'submitFailures', patch.submitFailures)
+    if (patch.dryRunAt !== undefined) set('dry_run_at', 'dryRunAt', patch.dryRunAt)
+    if (patch.lastAttemptBy !== undefined) set('last_attempt_by', 'lastAttemptBy', patch.lastAttemptBy)
     this.db.transaction(() => {
       this.db.run(`UPDATE applications SET ${sets.length ? `${sets.join(', ')}, ` : ''}updated_at = :at WHERE id = :id`, params)
       if (patch.status !== undefined) this.syncJobStage(current.job_id, patch.status)
@@ -221,14 +262,67 @@ export class ApplicationsRepo {
 
   /**
    * Applications waiting to be sent, best fit first. Jobs the user dismissed or that closed are left
-   * out, and so is anything auto mode already clicked Submit on.
+   * out, and so is anything auto mode already clicked Submit on or that was opened for sending in assist mode.
    */
-  listReady(): ApplicationSummary[] {
+  listReady(options: { skipDryRun?: boolean } = {}): ApplicationSummary[] {
+    // With dry run on, a form autopilot already filled once is left alone, so the loop doesn't fill it again.
+    const dryRun = options.skipDryRun ? 'AND a.dry_run_at IS NULL' : ''
     return this.db
       .all<ApplicationRow>(
-        `${SELECT_APP} WHERE a.status = 'ready' AND j.stage = 'ready' AND a.submit_clicked_at IS NULL ORDER BY j.fit_score DESC, a.updated_at`
+        `${SELECT_APP} WHERE a.status = 'ready' AND j.stage = 'ready' AND a.submit_clicked_at IS NULL AND a.submit_mode IS NULL ${dryRun} ORDER BY j.fit_score DESC, a.updated_at`
       )
       .map(toSummary)
+  }
+
+  /** Applications in the given statuses with their answers, for the Review page's grouping. One query, no cover letters. */
+  reviewRows(statuses: ApplicationStatus[]): ReviewRow[] {
+    if (statuses.length === 0) return []
+    const params: Record<string, string> = {}
+    const names = statuses.map((s, i) => {
+      params[`s${i}`] = s
+      return `:s${i}`
+    })
+    return this.db
+      .all<{
+        id: string
+        job_id: string
+        company: string
+        title: string
+        status: ApplicationStatus
+        answers: string
+        error: string | null
+        screenshot_path: string | null
+        submit_mode: SubmitMode | null
+        submit_clicked_at: string | null
+      }>(
+        `SELECT a.id, a.job_id, j.company, j.title, a.status, a.answers, a.error, a.screenshot_path, a.submit_mode, a.submit_clicked_at
+         FROM applications a JOIN jobs j ON j.id = a.job_id
+         WHERE a.status IN (${names.join(', ')}) ORDER BY j.fit_score DESC, a.created_at, a.id`,
+        params
+      )
+      .map((r) => ({
+        id: r.id,
+        jobId: r.job_id,
+        company: r.company,
+        title: r.title,
+        status: r.status,
+        answers: parseJson<PreparedAnswer[]>(r.answers, []),
+        error: r.error,
+        screenshotPath: r.screenshot_path,
+        submitMode: r.submit_mode,
+        submitClickedAt: r.submit_clicked_at
+      }))
+  }
+
+  /** Up to `limit` random applications confirmed as submitted since the given ISO time. */
+  randomSubmittedSince(sinceIso: string, limit: number): SentSample[] {
+    return this.db
+      .all<{ id: string; company: string; title: string; submitted_at: string; screenshot_path: string | null }>(
+        `SELECT a.id, j.company, j.title, a.submitted_at, a.screenshot_path FROM applications a JOIN jobs j ON j.id = a.job_id
+         WHERE a.status = 'submitted' AND a.submitted_at >= :since ORDER BY RANDOM() LIMIT ${Math.max(0, Math.floor(limit))}`,
+        { since: sinceIso }
+      )
+      .map((r) => ({ id: r.id, company: r.company, title: r.title, submittedAt: r.submitted_at, screenshotPath: r.screenshot_path }))
   }
 
   /** Applications submitted since the given ISO time, counting Submit clicks that saw no confirmation. */
@@ -258,9 +352,77 @@ export class ApplicationsRepo {
     )
   }
 
-  /** A dismissed job stays dismissed unless the application turns out to have been submitted. */
+  /**
+   * When an application to a company was last sent, matched on the normalized company name. A Submit
+   * click counts as well as a confirmed submission, since a click with no confirmation may have gone through.
+   */
+  lastSentAt(companyNorm: string): string | null {
+    const row = this.db.get<{ sent: string | null; clicked: string | null }>(
+      `SELECT MAX(a.submitted_at) AS sent, MAX(a.submit_clicked_at) AS clicked FROM applications a JOIN jobs j ON j.id = a.job_id
+       WHERE j.company_norm = :norm`,
+      { norm: companyNorm }
+    )
+    const times = [row?.sent, row?.clicked].filter((t): t is string => Boolean(t))
+    return times.length ? times.reduce((a, b) => (a > b ? a : b)) : null
+  }
+
+  /**
+   * How many applications to a company were sent, or had Submit clicked, since the given ISO time.
+   * Matched on the normalized company name.
+   */
+  countSentToCompanySince(companyNorm: string, sinceIso: string): number {
+    return (
+      this.db.get<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM applications a JOIN jobs j ON j.id = a.job_id
+         WHERE j.company_norm = :norm AND (a.submitted_at >= :since OR a.submit_clicked_at >= :since)`,
+        { norm: companyNorm, since: sinceIso }
+      )?.n ?? 0
+    )
+  }
+
+  /**
+   * Applications sent, or with Submit clicked, since the given ISO time, counted for each application
+   * form family (the job's `ats`). A click counts because the form may have gone through.
+   */
+  countSentByAtsSince(sinceIso: string): Record<string, number> {
+    const out: Record<string, number> = {}
+    for (const row of this.db.all<{ ats: string; n: number }>(
+      `SELECT j.ats AS ats, COUNT(*) AS n FROM applications a JOIN jobs j ON j.id = a.job_id
+       WHERE a.submitted_at >= :since OR a.submit_clicked_at >= :since GROUP BY j.ats`,
+      { since: sinceIso }
+    )) {
+      out[row.ats] = row.n
+    }
+    return out
+  }
+
+  /** Applications created since the given ISO time. A prepare creates the application first, so this counts prepares. */
+  countCreatedSince(sinceIso: string): number {
+    return this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM applications WHERE created_at >= :since', { since: sinceIso })?.n ?? 0
+  }
+
+  /**
+   * The jobs of every application that was sent or had Submit clicked, with the fields that decide
+   * where the application form lives. The caller turns them into addresses to compare.
+   */
+  sentTargets(): SentTarget[] {
+    return this.db
+      .all<{ application_id: string; source: SourceKind; external_id: string; url: string; apply_url: string | null; ats: AtsKind; ats_token: string | null }>(
+        `SELECT a.id AS application_id, j.source, j.external_id, j.url, j.apply_url, j.ats, j.ats_token
+         FROM applications a JOIN jobs j ON j.id = a.job_id
+         WHERE a.submitted_at IS NOT NULL OR a.submit_clicked_at IS NOT NULL`
+      )
+      .map((r) => ({ applicationId: r.application_id, source: r.source, externalId: r.external_id, url: r.url, applyUrl: r.apply_url, ats: r.ats, atsToken: r.ats_token }))
+  }
+
+  /** Who started the last submit attempt, or null when none was recorded. */
+  lastAttemptBy(id: string): 'user' | 'autopilot' | null {
+    return this.db.get<{ by: 'user' | 'autopilot' | null }>('SELECT last_attempt_by AS by FROM applications WHERE id = :id', { id })?.by ?? null
+  }
+
+  /** A dismissed or closed job stays that way unless the application turns out to have been submitted. */
   private syncJobStage(jobId: string, status: ApplicationStatus): void {
-    this.db.run("UPDATE jobs SET stage = :stage, updated_at = :at WHERE id = :id AND (stage != 'dismissed' OR :stage = 'applied')", {
+    this.db.run("UPDATE jobs SET stage = :stage, updated_at = :at WHERE id = :id AND (stage NOT IN ('dismissed', 'closed') OR :stage = 'applied')", {
       id: jobId,
       stage: JOB_STAGE_FOR_STATUS[status],
       at: now()

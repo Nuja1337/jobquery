@@ -1,4 +1,5 @@
 import type { RawJob } from '@shared/types'
+import { withAtsIdentity } from './detect'
 import { fetchJson } from './http'
 import { cleanTitle, findSalaryInText, htmlToPlain, inferRemote, matchesQuery, toIsoDate } from './normalize'
 
@@ -29,7 +30,7 @@ export function parseArbeitnow(json: { data?: ArbeitnowJob[] }, params: Record<s
     const location = j.location?.trim() || null
     const title = cleanTitle(j.title)
     const salary = findSalaryInText(description)
-    jobs.push({
+    jobs.push(withAtsIdentity({
       source: 'arbeitnow',
       externalId: j.slug,
       company: j.company_name.trim(),
@@ -46,7 +47,7 @@ export function parseArbeitnow(json: { data?: ArbeitnowJob[] }, params: Record<s
       atsToken: null,
       description,
       postedAt: toIsoDate(j.created_at)
-    })
+    }))
   }
   return jobs
 }

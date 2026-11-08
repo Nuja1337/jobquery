@@ -6,7 +6,10 @@ import { BANNED_PHRASES } from './rules'
 export const PROMPT_VERSIONS = {
   coverLetter: 'cover-v1',
   answer: 'answer-v1',
-  revise: 'revise-v1'
+  revise: 'revise-v1',
+  /** All open answers of one application, and optionally its cover letter, in one call. */
+  answersBatch: 'answers-batch-v1',
+  reviseBatch: 'revise-batch-v1'
 }
 
 export const LENGTH_TARGETS: Record<CoverLetterLength, { min: number; max: number; paragraphs: string }> = {
@@ -67,8 +70,16 @@ Output
 - Only the text that goes into the form. No preamble, no notes to the candidate, no quotation marks around it.`
 }
 
-/** The candidate profile as compact text. Shared by fit scoring and writing so both see the same facts. */
-export function renderProfile(profile: Profile): string {
+/**
+ * Which part of the profile a prompt needs. Scoring a posting only needs what the candidate can do
+ * ('fit'), so it leaves out the facts they gave for applications, their links and the voice.
+ * Writing and filling forms need everything ('writing').
+ */
+export type ProfileView = 'fit' | 'writing'
+
+/** The candidate profile as compact text. Fit scoring and writing draw on the same profile, in different amounts. */
+export function renderProfile(profile: Profile, view: ProfileView = 'writing'): string {
+  const full = view === 'writing'
   const lines: string[] = []
   const push = (label: string, value: string | null | undefined) => {
     if (value && value.trim()) lines.push(`${label}: ${value.trim()}`)
@@ -93,7 +104,7 @@ export function renderProfile(profile: Profile): string {
   if (profile.projects.length) {
     lines.push('Projects:')
     for (const p of profile.projects) {
-      lines.push(`- ${p.name}: ${p.description}${p.url ? ` (${p.url})` : ''}`)
+      lines.push(`- ${p.name}: ${p.description}${full && p.url ? ` (${p.url})` : ''}`)
       for (const h of p.highlights) lines.push(`  * ${h}`)
     }
   }
@@ -105,9 +116,9 @@ export function renderProfile(profile: Profile): string {
   }
   if (profile.certifications.length) push('Certifications', profile.certifications.join(', '))
   if (profile.languages.length) push('Languages', profile.languages.join(', '))
-  const links = [profile.links.linkedin, profile.links.github, profile.links.portfolio, profile.links.website, ...profile.links.other].filter(Boolean)
+  const links = !full ? [] : [profile.links.linkedin, profile.links.github, profile.links.portfolio, profile.links.website, ...profile.links.other].filter(Boolean)
   if (links.length) push('Links', links.join(', '))
-  if (profile.facts.length) {
+  if (full && profile.facts.length) {
     lines.push('Facts the candidate gave for applications:')
     for (const f of profile.facts) lines.push(`- ${f.question}: ${f.answer}`)
   }
@@ -158,22 +169,29 @@ function renderJob(job: JobForWriting, maxChars: number): string {
   return lines.join('\n')
 }
 
+/** Length, greeting and opening rules for a cover letter. Shared by the stand-alone prompt and the batch prompt. */
+function coverLetterSpec(job: JobForWriting, length: CoverLetterLength, candidateFirstName: string, guidance: string | null): string {
+  const t = LENGTH_TARGETS[length]
+  return `Length: ${t.min} to ${t.max} words in ${t.paragraphs} paragraphs, plus a greeting line and a sign-off.
+Greeting: use a name only if the posting gives the hiring manager's name. Otherwise write "Hi ${job.company} team,".
+Sign off with "${candidateFirstName || "the candidate's first name"}" on its own line after a short closing word such as "Thanks," or "Best,".
+Open with something concrete: a result they got that matters for this role, or a specific thing about ${job.company}'s work that connects to their experience.${guidance ? `
+
+The candidate asked for this: ${guidance}` : ''}`
+}
+
 export function coverLetterPrompt(
   job: JobForWriting,
   length: CoverLetterLength,
   candidateFirstName: string,
   guidance: string | null
 ): string {
-  const t = LENGTH_TARGETS[length]
   return `Write a cover letter for this job.
 
 JOB
 ${renderJob(job, 6000)}
 
-Length: ${t.min} to ${t.max} words in ${t.paragraphs} paragraphs, plus a greeting line and a sign-off.
-Greeting: use a name only if the posting gives the hiring manager's name. Otherwise write "Hi ${job.company} team,".
-Sign off with "${candidateFirstName || 'the candidate\'s first name'}" on its own line after a short closing word such as "Thanks," or "Best,".
-Open with something concrete: a result they got that matters for this role, or a specific thing about ${job.company}'s work that connects to their experience.${guidance ? `\n\nThe candidate asked for this: ${guidance}` : ''}`
+${coverLetterSpec(job, length, candidateFirstName, guidance)}`
 }
 
 export function answerPrompt(
@@ -209,4 +227,73 @@ DRAFT
 """
 ${draft}
 """`
+}
+
+/** Says what a base answer is. Used by the batch prompt and by the single-answer guidance, so both word it the same way. */
+const BASE_ANSWER_RULE = 'a base answer written by the person; keep its facts and wording, adapt one or two sentences to this company and role'
+
+/** Guidance text for a single-answer call: the person's own earlier answer to adapt, plus anything they asked for. */
+export function answerGuidance(baseAnswer: string | null, guidance: string | null): string | null {
+  const parts = [baseAnswer ? `Use this as ${BASE_ANSWER_RULE}:\n"${baseAnswer}"` : null, guidance]
+  return parts.filter(Boolean).join('\n\n') || null
+}
+
+export interface BatchPromptQuestion {
+  /** Short id the model echoes back. */
+  id: string
+  label: string
+  maxLength: number | null
+  long: boolean
+  baseAnswer: string | null
+  guidance: string | null
+}
+
+export interface BatchPromptLetter {
+  length: CoverLetterLength
+  firstName: string
+  guidance: string | null
+}
+
+/** One call that asks for every open answer of an application, and the cover letter when one is needed. */
+export function answersBatchPrompt(job: JobForWriting, questions: BatchPromptQuestion[], letter: BatchPromptLetter | null): string {
+  const blocks = questions.map((q) => {
+    const size = q.long ? 'Length: whatever the question needs, usually 60 to 150 words. One or two paragraphs.' : 'Length: one to three sentences.'
+    const limit = q.maxLength ? ` Hard limit: ${q.maxLength} characters, counting spaces.` : ''
+    const lines = [`QUESTION ${q.id}`, `"${q.label}"`, `${size}${limit}`]
+    if (q.baseAnswer) lines.push(`Base answer, ${BASE_ANSWER_RULE}:\n"""\n${q.baseAnswer}\n"""`)
+    if (q.guidance) lines.push(`The candidate asked for this: ${q.guidance}`)
+    return lines.join('\n')
+  })
+  const letterBlock = letter ? `\n\nCOVER LETTER\n${coverLetterSpec(job, letter.length, letter.firstName, letter.guidance)}` : ''
+  const what = letter ? 'the questions below and the cover letter' : 'the questions below'
+  return `Write ${what} for the ${job.company} application for ${job.title}. Every text follows all the rules above. Each one stands alone, so do not reuse the same example or opening in two of them.
+
+${blocks.join('\n\n')}${letterBlock}
+
+For each question, answer the question that was asked, directly, in the first sentence. Use a specific example from the profile when the question invites one.
+If a text cannot be written honestly from the profile, make its value exactly one line: NEEDS_INPUT: <what is missing, in a few words>
+Reply with JSON only: {"answers": [{"key": "q1", "answer": "..."}]${letter ? ', "letter": "..."' : ''}}. One entry per question, using its id as the key.
+
+JOB
+${renderJob(job, letter ? 6000 : 3500)}`
+}
+
+export interface BatchRevisionItem {
+  id: string
+  draft: string
+  problems: string
+  maxChars: number | null
+}
+
+/** One call that revises every draft that failed the style check, each with its own problems. */
+export function reviseBatchPrompt(items: BatchRevisionItem[]): string {
+  const blocks = items.map((i) => {
+    const limit = i.maxChars ? `\nStay under ${i.maxChars} characters.` : ''
+    return `DRAFT ${i.id}${limit}\nPROBLEMS\n${i.problems}\nTEXT\n"""\n${i.draft}\n"""`
+  })
+  return `A style check found problems in these drafts you wrote. Rewrite each draft to fix every problem listed for it.
+Keep every fact and the meaning. Keep about the same length. Change only what you need to.
+Reply with JSON only: {"answers": [{"key": "<draft id>", "answer": "<revised text>"}]}. One entry per draft, using its id as the key.
+
+${blocks.join('\n\n')}`
 }

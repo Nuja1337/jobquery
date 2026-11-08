@@ -1,5 +1,6 @@
 import { Plus, Trash2 } from 'lucide-react'
 import type { Education, Profile, ProfileFact, Project, WorkExperience } from '@shared/types'
+import { cleanApplication } from './applicationFactsHelpers'
 import { Button, Card, Field, IconButton, Input, NumberInput, TagInput, Textarea, Toggle } from './ui'
 
 interface Props {
@@ -7,7 +8,7 @@ interface Props {
   onChange: (next: Profile) => void
 }
 
-function Block({ title, hint, children, actions }: { title: string; hint?: string; children: React.ReactNode; actions?: React.ReactNode }): React.JSX.Element {
+export function Block({ title, hint, children, actions }: { title: string; hint?: string; children: React.ReactNode; actions?: React.ReactNode }): React.JSX.Element {
   return (
     <Card className="mb-4">
       <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
@@ -33,7 +34,8 @@ export function cleanProfile(p: Profile): Profile {
     ...p,
     experience: p.experience.map((e) => ({ ...e, highlights: lines(e.highlights) })),
     projects: p.projects.map((x) => ({ ...x, highlights: lines(x.highlights) })),
-    facts: p.facts.filter((f) => f.question.trim() || f.answer.trim())
+    facts: p.facts.filter((f) => f.question.trim() || f.answer.trim()),
+    application: cleanApplication(p.application)
   }
 }
 

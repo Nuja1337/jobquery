@@ -1,4 +1,5 @@
-import type { FitBucket, LlmStage, ModelPrice, Profile, ProviderBilling, ProviderKind, Settings } from './types'
+import type { DeepPartial } from './api'
+import type { ApplicationFacts, FitBucket, LlmStage, ModelPrice, Profile, ProviderBilling, ProviderKind, Settings } from './types'
 
 export const DEFAULT_SETTINGS: Settings = {
   routing: { triage: null, writing: null, extraction: null },
@@ -16,7 +17,8 @@ export const DEFAULT_SETTINGS: Settings = {
     excludedCompanies: [],
     maxPostingAgeDays: 30,
     needsVisaSponsorship: false,
-    companyCooldownDays: 90
+    companyCooldownDays: 90,
+    perCompanyLimit: 1
   },
   thresholds: {
     prescoreMin: 15,
@@ -28,16 +30,23 @@ export const DEFAULT_SETTINGS: Settings = {
     dailyUsd: 1,
     monthlyUsd: 15,
     maxTriagePerRun: 60,
-    maxPreparePerRun: 10
+    maxPreparePerRun: 10,
+    maxTriagePerDay: 3000,
+    maxPreparePerDay: 400
   },
   autopilot: {
     enabled: false,
+    mode: 'interval',
     intervalHours: 6,
     autoPrepare: true,
     autoSubmit: false,
     dailySubmitCap: 10,
+    hourlySubmitCap: 40,
+    submitConcurrency: 1,
     requireNoFlags: true,
-    dryRun: false
+    dryRun: false,
+    tickRequiredConsent: false,
+    sendSavedUserAnswers: false
   },
   browser: {
     channel: 'chrome',
@@ -47,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   writing: {
     coverLetterLength: 'medium',
     alwaysCoverLetter: false,
+    adaptSavedAnswers: true,
     bannedPhrases: [],
     styleNotes: '',
     minLintScore: 80,
@@ -62,7 +72,62 @@ export const DEFAULT_SETTINGS: Settings = {
   updates: {
     autoCheck: true
   },
+  system: {
+    closeToTray: true,
+    startAtLogin: false,
+    keepAwake: true,
+    notifications: true
+  },
+  discovery: {
+    autoWatchBoards: true,
+    maxWatchedBoards: 5000,
+    boardsPerRun: 2000
+  },
   onboardingDone: false
+}
+
+/**
+ * Settings for running at volume: hundreds of applications a day, with dry run on first so the fills
+ * can be checked before anything is sent. Applied on request, never by default.
+ */
+export const VOLUME_PRESET: DeepPartial<Settings> = {
+  thresholds: { shortlistScore: 60, autoPrepareScore: 65, autoSubmitScore: 72 },
+  budget: { dailyUsd: 3, monthlyUsd: 60, maxTriagePerDay: 3000, maxPreparePerDay: 400 },
+  autopilot: {
+    enabled: true,
+    mode: 'continuous',
+    autoPrepare: true,
+    autoSubmit: true,
+    dryRun: true,
+    dailySubmitCap: 300,
+    hourlySubmitCap: 40,
+    submitConcurrency: 1,
+    requireNoFlags: true,
+    tickRequiredConsent: true,
+    sendSavedUserAnswers: true
+  },
+  preferences: { perCompanyLimit: 2, companyCooldownDays: 30, maxPostingAgeDays: 21 },
+  browser: { slowMoMs: 25 },
+  writing: { coverLetterLength: 'short', minLintScore: 75, maxRevisions: 1 },
+  discovery: { autoWatchBoards: true, maxWatchedBoards: 5000, boardsPerRun: 2000 },
+  system: { keepAwake: true, closeToTray: true, notifications: true }
+}
+
+/** Settings with a preset laid over them. Objects merge key by key. Arrays and plain values replace. Nothing in `current` changes. */
+export function applyPreset(current: Settings, preset: DeepPartial<Settings>): Settings {
+  return mergeInto<Settings>(current, preset)
+}
+
+function mergeInto<T>(base: T, patch: DeepPartial<T> | undefined): T {
+  if (patch === undefined) return base
+  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return patch as T
+  if (base === null || typeof base !== 'object' || Array.isArray(base)) return patch as T
+  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) }
+  for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+    if (value === undefined) continue
+    out[key] = mergeInto((base as Record<string, unknown>)[key], value as DeepPartial<unknown>)
+  }
+  return out as T
 }
 
 /**
@@ -70,6 +135,27 @@ export const DEFAULT_SETTINGS: Settings = {
  * package.json, which tells installed copies where to look (a test checks that they match).
  */
 export const RELEASES_URL = 'https://github.com/Nuja1337/jobpilot-releases/releases/latest'
+
+export const EMPTY_APPLICATION_FACTS: ApplicationFacts = {
+  address: { street: '', city: '', region: '', postalCode: '', country: '' },
+  phoneCountryCode: '',
+  authorization: [],
+  salary: [],
+  noticeWeeks: null,
+  earliestStart: null,
+  relocation: { willing: null, places: [] },
+  travel: null,
+  skillYears: {},
+  languageLevels: {},
+  clearance: '',
+  driversLicense: null,
+  over18: null,
+  references: 'Available on request.',
+  gpa: '',
+  heardAbout: '',
+  relativesAtEmployers: null,
+  referrals: ''
+}
 
 export const EMPTY_PROFILE: Profile = {
   fullName: '',
@@ -89,7 +175,8 @@ export const EMPTY_PROFILE: Profile = {
   projects: [],
   facts: [],
   notesForAi: '',
-  voice: null
+  voice: null,
+  application: EMPTY_APPLICATION_FACTS
 }
 
 export const PROVIDER_LABELS: Record<ProviderKind, string> = {

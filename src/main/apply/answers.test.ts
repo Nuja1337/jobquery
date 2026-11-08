@@ -25,12 +25,19 @@ const usage = { inputTokens: 800, outputTokens: 200, cacheReadTokens: 0, cacheWr
 
 // Stands in for the model. Short fields get "Yes" when they look like open-to questions and
 // are flagged otherwise. Written answers come back plain and specific.
+const WRITTEN = 'I rebuilt the billing system at Ledgerly after a weekend of double charges, and the retry fix cut failed payments by 40 percent. Safety work at Anthropic has the same shape, where small errors compound.'
+
 const fake: LlmClient = {
   kind: 'anthropic',
   async complete(model) {
-    return { text: 'I rebuilt the billing system at Ledgerly after a weekend of double charges, and the retry fix cut failed payments by 40 percent. Safety work at Anthropic has the same shape, where small errors compound.', usage, model, truncated: false }
+    return { text: WRITTEN, usage, model, truncated: false }
   },
   async completeJson(model, req, schema) {
+    // The open questions arrive together in one call.
+    if (req.prompt.includes('QUESTION q1')) {
+      const keys = [...req.prompt.matchAll(/^QUESTION (q\d+)$/gm)].map((m) => m[1])
+      return { text: '', value: schema.parse({ answers: keys.map((key) => ({ key, answer: WRITTEN })) }), usage, model, truncated: false }
+    }
     const fields = JSON.parse(req.prompt.split('FIELDS\n')[1]) as Array<{ key: string; question: string }>
     const value = schema.parse({
       answers: fields.map((f) => (/open to/i.test(f.question) ? { key: f.key, value: 'Yes', confidence: 0.8, needsUser: false, note: '' } : { key: f.key, value: '', confidence: 0, needsUser: true, note: 'Not in the profile.' }))

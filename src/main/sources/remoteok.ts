@@ -1,4 +1,5 @@
 import type { RawJob } from '@shared/types'
+import { withAtsIdentity } from './detect'
 import { fetchJson } from './http'
 import { cleanTitle, htmlToPlain, matchesQuery, toIsoDate } from './normalize'
 
@@ -35,7 +36,7 @@ export function parseRemoteOk(list: RemoteOkJob[], query?: string): RawJob[] {
     if (!matchesQuery(`${j.position} ${(j.tags ?? []).join(' ')} ${description}`, query)) continue
     const link = j.url || j.apply_url || `https://remoteok.com/remote-jobs/${j.slug}`
     const hasPay = (j.salary_min ?? 0) > 0 && (j.salary_max ?? 0) > 0
-    jobs.push({
+    jobs.push(withAtsIdentity({
       source: 'remoteok',
       externalId: String(j.id ?? j.slug),
       company: j.company.trim(),
@@ -52,7 +53,7 @@ export function parseRemoteOk(list: RemoteOkJob[], query?: string): RawJob[] {
       atsToken: null,
       description,
       postedAt: toIsoDate(j.epoch) ?? toIsoDate(j.date)
-    })
+    }))
   }
   return jobs
 }

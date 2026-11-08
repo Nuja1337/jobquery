@@ -103,6 +103,9 @@ export function callIsFree(provider: Pick<ProviderInfo, 'kind' | 'billing'>, mod
   return provider.billing === 'free'
 }
 
+/** The longest "try again in" a provider can ask for and still have the call wait and retry once. */
+const MAX_RETRY_WAIT_MS = 5 * 60_000
+
 const DEFAULT_MAX_TOKENS: Record<LlmStage, number> = { triage: 4000, extraction: 8000, writing: 16000 }
 
 function startOfToday(): string {
@@ -249,13 +252,27 @@ export class LlmService {
       if (!free) this.assertBudget()
       started = Date.now()
       sent = true
-      const result = await run(client, ref.model, {
-        system: opts.system,
-        context: opts.context,
-        prompt: opts.prompt,
-        maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS[opts.stage],
-        effort: opts.effort
-      })
+      const send = () =>
+        run(client, ref.model, {
+          system: opts.system,
+          context: opts.context,
+          prompt: opts.prompt,
+          maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS[opts.stage],
+          effort: opts.effort
+        })
+      let result
+      try {
+        result = await send()
+      } catch (err) {
+        // A short wait from the provider is worth sitting out, so an unattended run goes on instead of stopping.
+        // A long one, or one set by JobPilot's own daily limit, still ends the call.
+        if (!(err instanceof RateLimitedError) || err.retryAfterMs === null || err.retryAfterMs > MAX_RETRY_WAIT_MS || opts.signal?.aborted) throw err
+        await this.clock.sleep(err.retryAfterMs, opts.signal)
+        if (opts.signal?.aborted) throw err
+        if (!free) this.assertBudget()
+        started = Date.now()
+        result = await send()
+      }
       const cost = free ? 0 : this.price(result.model, result.usage)
       this.record(opts, provider, result.model, result.usage, cost, Date.now() - started, false, null, free)
       if (useCache && !result.truncated) {

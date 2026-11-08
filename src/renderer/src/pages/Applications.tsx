@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Image, Search, Send } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Image, Search, Send } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Application, ApplicationOutcome, ApplicationSummary } from '@shared/types'
 import { api } from '@renderer/lib/api'
@@ -8,9 +8,12 @@ import { useAsync, useDebounced } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { basename, formatDate, formatDateTime, parseMulti, plural, relativeTime } from '@renderer/lib/format'
 import { FitBadge, OUTCOME_LABELS, OUTCOME_ORDER, OutcomeBadge, SUBMIT_MODE_LABELS, StatusBadge } from '@renderer/components/badges'
+import { pageInfo } from '@renderer/components/volumeHelpers'
 import { Badge, Button, Card, EmptyState, ErrorBlock, Field, Input, Loading, Modal, Page, PageHeader, Segmented, Select, TD, TH, Textarea } from '@renderer/components/ui'
 
 type View = 'table' | 'kanban'
+
+const PAGE_SIZE = 50
 
 export function Applications(): React.JSX.Element {
   const toast = useToast()
@@ -19,8 +22,16 @@ export function Applications(): React.JSX.Element {
   const [search, setSearch] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const debounced = useDebounced(search, 250)
+  const [page, setPage] = useState(1)
 
-  const list = useAsync(() => api.listApplications({ statuses: ['submitted', 'submitting', 'failed', 'withdrawn'], search: debounced || undefined, limit: 500 }), [debounced], ['applications:changed'])
+  // A new search starts on the first page.
+  useEffect(() => setPage(1), [debounced])
+
+  const list = useAsync(
+    () => api.listApplications({ statuses: ['submitted', 'submitting', 'failed', 'withdrawn'], search: debounced || undefined, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    [debounced, page],
+    ['applications:changed']
+  )
 
   async function setOutcome(a: ApplicationSummary, outcome: ApplicationOutcome): Promise<void> {
     // Update the screen first so the row does not jump back while the request runs.
@@ -34,6 +45,11 @@ export function Applications(): React.JSX.Element {
   }
 
   const items = list.data?.items ?? []
+  const paging = list.data ? pageInfo(list.data.total, page, PAGE_SIZE) : null
+  // Rows were removed from the end (a search narrowed, or applications were deleted), so the page no longer exists.
+  useEffect(() => {
+    if (paging && paging.page !== page) setPage(paging.page)
+  }, [paging, page])
 
   return (
     <Page wide>
@@ -57,6 +73,7 @@ export function Applications(): React.JSX.Element {
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company or title" className="pl-8" aria-label="Search applications" />
         </div>
         <span className="text-xs text-faint">{list.data ? plural(list.data.total, 'application') : ''}</span>
+        {paging && paging.pages > 1 && <PageNav info={paging} total={list.data?.total ?? 0} loading={list.loading} onPage={setPage} />}
       </div>
 
       {list.error ? (
@@ -120,8 +137,30 @@ export function Applications(): React.JSX.Element {
         <Board items={items} onMove={(a, o) => void setOutcome(a, o)} onOpen={setOpenId} />
       )}
 
+      {paging && paging.pages > 1 && items.length > 0 && (
+        <div className="mt-3 flex justify-end">
+          <PageNav info={paging} total={list.data?.total ?? 0} loading={list.loading} onPage={setPage} />
+        </div>
+      )}
+
       {openId && <ApplicationDialog id={openId} onClose={() => setOpenId(null)} onChanged={list.reload} />}
     </Page>
+  )
+}
+
+function PageNav({ info, total, loading, onPage }: { info: ReturnType<typeof pageInfo>; total: number; loading: boolean; onPage: (page: number) => void }): React.JSX.Element {
+  return (
+    <div className="ml-auto flex items-center gap-2" aria-label="Pages">
+      <span className="text-xs tabular-nums text-faint">
+        Showing {info.from.toLocaleString('en-US')} to {info.to.toLocaleString('en-US')} of {total.toLocaleString('en-US')}
+      </span>
+      <Button size="sm" variant="secondary" icon={<ChevronLeft size={13} />} disabled={!info.hasPrev || loading} onClick={() => onPage(info.page - 1)}>
+        Previous
+      </Button>
+      <Button size="sm" variant="secondary" disabled={!info.hasNext || loading} onClick={() => onPage(info.page + 1)}>
+        Next <ChevronRight size={13} />
+      </Button>
+    </div>
   )
 }
 

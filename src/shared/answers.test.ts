@@ -32,6 +32,13 @@ describe('answerNeedsUser', () => {
     expect(answerNeedsUser(a({ type: 'multiselect', value: '["Go"]' }))).toBe(false)
   })
 
+  it('never counts an optional question, even one an older draft flagged', () => {
+    expect(answerNeedsUser(a({ required: false, needsUser: true, value: '' }))).toBe(false)
+    expect(answerNeedsUser(a({ required: false, needsUser: true, type: 'checkbox', value: 'false' }))).toBe(false)
+    expect(answerNeedsUser(a({ required: false, needsUser: true, type: 'file', value: '' }))).toBe(false)
+    expect(answerNeedsUser(a({ required: true, needsUser: true, type: 'file', value: '' }))).toBe(true)
+  })
+
   it('leaves files to the upload check', () => {
     expect(answerNeedsUser(a({ type: 'file', value: '' }))).toBe(false)
   })

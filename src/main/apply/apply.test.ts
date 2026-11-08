@@ -8,6 +8,7 @@ import type { PreparedAnswer, Profile } from '@shared/types'
 import { readForm } from './browser'
 import { isCoverLetterField, isLongAnswer, mapKnownField, mustAskUser, pickOption } from './fieldMap'
 import { fillForm, matchAnswers, readComboboxOptions, toFormField } from './fill'
+import { needsCoverLetter } from './prepare'
 import { captureBaseline, clickSubmit, waitForOutcome, waitForUserToFinish } from './submit'
 
 // A form shaped like the ones Greenhouse, Lever and Ashby render: labels tied by "for", a label
@@ -258,5 +259,37 @@ describe('work authorization', () => {
   it('asks the user when the country is unclear', () => {
     const mapped = mapKnownField(field('Are you authorized to work for us?'), ctx(null))
     expect(mapped?.needsUser).toBe(true)
+  })
+})
+
+describe('when a cover letter is written', () => {
+  const base = { key: 'k', placeholder: null, maxLength: null, options: [] }
+  const letterUpload = (required: boolean) => ({ ...base, label: 'Cover Letter', type: 'file' as const, required, fileHint: 'cover_letter' as const })
+  const letterBox = (required: boolean) => ({ ...base, label: 'Cover letter', type: 'textarea' as const, required, fileHint: null })
+  const name = { ...base, label: 'Full name', type: 'text' as const, required: true, fileHint: null }
+
+  it('writes one for a required cover letter upload or box', () => {
+    expect(needsCoverLetter([name, letterUpload(true)], 'browser', DEFAULT_SETTINGS)).toBe(true)
+    expect(needsCoverLetter([name, letterBox(true)], 'greenhouse_api', DEFAULT_SETTINGS)).toBe(true)
+  })
+
+  it('skips an optional cover letter field', () => {
+    expect(needsCoverLetter([name, letterUpload(false)], 'browser', DEFAULT_SETTINGS)).toBe(false)
+    expect(needsCoverLetter([name, letterBox(false)], 'greenhouse_api', DEFAULT_SETTINGS)).toBe(false)
+    expect(needsCoverLetter([name], 'browser', DEFAULT_SETTINGS)).toBe(false)
+  })
+
+  it('writes one for an optional field when the setting says always', () => {
+    const always = { ...DEFAULT_SETTINGS, writing: { ...DEFAULT_SETTINGS.writing, alwaysCoverLetter: true } }
+    expect(needsCoverLetter([name, letterUpload(false)], 'browser', always)).toBe(true)
+    expect(needsCoverLetter([name], 'browser', always)).toBe(true)
+  })
+
+  it('writes none when the form could not be read ahead of time, since the live fill writes it if the form asks', () => {
+    expect(needsCoverLetter([], 'none', DEFAULT_SETTINGS)).toBe(false)
+  })
+
+  it('still writes one for an unreadable form when a letter is always wanted', () => {
+    expect(needsCoverLetter([], 'none', { ...DEFAULT_SETTINGS, writing: { ...DEFAULT_SETTINGS.writing, alwaysCoverLetter: true } })).toBe(true)
   })
 })

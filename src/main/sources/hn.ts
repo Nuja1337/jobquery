@@ -1,4 +1,5 @@
 import type { RawJob } from '@shared/types'
+import { withAtsIdentity } from './detect'
 import { fetchJson } from './http'
 import { decodeEntities, findSalaryInText, htmlToPlain, inferRemote, matchesQuery, toIsoDate } from './normalize'
 
@@ -76,7 +77,7 @@ export function parseHnThread(thread: HnThread, query?: string): RawJob[] {
     const description = htmlToPlain(c.text)
     if (!matchesQuery(description, query)) continue
     const salary = findSalaryInText(description)
-    jobs.push({
+    jobs.push(withAtsIdentity({
       source: 'hn_whoishiring',
       externalId: String(c.id),
       company: header.company,
@@ -93,7 +94,7 @@ export function parseHnThread(thread: HnThread, query?: string): RawJob[] {
       atsToken: null,
       description,
       postedAt: toIsoDate(c.created_at)
-    })
+    }))
   }
   return jobs
 }

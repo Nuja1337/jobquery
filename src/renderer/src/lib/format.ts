@@ -112,6 +112,13 @@ export const SOURCE_LABELS: Record<SourceKind, string> = {
   arbeitnow: 'Arbeitnow',
   hn_whoishiring: 'HN Who is Hiring',
   adzuna: 'Adzuna',
+  himalayas: 'Himalayas',
+  jobicy: 'Jobicy',
+  themuse: 'The Muse',
+  weworkremotely: 'We Work Remotely',
+  rippling: 'Rippling',
+  breezy: 'Breezy',
+  personio: 'Personio',
   manual: 'Added by URL'
 }
 

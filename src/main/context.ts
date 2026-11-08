@@ -1,6 +1,7 @@
 import { Db } from './db/database'
 import { AnswerBankRepo } from './db/repos/answers'
 import { ApplicationsRepo } from './db/repos/applications'
+import { BoardsRepo } from './db/repos/boards'
 import { CompaniesRepo } from './db/repos/companies'
 import { DocumentsRepo } from './db/repos/documents'
 import { type Emit, EventsRepo } from './db/repos/events'
@@ -29,6 +30,7 @@ export interface AppContext {
   documents: DocumentsRepo
   answers: AnswerBankRepo
   companies: CompaniesRepo
+  boards: BoardsRepo
   searches: SearchesRepo
   jobs: JobsRepo
   applications: ApplicationsRepo
@@ -65,6 +67,7 @@ export async function createContext(options: CreateContextOptions): Promise<AppC
     documents: new DocumentsRepo(db),
     answers: new AnswerBankRepo(db),
     companies: new CompaniesRepo(db),
+    boards: new BoardsRepo(db),
     searches: new SearchesRepo(db),
     jobs: new JobsRepo(db),
     applications: new ApplicationsRepo(db),

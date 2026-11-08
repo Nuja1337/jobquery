@@ -1,0 +1,58 @@
+{
+ "jobs": [
+  {
+   "absolute_url": "https://stripe.com/jobs/search?gh_jid=8172510",
+   "id": 8172510,
+   "updated_at": "2026-10-29T10:42:09-04:00",
+   "first_published": "2026-09-09T10:50:29-04:00",
+   "title": "Abuse Investigator",
+   "company_name": "Stripe",
+   "location": {
+    "name": "Seattle, San Francisco, New York City"
+   },
+   "departments": [
+    {
+     "id": 81946,
+     "name": "8611 Security Analytics"
+    }
+   ]
+  },
+  {
+   "absolute_url": "https://stripe.com/jobs/search?gh_jid=8172508",
+   "id": 8172508,
+   "updated_at": "2026-10-29T10:42:09-04:00",
+   "first_published": "2026-09-03T13:32:53-04:00",
+   "title": "Abuse Investigator",
+   "company_name": "Stripe",
+   "location": {
+    "name": "Dublin"
+   },
+   "departments": [
+    {
+     "id": 81946,
+     "name": "8611 Security Analytics"
+    }
+   ]
+  },
+  {
+   "absolute_url": "https://stripe.com/jobs/search?gh_jid=8172487",
+   "id": 8172487,
+   "updated_at": "2026-10-29T10:42:09-04:00",
+   "first_published": "2026-09-03T13:30:34-04:00",
+   "title": "Abuse Investigator",
+   "company_name": "Stripe",
+   "location": {
+    "name": "Dublin"
+   },
+   "departments": [
+    {
+     "id": 81946,
+     "name": "8611 Security Analytics"
+    }
+   ]
+  }
+ ],
+ "meta": {
+  "total": 746
+ }
+}

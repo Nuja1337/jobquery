@@ -1,12 +1,16 @@
-import { useState } from 'react'
-import { Ban, Building2, ExternalLink, Pencil, Plus, Search, Trash2 } from 'lucide-react'
-import type { AtsDetection, Company, SavedSearch } from '@shared/types'
+import { useEffect, useState } from 'react'
+import { Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import type { CompanyCounts } from '@shared/api'
+import type { SavedSearch } from '@shared/types'
 import { api } from '@renderer/lib/api'
 import { useAsync } from '@renderer/lib/hooks'
 import { useToast } from '@renderer/lib/toast'
 import { SOURCE_LABELS, relativeTime } from '@renderer/lib/format'
+import { AddBoards } from '@renderer/components/AddBoards'
+import { CompanyTable, NO_FILTERS, PAGE_SIZE, type CompanyFilters } from '@renderer/components/CompanyTable'
 import { ConfirmDialog } from '@renderer/components/ConfirmDialog'
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Field, IconButton, Input, Loading, Modal, Page, PageHeader, Select, TD, TH, Toggle } from '@renderer/components/ui'
+import { StartFast } from '@renderer/components/StartFast'
+import { Button, Card, CardHeader, EmptyState, ErrorBlock, Field, IconButton, Input, Loading, Modal, Page, PageHeader, Select, Stat, TD, TH, Toggle } from '@renderer/components/ui'
 
 type SearchSource = SavedSearch['source']
 
@@ -22,6 +26,10 @@ const SEARCH_SOURCES: Record<SearchSource, { hint: string; params: ParamSpec[] }
   remoteok: { hint: 'Remote jobs from RemoteOK.', params: [{ key: 'tag', label: 'Tag', placeholder: 'react' }] },
   arbeitnow: { hint: 'Jobs in Europe from Arbeitnow.', params: [{ key: 'search', label: 'Search text', placeholder: 'typescript' }, { key: 'location', label: 'Location', placeholder: 'Berlin' }] },
   hn_whoishiring: { hint: 'The monthly Who is Hiring thread on Hacker News.', params: [{ key: 'query', label: 'Words to look for', placeholder: 'typescript' }] },
+  himalayas: { hint: 'Remote jobs from Himalayas, refreshed daily.', params: [{ key: 'query', label: 'Words to look for', placeholder: 'game engineer' }] },
+  jobicy: { hint: 'Remote jobs from Jobicy, the last seven days.', params: [{ key: 'tag', label: 'Search text', placeholder: 'unity' }, { key: 'geo', label: 'Region', placeholder: 'usa' }] },
+  themuse: { hint: 'Jobs from The Muse. Each one links to the application on the company site.', params: [{ key: 'category', label: 'Category', placeholder: 'Software Engineering' }, { key: 'level', label: 'Level', placeholder: 'Mid Level' }, { key: 'location', label: 'Location', placeholder: 'Flexible / Remote' }] },
+  weworkremotely: { hint: 'Remote jobs from We Work Remotely.', params: [{ key: 'category', label: 'Category', placeholder: 'remote-programming-jobs' }] },
   adzuna: {
     hint: 'Needs a free Adzuna developer account for the app id and key.',
     params: [
@@ -36,7 +44,7 @@ const SEARCH_SOURCES: Record<SearchSource, { hint: string; params: ParamSpec[] }
 
 export function Sources(): React.JSX.Element {
   return (
-    <Page>
+    <Page wide>
       <PageHeader title="Sources" intro="Where JobPilot looks for jobs." />
       <Companies />
       <Searches />
@@ -44,189 +52,64 @@ export function Sources(): React.JSX.Element {
   )
 }
 
+const n = (v: number): string => v.toLocaleString('en-US')
+
 export function Companies(): React.JSX.Element {
-  const toast = useToast()
-  const list = useAsync(() => api.listCompanies(), [])
-  const [url, setUrl] = useState('')
-  const [checking, setChecking] = useState(false)
-  const [detected, setDetected] = useState<(AtsDetection & { url: string; name: string }) | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [blockName, setBlockName] = useState('')
-  const [deleting, setDeleting] = useState<Company | null>(null)
+  const [filters, setFilters] = useState<CompanyFilters>(NO_FILTERS)
+  const [pageNumber, setPageNumber] = useState(1)
+  const list = useAsync(
+    () => api.listCompanies({ page: pageNumber, pageSize: PAGE_SIZE, search: filters.search || undefined, ats: filters.ats, origin: filters.origin, state: filters.state }),
+    [pageNumber, filters.search, filters.ats, filters.origin, filters.state],
+    ['pipeline:progress']
+  )
+  const counts = list.data?.counts
 
-  async function check(): Promise<void> {
-    setChecking(true)
-    setDetected(null)
-    try {
-      const d = await api.detectAts(url.trim())
-      if (!d) toast.error(new Error('That does not look like a web address.'))
-      else setDetected({ ...d, url: url.trim(), name: d.companyName ?? '' })
-    } catch (e) {
-      toast.error(e)
-    } finally {
-      setChecking(false)
-    }
-  }
-
-  async function saveDetected(): Promise<void> {
-    if (!detected) return
-    setSaving(true)
-    try {
-      await api.saveCompany({ name: detected.name.trim() || undefined, careersUrl: detected.url, ats: detected.ats, atsToken: detected.token ?? undefined, watch: true })
-      toast.success(`Watching ${detected.name || 'the company'}.`)
-      setDetected(null)
-      setUrl('')
-      list.reload()
-    } catch (e) {
-      toast.error(e)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function patch(c: Company, change: { watch?: boolean; blocked?: boolean }): Promise<void> {
-    try {
-      // A blocked company is never watched.
-      await api.saveCompany({ id: c.id, ...change, ...(change.blocked ? { watch: false } : {}) })
-      list.reload()
-    } catch (e) {
-      toast.error(e)
-    }
-  }
-
-  async function block(): Promise<void> {
-    try {
-      await api.saveCompany({ name: blockName.trim(), blocked: true, watch: false })
-      toast.success(`Blocked ${blockName.trim()}.`)
-      setBlockName('')
-      list.reload()
-    } catch (e) {
-      toast.error(e)
-    }
-  }
+  // The last page can disappear when companies are removed. Go back to the one before it.
+  const total = list.data?.total
+  useEffect(() => {
+    if (total !== undefined && pageNumber > 1 && (pageNumber - 1) * PAGE_SIZE >= total) setPageNumber(Math.max(1, Math.ceil(total / PAGE_SIZE)))
+  }, [total, pageNumber])
 
   return (
-    <Card className="mb-6">
-      <CardHeader title="Companies" hint="Watched companies have their job boards checked on every run. Blocked ones are never shown." />
-      <div className="space-y-3 border-b border-line p-4">
-        <form
-          className="flex items-end gap-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (url.trim()) void check()
+    <div className="mb-6">
+      {counts && <Summary counts={counts} />}
+      <StartFast compact={(counts?.total ?? 0) > 0} onAdded={list.reload} />
+      <AddBoards onAdded={list.reload} />
+      <Card>
+        <CardHeader title="Companies" hint="Every board JobPilot knows about. Turn Watch on to check a board on each run." />
+        <CompanyTable
+          page={list.data}
+          error={list.error}
+          pageNumber={pageNumber}
+          filters={filters}
+          onFilters={(next) => {
+            setFilters(next)
+            setPageNumber(1)
           }}
-        >
-          <Field label="Careers page address" className="flex-1" hint="Paste a link to a company job board. Greenhouse, Lever, Ashby and others are recognized.">
-            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://boards.greenhouse.io/company" />
-          </Field>
-          <Button type="submit" loading={checking} disabled={!url.trim()} icon={<Search size={14} />} className="mb-[1.35rem]">
-            Check
-          </Button>
-        </form>
-        {detected && (
-          <div className="rounded-lg border border-line bg-bg p-3">
-            {detected.ats === 'unknown' ? (
-              <p className="mb-3 text-sm text-warn">JobPilot could not recognize this job board. You can still save it, but it will not be checked automatically.</p>
-            ) : (
-              <p className="mb-3 text-sm text-good">
-                Recognized a {SOURCE_LABELS[detected.ats as keyof typeof SOURCE_LABELS] ?? detected.ats} job board{detected.token ? ` (${detected.token})` : ''}.
-              </p>
-            )}
-            <div className="flex items-end gap-2">
-              <Field label="Company name" className="flex-1">
-                <Input value={detected.name} onChange={(e) => setDetected({ ...detected, name: e.target.value })} />
-              </Field>
-              <Button variant="primary" loading={saving} disabled={!detected.name.trim()} onClick={() => void saveDetected()} icon={<Plus size={14} />}>
-                Watch this company
-              </Button>
-              <Button variant="ghost" onClick={() => setDetected(null)}>
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (blockName.trim()) void block()
-          }}
-        >
-          <Input value={blockName} onChange={(e) => setBlockName(e.target.value)} placeholder="Block a company by name" aria-label="Company to block" className="max-w-xs" />
-          <Button type="submit" icon={<Ban size={14} />} disabled={!blockName.trim()}>
-            Block
-          </Button>
-        </form>
-      </div>
-
-      {list.error ? (
-        <div className="p-4">
-          <ErrorBlock message={list.error} onRetry={list.reload} />
-        </div>
-      ) : !list.data ? (
-        <Loading />
-      ) : list.data.length === 0 ? (
-        <div className="p-4">
-          <EmptyState icon={<Building2 size={22} />} title="No companies yet" text="Paste the careers page of a company you would like to work for. JobPilot checks it on every run." />
-        </div>
-      ) : (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr>
-              <th className={TH}>Company</th>
-              <th className={TH}>Job board</th>
-              <th className={TH}>Watch</th>
-              <th className={TH}>Blocked</th>
-              <th className={TH} />
-            </tr>
-          </thead>
-          <tbody>
-            {list.data.map((c) => (
-              <tr key={c.id}>
-                <td className={TD}>
-                  <p className="font-medium text-fg">{c.name}</p>
-                  {c.careersUrl && (
-                    <button onClick={() => void api.openExternal(c.careersUrl as string).catch(toast.error)} className="flex items-center gap-1 text-xs text-faint hover:text-accent-strong">
-                      <span className="max-w-72 truncate">{c.careersUrl}</span> <ExternalLink size={11} />
-                    </button>
-                  )}
-                </td>
-                <td className={TD}>{c.ats === 'unknown' ? <Badge>Not recognized</Badge> : <Badge tone="info">{SOURCE_LABELS[c.ats as keyof typeof SOURCE_LABELS] ?? c.ats}</Badge>}</td>
-                <td className={TD}>
-                  <Toggle ariaLabel={`Watch ${c.name}`} checked={c.watch} disabled={c.blocked} onChange={(v) => void patch(c, { watch: v })} />
-                </td>
-                <td className={TD}>
-                  <Toggle ariaLabel={`Block ${c.name}`} checked={c.blocked} onChange={(v) => void patch(c, { blocked: v })} />
-                </td>
-                <td className={`${TD} text-right`}>
-                  <IconButton label={`Remove ${c.name}`} onClick={() => setDeleting(c)}>
-                    <Trash2 size={15} />
-                  </IconButton>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {deleting && (
-        <ConfirmDialog
-          title="Remove company"
-          message={`Remove ${deleting.name} from your list? Jobs already found stay where they are.`}
-          confirmLabel="Remove"
-          danger
-          onClose={() => setDeleting(null)}
-          onConfirm={async () => {
-            try {
-              await api.deleteCompany(deleting.id)
-              list.reload()
-            } catch (e) {
-              toast.error(e)
-              throw e
-            }
-          }}
+          onPage={setPageNumber}
+          onChanged={list.reload}
         />
-      )}
-    </Card>
+      </Card>
+    </div>
+  )
+}
+
+/** When the soonest board is checked, as a short phrase. */
+function soonest(iso: string | null): string {
+  if (!iso) return 'None'
+  return Date.parse(iso) <= Date.now() ? 'Due now' : relativeTime(iso)
+}
+
+function Summary({ counts }: { counts: CompanyCounts }): React.JSX.Element {
+  return (
+    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <Stat label="Watched boards" value={n(counts.watched)} hint={counts.failing > 0 ? `${n(counts.failing)} failing` : undefined} />
+      <Stat label="Found from postings" value={n(counts.fromPostings)} />
+      <Stat label="Stopped after failures" value={n(counts.stopped)} tone={counts.stopped > 0 ? 'bad' : undefined} />
+      <Stat label="Live postings" value={n(counts.liveJobs)} />
+      <Stat label="Postings that fit" value={n(counts.relevantJobs)} tone={counts.relevantJobs > 0 ? 'good' : undefined} />
+      <Stat label="Next check" value={soonest(counts.nextCheckAt)} />
+    </div>
   )
 }
 

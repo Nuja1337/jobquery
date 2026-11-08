@@ -1,32 +1,72 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { BrowserWindow, dialog, shell, type IpcMain, type IpcMainInvokeEvent } from 'electron'
-import type { Api, PushChannel, PushEvents } from '@shared/api'
-import type { Application, ApplicationOutcome, DocumentKind, Job, SubmitResult, UpdateStatus } from '@shared/types'
+import type { Api, BoardAddCounts, BoardProbe, DeepPartial, PushChannel, PushEvents } from '@shared/api'
+import { answerNeedsUser } from '@shared/answers'
+import { COMPANY_SPECIFIC_TOPICS } from '@shared/questionTopics'
+import type { Application, ApplicationOutcome, AtsKind, CompanyOrigin, DocumentKind, Job, LoopStatus, PipelineProgress, Settings, SubmitResult, UpdateStatus, WorkerName } from '@shared/types'
 import { answerFields, type AnswerDeps } from './apply/answers'
 import { BrowserManager } from './apply/browser'
 import { renderCoverLetterPdf } from './apply/coverLetterPdf'
 import { isCoverLetterField } from './apply/fieldMap'
-import { draftApplication } from './apply/prepare'
+import { isJobBoardUrl } from './apply/jobBoards'
+import { applyUrlFor, draftApplication, readFormForJob, type FormRead, type ResolvedApply } from './apply/prepare'
+import { statusAfterEdit } from './apply/readiness'
 import { runSubmission } from './apply/submitRun'
 import { getAnalytics } from './analytics'
 import { type AppContext, createContext } from './context'
 import { newId } from './db/database'
-import { BudgetExceededError, RateLimitedError } from './llm/errors'
+import { BudgetExceededError, RateLimitedError, isJobFault } from './llm/errors'
 import type { AppPaths } from './paths'
 import { dismissJob, restoreJob, scoreJobNow } from './pipeline/actions'
+import { autoWatchBoard, noteStartedWatching } from './pipeline/ingest'
+import { normalizeCompany } from './pipeline/dedupe'
 import { dismissSuggestion, suggestPreferences } from './pipeline/learn'
+import { WORKERS, WorkLoop } from './pipeline/loop'
 import { ingestJob, Pipeline, restageForShortlist } from './pipeline/orchestrator'
+import { acceptsValue, buildExceptions, canRetryLater, groupKeyFor, groupNeedsYou, wordingKey } from './review/exceptions'
+import { normalizeQuestion } from './util/text'
+import { emptyStats } from './db/repos/runs'
 import { buildVoice, extractProfileFromText } from './profile/extract'
 import { copyIntoAppData, extractTextFromFile, fetchUrlText } from './profile/ingest'
 import { Scheduler } from './scheduler'
 import type { KeyVault } from './secrets'
-import { detectAts, fetchJobByUrl } from './sources'
+import { boardUrl } from '@shared/sources'
+import { canReadBoard, detectAts, fetchJobByUrl } from './sources'
+import { parseBoardList, probeBoard } from './sources/importBoards'
+import { prettifyToken } from './sources/detect'
+import { starterPack } from './sources/starterPack'
 import { Updater, type UpdaterOptions } from './updater'
+import { pruneOldFiles } from './util/prune'
+import { runRetention } from './db/retention'
 import { lintText } from './writing/lint'
 import { writeCoverLetter } from './writing/generate'
 
 export type Shutdown = () => Promise<void>
+
+/** Failed automatic attempts, with no Submit click, before autopilot leaves an application for the user. */
+export const MAX_SUBMIT_FAILURES = 3
+/** Boards checked in one probeBoards call. */
+export const MAX_PROBE_ENTRIES = 500
+const SCREENSHOT_KEEP_DAYS = 60
+
+/** The services of the app that is running, so a crash handler outside this file can write to the activity log. */
+let active: AppContext | null = null
+
+/**
+ * Writes an error nobody caught to the activity log, when the app is up. The caller decides what
+ * else to do with it. Never throws, since it runs inside a crash handler.
+ */
+export function recordProcessError(what: string, err: unknown): void {
+  const detail = err instanceof Error ? err.message : String(err)
+  console.error(what, err)
+  try {
+    // The mark lets the notifier tell a crash from an ordinary error.
+    active?.events.add('error', `${what} ${detail}`.slice(0, 500), null, { process: true })
+  } catch {
+    // The database may already be closed.
+  }
+}
 
 export interface IpcDeps {
   ipcMain: IpcMain
@@ -38,6 +78,27 @@ export interface IpcDeps {
   isTrustedSender: (event: IpcMainInvokeEvent) => boolean
   /** Left out in tests and anywhere the app can't update itself. */
   updates?: Pick<UpdaterOptions, 'backend' | 'isPackaged' | 'platform' | 'quit'>
+  /** Whether the operating system starts the app at sign-in, or null when it can't. Shown in Settings. */
+  openAtLogin?: () => boolean | null
+}
+
+/** What the tray, the sleep blocker and the notifications need from the services. */
+export interface BackgroundControls {
+  settings(): Settings
+  updateSettings(patch: DeepPartial<Settings>): Promise<Settings>
+  isRunning(): boolean
+  progress(): PipelineProgress
+  nextRunAt(): string | null
+  /** The work loop's workers and today's counts, or null when continuous mode is off. */
+  loopStatus(): LoopStatus | null
+  /** Starts a run with the autopilot options, unless one is going. */
+  runNow(): Promise<void>
+  /** Call when the computer wakes from sleep. */
+  resume(): void
+  /** The employer of a job, for notifications. */
+  companyFor(jobId: string): string | null
+  /** Runs after settings change or the schedule moves. */
+  onChange(listener: () => void): void
 }
 
 const SAMPLE_KINDS: DocumentKind[] = ['cover_letter_sample', 'writing_sample']
@@ -53,13 +114,34 @@ const OUTCOME_LABEL: Record<ApplicationOutcome, string> = {
   declined: 'Declined'
 }
 
+function workerName(value: unknown): WorkerName {
+  if (typeof value === 'string' && (WORKERS as string[]).includes(value)) return value as WorkerName
+  throw new Error('That is not one of the workers.')
+}
+
 /** Builds every service and returns the Api implementation. Separate from Electron so it can be tested. */
-export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedSender'>): Promise<{ api: Api; ctx: AppContext; shutdown: Shutdown }> {
+export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedSender'>): Promise<{ api: Api; ctx: AppContext; shutdown: Shutdown; controls: BackgroundControls }> {
   const ctx = await createContext({ dbFile: deps.paths.dbFile, paths: deps.paths, vault: deps.vault, emit: deps.emit })
   const browser = new BrowserManager(deps.paths.browserProfileDir)
   const pipeline = new Pipeline(ctx)
-  const scheduler = new Scheduler(ctx, pipeline)
+  const loop = new WorkLoop(ctx, pipeline)
+  const scheduler = new Scheduler(ctx, pipeline, loop)
+  active = ctx
   ctx.llm.pruneCache()
+  pruneOldFiles(deps.paths.screenshotsDir, SCREENSHOT_KEEP_DAYS)
+  // Old dropped jobs, events and cache entries are cleared at startup and once a day, never during a run.
+  const retain = (): void => {
+    // The loop is always on in continuous mode. Cleanup is one short step between its own, so it goes ahead.
+    if (pipeline.isRunning() && !loop.isRunning()) return
+    try {
+      runRetention(ctx.db)
+    } catch (err) {
+      ctx.events.add('error', `Could not clean up old data. ${(err as Error).message}`)
+    }
+  }
+  retain()
+  const retentionTimer = setInterval(retain, 24 * 3_600_000)
+  retentionTimer.unref?.()
 
   // Applications caught mid-step when the app last closed. A browser session doesn't survive a restart.
   for (const stale of ctx.applications.list({ statuses: ['submitting', 'draft'], limit: 1000 }).items) {
@@ -68,6 +150,9 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     if (full.status === 'draft' && full.answers.length === 0 && !full.coverLetter) {
       ctx.applications.delete(full.id)
       ctx.jobs.moveStage(full.jobId, 'shortlisted', ['preparing'])
+    } else if (full.status === 'submitting' && full.submitClickedAt === null && full.submitMode === 'auto' && ctx.applications.lastAttemptBy(full.id) === 'autopilot') {
+      // Autopilot was filling it and had not clicked Submit, so nothing was sent and no person had the tab. It goes back in the queue.
+      ctx.applications.update(full.id, { status: 'ready', submitMode: null, error: null })
     } else {
       ctx.applications.update(full.id, {
         status: 'needs_attention',
@@ -103,17 +188,19 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     settings: ctx.settings.get(),
     profile: ctx.profile.get().profile,
     samples: samples(),
-    findSavedAnswer: (q) => {
-      const hit = ctx.answers.findBest(q)
-      return hit ? { id: hit.id, answer: hit.answer, kind: hit.kind } : null
+    findSavedAnswer: (q, options) => {
+      const hit = ctx.answers.findBest(q, options)
+      return hit ? { id: hit.id, answer: hit.answer, kind: hit.kind, topic: hit.topic ?? null } : null
     },
     markAnswerUsed: (id) => ctx.answers.markUsed(id),
+    // An application sent or clicked to this company before. The one being prepared was never sent, so it does not count.
+    previouslyApplied: (company) => ctx.applications.lastSentAt(normalizeCompany(company)) !== null,
     resumePath: ctx.documents.primaryResume()?.filePath ?? null
   })
 
   const coverLetterDir = path.join(deps.paths.exportsDir, 'cover-letters')
-  const renderLetter = (text: string, company: string) =>
-    renderCoverLetterPdf(browser, ctx.settings.get().browser, { text, profile: ctx.profile.get().profile, company, outDir: coverLetterDir })
+  const renderLetter = (text: string, company: string, applicationId: string) =>
+    renderCoverLetterPdf(browser, ctx.settings.get().browser, { text, profile: ctx.profile.get().profile, company, outDir: coverLetterDir, applicationId })
 
   const changed = (app: Application) => {
     deps.emit('applications:changed', { applicationIds: [app.id] })
@@ -156,6 +243,16 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     }
   }
 
+  /**
+   * Another live job for the same posting on the application system that already has an application or is
+   * ready or applied. Preparing this one too would write the same answers twice and risk a second submission.
+   */
+  function handledTwin(jobId: string, resolved: ResolvedApply): Job | null {
+    if (!resolved.atsToken || !resolved.atsJobId) return null
+    const done = (other: Job): boolean => other.stage === 'ready' || other.stage === 'applied' || ctx.applications.getByJob(other.id) !== null
+    return ctx.jobs.findByAtsJob(resolved.ats, resolved.atsToken, resolved.atsJobId, jobId).find((other) => !other.dupOf && !['closed', 'duplicate', 'dismissed'].includes(other.stage) && done(other)) ?? null
+  }
+
   /** Drafts the application for a job: form, answers and cover letter. */
   async function prepare(jobId: string): Promise<Application> {
     const j = job(jobId)
@@ -166,17 +263,54 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     const app = existing ?? ctx.applications.create(jobId)
     const previousStage = j.stage
     ctx.applications.update(app.id, { status: 'draft', error: null })
+    /** A posting found on a job board now points at the employer's own application. */
+    const adoptResolved = (resolved: ResolvedApply): void => {
+      ctx.jobs.setApplyTarget(jobId, resolved)
+      // The employer's own board is worth watching when the user hasn't decided about it.
+      if (resolved.atsToken && autoWatchBoard(ctx, { ats: resolved.ats, token: resolved.atsToken, company: j.company })) {
+        noteStartedWatching(ctx, 1)
+      }
+    }
     try {
-      const draft = await draftApplication({ ...answerDeps(), browser }, j)
-      const flagged = draft.answers.filter((a) => a.needsUser && a.required).length + (draft.coverLetterNeedsInput ? 1 : 0)
+      let target = j
+      /** The form read that resolved the posting, reused for the draft so the page is opened once. */
+      let preRead: FormRead | null = null
+      if (isJobBoardUrl(applyUrlFor(j))) {
+        // Follow the posting to the employer's form before anything is written. The same posting may already be handled
+        // under another job, and the answers cost money to write twice.
+        const read = await readFormForJob(browser, ctx.settings.get(), j)
+        if (read.resolved) {
+          const twin = existing ? null : handledTwin(jobId, read.resolved)
+          if (twin) {
+            ctx.applications.delete(app.id)
+            ctx.jobs.markDuplicate(jobId, twin.id)
+            ctx.events.add('filtered', `${j.title} at ${j.company} is the same posting as one already handled, so it was not prepared again.`, jobId)
+            deps.emit('jobs:changed', { jobIds: [jobId, twin.id] })
+            const theirs = ctx.applications.getByJob(twin.id)
+            if (theirs) return theirs
+            throw new Error('This posting is a copy of one that is already handled, so it was not prepared again.')
+          }
+          adoptResolved(read.resolved)
+          target = job(jobId)
+          preRead = read
+        }
+      }
+      const draft = await draftApplication({ ...answerDeps(), browser }, target, preRead ? { formRead: preRead } : {})
+      if (draft.resolved) adoptResolved(draft.resolved)
+      // Counted the way the application list counts, so the status and the flagged count agree.
+      const flagged = draft.answers.filter(answerNeedsUser).length + (draft.coverLetterNeedsInput ? 1 : 0)
       const notes: string[] = []
       if (draft.formSource === 'none') notes.push("The form couldn't be read ahead of time. It will be read and filled when you open it.")
       if (draft.coverLetterNeedsInput) notes.push(`Cover letter needs your input: ${draft.coverLetterNeedsInput}`)
+      // An application opened in the browser may have been sent by hand, so it never goes back to ready.
+      const wasOpened = Boolean(existing?.submitMode)
+      if (wasOpened) notes.push('This application was opened in the browser before. Check that it was not already sent.')
       // The user may have dismissed the job or marked it submitted while the draft was written.
       // Keep the draft, but only mark it ready if nothing else changed its status meanwhile.
       const stillDrafting = ctx.applications.get(app.id)?.status === 'draft'
       const updated = ctx.applications.update(app.id, {
-        status: stillDrafting ? (flagged ? 'needs_attention' : 'ready') : undefined,
+        // A form that couldn't be read ahead of time has no reviewed answers, so autopilot must not open it.
+        status: stillDrafting ? (flagged || wasOpened || draft.formSource === 'none' ? 'needs_attention' : 'ready') : undefined,
         coverLetter: draft.coverLetter ?? undefined,
         coverLetterLint: draft.coverLetterLint,
         answers: draft.answers,
@@ -189,6 +323,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         jobId,
         { costUsd: draft.costUsd, formSource: draft.formSource }
       )
+      ctx.jobs.resetPrepareFailures(jobId)
       changed(updated)
       return updated
     } catch (err) {
@@ -200,10 +335,22 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       } else if (existing && status === 'draft') {
         ctx.applications.update(app.id, { status: existing.status === 'draft' ? 'needs_attention' : existing.status, error: (err as Error).message })
       }
-      if (!(err instanceof BudgetExceededError) && !(err instanceof RateLimitedError)) ctx.events.add('error', `Couldn't prepare ${j.title} at ${j.company}. ${(err as Error).message}`, jobId)
+      // Only a model that refused or answered unreadably counts against the job. A limit, a missing AI setup
+      // and a provider that is down or unreachable are not its fault, so a later run tries it again.
+      if (isJobFault(err)) {
+        // Runs stop retrying a job after two of these. The Prepare button still works.
+        ctx.jobs.recordPrepareFailure(jobId)
+        ctx.events.add('error', `Couldn't prepare ${j.title} at ${j.company}. ${(err as Error).message}`, jobId)
+      }
       deps.emit('jobs:changed', { jobIds: [jobId] })
       throw err
     }
+  }
+
+  /** Saves an edit and moves the status between ready and needs_attention when the edit settled or reopened a flag. */
+  function saveEdit(app: Application, patch: Parameters<typeof ctx.applications.update>[1]): Application {
+    const next = patch.status === undefined ? statusAfterEdit(app, patch.answers ?? app.answers, patch.coverLetter ?? app.coverLetter) : null
+    return ctx.applications.update(app.id, next ? { ...patch, status: next, ...(next === 'ready' ? { error: null } : {}) } : patch)
   }
 
   /** Fills (and in auto mode submits) an application in the visible browser. */
@@ -236,7 +383,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
   async function submitNow(app: Application, mode: 'assist' | 'auto', by: 'user' | 'autopilot'): Promise<SubmitResult> {
     const j = job(app.jobId)
     const settings = ctx.settings.get()
-    ctx.applications.update(app.id, { status: 'submitting', submitMode: mode, error: null })
+    ctx.applications.update(app.id, { status: 'submitting', submitMode: mode, lastAttemptBy: by, error: null })
     changed(app)
 
     let result
@@ -246,15 +393,22 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
           browser,
           settings,
           answerDeps: answerDeps(),
-          renderCoverLetter: (text) => renderLetter(text, j.company),
+          renderCoverLetter: (text) => renderLetter(text, j.company, app.id),
           screenshotsDir: deps.paths.screenshotsDir,
+          // A letter written during the live fill is kept with the application, so Review and the PDF show the same text.
+          saveCoverLetter: (text) => ctx.applications.update(app.id, { coverLetter: text }),
           recordSubmitClick: (at) => {
             if (at === null) {
               ctx.applications.update(app.id, { submitClickedAt: null })
               return true
             }
             // Last check before the click. The fill can take a minute, and the user may have
-            // dismissed the job or edited the application meanwhile.
+            // dismissed the job, edited the application or paused autopilot meanwhile. The settings are read again here
+            // because the run holds a copy from when it started.
+            if (by === 'autopilot') {
+              const { autopilot } = ctx.settings.get()
+              if (!autopilot.enabled || !autopilot.autoSubmit || autopilot.dryRun) return false
+            }
             const now = ctx.applications.get(app.id)
             const stage = now ? ctx.jobs.get(now.jobId)?.stage : null
             if (!now || now.status !== 'submitting' || stage === 'dismissed' || stage === 'closed') return false
@@ -271,6 +425,29 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       )
     } catch (err) {
       const message = `Couldn't open or fill the form. ${(err as Error).message.split('\n')[0]}`
+      const latest = ctx.applications.get(app.id)
+      if (by === 'autopilot' && latest && !latest.submitClickedAt) {
+        // No click happened, so nothing was sent. One failure here, such as a browser that would not start or
+        // a site that would not load, must not take the application out of the queue for good.
+        inFlight.delete(app.id)
+        if (err instanceof BudgetExceededError || err instanceof RateLimitedError) {
+          const note = err instanceof BudgetExceededError ? 'Paused because the AI budget is used up.' : "Paused because the AI provider's limit was reached."
+          changed(ctx.applications.update(app.id, { status: 'ready', submitMode: null, error: `${note} It is tried again on a later run.` }))
+          throw err
+        }
+        const failures = latest.submitFailures + 1
+        const gaveUp = failures >= MAX_SUBMIT_FAILURES
+        const failed = ctx.applications.update(app.id, {
+          status: gaveUp ? 'needs_attention' : 'ready',
+          // Nobody had the tab, so the application can go back to ready once whatever stopped it is fixed.
+          submitMode: null,
+          submitFailures: failures,
+          error: gaveUp ? `${message} It failed ${failures} times, so autopilot left it for you.` : message
+        })
+        changed(failed)
+        // The run logs the failure and counts failures in a row.
+        throw err
+      }
       const updated = ctx.applications.update(app.id, { status: 'needs_attention', error: message })
       ctx.events.add('submit_failed', `${j.title} at ${j.company}: ${message}`, j.id)
       changed(updated)
@@ -281,13 +458,19 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     // Answers edited in Review while the browser was open stay. Only answers for fields first seen
     // on the live form are added.
     const stored = ctx.applications.get(app.id) ?? app
+    // An unattended attempt that clicked nothing and closed its tab leaves nothing open, so a later edit may make it ready again.
+    const closedUnclicked = by === 'autopilot' && !result.completion && result.status !== 'submitted' && !stored.submitClickedAt
     const updated = ctx.applications.update(app.id, {
       status: result.status,
       answers: addNew(stored.answers, result.answers, (a) => a.fieldKey),
       formFields: addNew(stored.formFields, result.formFields, (f) => f.key),
       screenshotPath: result.screenshotPath ?? undefined,
       confirmation: result.confirmation ?? undefined,
-      error: result.ok ? null : result.message
+      // Autopilot's dry run leaves the application in the queue, marked so the same form isn't filled again.
+      ...(result.dryRun ? { submitMode: null, dryRunAt: new Date().toISOString() } : {}),
+      ...(closedUnclicked ? { submitMode: null } : {}),
+      ...(result.status === 'submitted' ? { submitFailures: 0 } : {}),
+      error: result.ok && !result.dryRun ? null : result.message
     })
     // The watcher keeps adding to the same list as later pages appear.
     const savedAnswerCount = result.answers.length
@@ -309,16 +492,28 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         ctx.applications.update(app.id, { answers: addNew(current.answers, answers, (a) => a.fieldKey), formFields: addNew(current.formFields, formFields, (f) => f.key) })
       }
       if (confirmed) {
-        const done = ctx.applications.update(app.id, { status: 'submitted', screenshotPath: screenshotPath ?? undefined, confirmation: 'Confirmation page seen', error: null })
+        const done = ctx.applications.update(app.id, { status: 'submitted', screenshotPath: screenshotPath ?? undefined, confirmation: 'Confirmation page seen', submitFailures: 0, error: null })
         ctx.events.add('submitted', `Submitted the application to ${j.company} for ${j.title}.`, j.id)
         changed(done)
-      } else if (current.status === 'submitting' || current.status === 'needs_attention') {
+      } else if (current.submitClickedAt && (current.status === 'submitting' || current.status === 'needs_attention')) {
+        // The app clicked Submit and never saw a confirmation, so the person has to check.
         const back = ctx.applications.update(app.id, {
           status: 'needs_attention',
           error: "No confirmation page was seen. If you submitted it, click \"I submitted it myself\". Otherwise open it again."
         })
         changed(back)
+      } else if (current.status === 'submitting') {
+        // The person was filling it in themselves and the watcher ended without a confirmation. The app
+        // recorded no click, so it does not say it clicked. The status still moves on, so the application
+        // is not stuck as open in the browser.
+        changed(
+          ctx.applications.update(app.id, {
+            status: 'needs_attention',
+            error: 'The browser window closed before a confirmation page appeared. If you submitted it, click "I submitted it myself". Otherwise open it again.'
+          })
+        )
       }
+      // A needs_attention application without a click keeps the reason it already has.
     }, () => {})
 
     return { ok: result.ok, status: result.status, message: result.message, screenshotPath: result.screenshotPath }
@@ -330,6 +525,11 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     submit: (applicationId) => submit(applicationId, 'auto', 'autopilot')
   })
+  const changeListeners = new Set<() => void>()
+  const notifyChange = (): void => {
+    for (const listener of changeListeners) listener()
+  }
+  scheduler.onChange(notifyChange)
   scheduler.start()
 
   const updater = deps.updates
@@ -357,10 +557,35 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     return !rel.startsWith('..') && !path.isAbsolute(rel)
   }
 
+  /** Adds boards as watched companies. A board that is already known keeps its settings. */
+  const addBoards = (boards: Array<{ ats: AtsKind; token: string; name: string | null }>, origin: CompanyOrigin): BoardAddCounts => {
+    return ctx.db.transaction(() => {
+      let added = 0
+      let skipped = 0
+      for (const b of boards) {
+        if (!b.token || !canReadBoard(b.ats) || ctx.companies.findByAts(b.ats, b.token)) {
+          skipped += 1
+          continue
+        }
+        const company = ctx.companies.save({
+          name: b.name?.trim() || prettifyToken(b.token) || b.token,
+          ats: b.ats,
+          atsToken: b.token,
+          careersUrl: boardUrl(b.ats, b.token) ?? undefined,
+          watch: true,
+          origin
+        })
+        ctx.boards.ensureState(company.id, origin)
+        added += 1
+      }
+      return { added, skipped }
+    })
+  }
+
   const api: Api = {
     // App
     async getAppInfo() {
-      return { version: deps.appVersion, dataDir: deps.paths.dataDir, platform: process.platform, secureKeyStorage: deps.vault.secure }
+      return { version: deps.appVersion, dataDir: deps.paths.dataDir, platform: process.platform, secureKeyStorage: deps.vault.secure, openAtLogin: deps.openAtLogin?.() ?? null }
     },
     async openExternal(url) {
       if (!/^https?:\/\//i.test(url)) throw new Error('Only web links can be opened.')
@@ -396,12 +621,57 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async updateSettings(patch) {
       const previous = ctx.settings.get()
+      const whole = (value: unknown, min: number, max: number) => (typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : undefined)
+      // Limits for continuous mode. A value that is not a number is left as it was.
+      if (patch.autopilot) {
+        const { mode } = patch.autopilot
+        patch = {
+          ...patch,
+          autopilot: {
+            ...patch.autopilot,
+            mode: mode === 'interval' || mode === 'continuous' ? mode : undefined,
+            submitConcurrency: whole(patch.autopilot.submitConcurrency, 1, 3),
+            hourlySubmitCap: whole(patch.autopilot.hourlySubmitCap, 0, 10_000)
+          }
+        }
+      }
+      if (patch.budget) {
+        patch = {
+          ...patch,
+          budget: { ...patch.budget, maxTriagePerDay: whole(patch.budget.maxTriagePerDay, 0, 1_000_000), maxPreparePerDay: whole(patch.budget.maxPreparePerDay, 0, 1_000_000) }
+        }
+      }
+      if (patch.preferences) {
+        patch = { ...patch, preferences: { ...patch.preferences, perCompanyLimit: whole(patch.preferences.perCompanyLimit, 1, 100) } }
+      }
+      if (patch.discovery) {
+        patch = {
+          ...patch,
+          discovery: {
+            ...patch.discovery,
+            maxWatchedBoards: whole(patch.discovery.maxWatchedBoards, 0, 100_000),
+            boardsPerRun: whole(patch.discovery.boardsPerRun, 1, 20_000)
+          }
+        }
+      }
       const next = ctx.settings.update(patch)
+      // Pausing autopilot stops a batch run after its current step. A send already under way is refused at the click.
+      if (previous.autopilot.enabled && !next.autopilot.enabled) pipeline.cancel()
       // Jobs already scored move across the new shortlist line and get the matching fit label.
       if (next.thresholds.shortlistScore !== previous.thresholds.shortlistScore) restageForShortlist(ctx)
       // A different scoring model deserves another try at jobs the old one failed on.
       if (JSON.stringify(next.routing.triage) !== JSON.stringify(previous.routing.triage)) ctx.jobs.resetAllTriageFailures()
+      // The same for drafts: new models may handle the jobs the old ones refused.
+      if (JSON.stringify(next.routing) !== JSON.stringify(previous.routing)) {
+        ctx.jobs.resetAllPrepareFailures()
+        // A model that was missing may be what the loop paused for.
+        if (loop.isRunning()) loop.wake()
+      }
+      // Starts or stops the work loop when the mode changed, and wakes it so a new model, budget or cap applies at once.
       scheduler.reschedule()
+      // The listeners apply the login item first, so a window that reloads the app info sees the new state.
+      notifyChange()
+      deps.emit('settings:changed', next)
       return next
     },
     async removePriceOverride(model) {
@@ -417,6 +687,9 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       ctx.llm.resetClients()
       // A fixed key or address may be what those jobs were waiting for.
       ctx.jobs.resetAllTriageFailures()
+      ctx.jobs.resetAllPrepareFailures()
+      // A loop paused for a missing model or key starts again.
+      if (loop.isRunning()) loop.wake()
       return saved
     },
     async deleteProvider(id) {
@@ -525,8 +798,8 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     async deleteSearch(id) {
       ctx.searches.delete(id)
     },
-    async listCompanies() {
-      return ctx.companies.list()
+    async listCompanies(query) {
+      return ctx.companies.listPage(query)
     },
     async saveCompany(input) {
       let patch = input
@@ -534,10 +807,44 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         const found = detectAts(input.careersUrl)
         if (found) patch = { ...input, ats: found.ats, atsToken: input.atsToken ?? found.token ?? undefined, name: input.name ?? found.companyName ?? undefined }
       }
-      return ctx.companies.save(patch)
+      const before = input.id ? ctx.companies.get(input.id) : null
+      const saved = ctx.companies.save(patch)
+      // A company that just became watched gets its first board check on the next run.
+      if (saved.watch && !before?.watch && saved.atsToken && saved.ats !== 'unknown') ctx.boards.ensureState(saved.id, saved.origin)
+      return saved
     },
     async deleteCompany(id) {
       ctx.companies.delete(id)
+    },
+    async bulkCompanies({ ids, action }) {
+      return ctx.db.transaction(() => {
+        const { changed, started, rewatched } = ctx.companies.bulk(Array.isArray(ids) ? ids : [], action)
+        // A board that is watched again starts clean and is checked soon.
+        for (const c of started) ctx.boards.ensureState(c.id, c.origin)
+        for (const c of rewatched) ctx.boards.resetFailures(c.id)
+        return { changed }
+      })
+    },
+    async addStarterPack(group) {
+      return addBoards(starterPack(group === 'all' ? undefined : group), 'starter')
+    },
+    async parseBoardImport(text) {
+      return parseBoardList(String(text ?? ''))
+    },
+    async probeBoards(entries, token) {
+      if (!Array.isArray(entries)) return []
+      if (entries.length > MAX_PROBE_ENTRIES) throw new Error(`Check at most ${MAX_PROBE_ENTRIES} boards at a time.`)
+      const results: BoardProbe[] = []
+      for (const entry of entries) {
+        const probe = await probeBoard(entry.ats, entry.token)
+        const result: BoardProbe = { ats: entry.ats, token: entry.token, ...probe }
+        results.push(result)
+        deps.emit('boards:probe', { token, done: results.length, total: entries.length, result })
+      }
+      return results
+    },
+    async importBoards(entries) {
+      return addBoards(Array.isArray(entries) ? entries : [], 'import')
     },
     async detectAts(url) {
       return detectAts(url)
@@ -584,7 +891,12 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async updateApplication(id, patch) {
       const before = application(id)
-      const updated = ctx.applications.update(id, patch)
+      // Saving the application is a person looking at its answers, so answers filled on the live form count as reviewed.
+      // Marking it ready counts the same way.
+      const reviewed = patch.answers ?? (patch.status === 'ready' ? before.answers : undefined)
+      if (reviewed) patch = { ...patch, answers: reviewed.map(({ liveOnly: _liveOnly, ...a }) => a) }
+      const edited = patch.answers !== undefined || patch.coverLetter !== undefined
+      const updated = edited ? saveEdit(before, patch) : ctx.applications.update(id, patch)
       if (patch.outcome && patch.outcome !== before.outcome) {
         ctx.events.add('outcome', `${updated.company} moved to ${OUTCOME_LABEL[patch.outcome]}.`, updated.jobId, { outcome: patch.outcome })
       }
@@ -608,9 +920,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
       const latest = application(applicationId)
       assertEditable(latest)
       const answers = latest.answers.some((a) => a.fieldKey === fieldKey) ? latest.answers.map((a) => (a.fieldKey === fieldKey ? fresh : a)) : [...latest.answers, fresh]
-      const flagged = answers.some((a) => a.needsUser && a.required)
-      const status = latest.status === 'ready' || latest.status === 'needs_attention' ? (flagged ? 'needs_attention' : 'ready') : latest.status
-      changed(ctx.applications.update(app.id, { answers, status }))
+      changed(saveEdit(latest, { answers }))
       return fresh
     },
     async regenerateCoverLetter(applicationId, guidance) {
@@ -645,21 +955,117 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     async exportCoverLetterPdf(applicationId) {
       const app = application(applicationId)
       if (!app.coverLetter?.trim()) throw new Error('This application has no cover letter yet.')
-      return renderLetter(app.coverLetter, app.company)
+      return renderLetter(app.coverLetter, app.company, app.id)
+    },
+
+    // Review
+    async listExceptions() {
+      return buildExceptions(ctx.applications)
+    },
+    async answerGroup({ key, value, saveToBank, wordings }) {
+      if (typeof value !== 'string' || !value.trim()) throw new Error('Write an answer first.')
+      if (!Array.isArray(wordings)) throw new Error('Reload the Review page and try again.')
+      // The answer goes only to questions the person saw. A wording that joined the group since is left for them.
+      const seen = new Set(wordings.map((w) => wordingKey(String(w))))
+      const group = groupNeedsYou(ctx.applications.reviewRows(['ready', 'needs_attention'])).find((g) => g.key === key)
+      if (!group) return { updated: 0, ready: 0, skipped: 0 }
+      const touched: Application[] = []
+      let skipped = 0
+      let ready = 0
+      ctx.db.transaction(() => {
+        for (const id of new Set(group.applications.map((a) => a.id))) {
+          const app = ctx.applications.get(id)
+          // A closed posting is not reopened by answering a question.
+          if (!app || inFlight.has(id) || (app.status !== 'ready' && app.status !== 'needs_attention') || ctx.jobs.get(app.jobId)?.stage === 'closed') {
+            skipped += 1
+            continue
+          }
+          let changedAny = false
+          const answers = app.answers.map((a) => {
+            // Only answers that still need the person, and only where the form accepts the value.
+            if (!answerNeedsUser(a) || groupKeyFor(a.label, a).key !== key || !seen.has(wordingKey(a.label)) || !acceptsValue(a, value)) return a
+            changedAny = true
+            const { liveOnly: _liveOnly, ...rest } = a
+            return { ...rest, value, source: 'user' as const, confidence: 1, needsUser: false, note: null }
+          })
+          if (!changedAny) {
+            skipped += 1
+            continue
+          }
+          const next = saveEdit(app, { answers })
+          if (next.status === 'ready') ready += 1
+          touched.push(next)
+        }
+        if (saveToBank && touched.length > 0) {
+          // The same question saved before is updated instead of added twice.
+          const norm = normalizeQuestion(group.label)
+          const known = ctx.answers.list().find((e) => normalizeQuestion(e.question) === norm)
+          const longAnswer = group.type === 'textarea' || (group.topic !== null && COMPANY_SPECIFIC_TOPICS.includes(group.topic))
+          ctx.answers.save({ id: known?.id, question: group.label, answer: value, kind: longAnswer ? 'template' : 'fact', topic: group.topic, scope: group.scope })
+        }
+      })
+      if (touched.length > 0) {
+        deps.emit('applications:changed', { applicationIds: touched.map((a) => a.id) })
+        deps.emit('jobs:changed', { jobIds: touched.map((a) => a.jobId) })
+      }
+      return { updated: touched.length, ready, skipped }
+    },
+    async retryLater(ids) {
+      const touched: Application[] = []
+      ctx.db.transaction(() => {
+        for (const id of new Set(Array.isArray(ids) ? ids : [])) {
+          const app = ctx.applications.get(id)
+          // An answer that still needs the person keeps the application out of the queue.
+          if (!app || inFlight.has(id) || app.answers.some(answerNeedsUser)) continue
+          // A closed posting stays closed, and a form a person had open may have been sent by hand.
+          if (ctx.jobs.get(app.jobId)?.stage === 'closed' || !canRetryLater({ ...app, lastAttemptBy: ctx.applications.lastAttemptBy(id) })) continue
+          touched.push(ctx.applications.update(id, { status: 'ready', submitMode: null, submitFailures: 0, error: null }))
+        }
+      })
+      if (touched.length > 0) {
+        deps.emit('applications:changed', { applicationIds: touched.map((a) => a.id) })
+        deps.emit('jobs:changed', { jobIds: touched.map((a) => a.jobId) })
+      }
+      return { updated: touched.length, skipped: (Array.isArray(ids) ? new Set(ids).size : 0) - touched.length }
+    },
+    async reportWrongSubmission(id, note) {
+      const app = application(id)
+      const text = String(note ?? '').trim().slice(0, 300)
+      if (!text) throw new Error('Write one line about what was wrong.')
+      // Pause first, so nothing else goes out while the report is written.
+      await api.updateSettings({ autopilot: { autoSubmit: false } })
+      changed(ctx.applications.update(id, { error: text }))
+      ctx.events.add('submit_failed', `Auto-submit paused. You reported a wrong submission to ${app.company} for ${app.title}. ${text}`, app.jobId)
     },
 
     // Pipeline
     async runPipeline(options) {
+      if (loop.isRunning()) {
+        // Continuous mode has no batch to start. Look for work now, and report today's counts.
+        loop.wake(undefined, { retry: true })
+        const { today } = loop.status()
+        return { ...emptyStats(), ...today }
+      }
       return pipeline.run(options)
     },
     async cancelPipeline() {
       pipeline.cancel()
+      await loop.stop()
     },
     async getNextRunAt() {
       return scheduler.nextRunAt()
     },
     async getPipelineStatus() {
       return pipeline.status()
+    },
+    async getLoopStatus() {
+      return loop.status()
+    },
+    async pauseWorker(name) {
+      loop.pauseWorker(workerName(name))
+    },
+    async resumeWorker(name) {
+      loop.resumeWorker(workerName(name))
     },
     async listRuns(limit) {
       return ctx.runs.list(limit)
@@ -691,7 +1097,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async installUpdate() {
       if (!updater) throw new Error('Updates work only in the installed app.')
-      if (pipeline.status().phase !== 'idle') throw new Error('A run is in progress. Restart to update after it finishes, or close JobPilot to install the update then.')
+      if (pipeline.status().phase !== 'idle' && !loop.isRunning()) throw new Error('A run is in progress. Restart to update after it finishes, or close JobPilot to install the update then.')
       const busy = inFlight.size > 0 || ctx.applications.list({ statuses: ['draft', 'submitting'], limit: 1 }).total > 0
       if (busy) throw new Error('JobPilot is preparing or sending an application. Restart to update after it finishes.')
       await updater.install()
@@ -702,20 +1108,50 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
   let closing: Promise<void> | null = null
   const shutdown: Shutdown = () => (closing ??= closeDown())
   const closeDown = async (): Promise<void> => {
+    if (active === ctx) active = null
     updater?.stop()
-    scheduler.stop()
+    const loopStopped = scheduler.stop()
     pipeline.cancel()
+    // The workers end after their current step, which the stop signal cuts short. Don't wait long for them.
+    await Promise.race([loopStopped.catch(() => {}), new Promise((r) => setTimeout(r, 3000))])
     // Save first, so nothing is lost if closing the browser hangs.
     ctx.db.flush()
     await Promise.race([browser.close().catch(() => {}), new Promise((r) => setTimeout(r, 3000))])
     ctx.close()
   }
 
-  return { api, ctx, shutdown }
+  const controls: BackgroundControls = {
+    settings: () => ctx.settings.get(),
+    updateSettings: (patch) => api.updateSettings(patch),
+    isRunning: () => pipeline.isRunning(),
+    progress: () => pipeline.status(),
+    nextRunAt: () => scheduler.nextRunAt(),
+    loopStatus: () => (loop.isRunning() ? loop.status() : null),
+    async runNow() {
+      if (loop.isRunning()) {
+        loop.wake(undefined, { retry: true })
+        return
+      }
+      if (pipeline.isRunning()) return
+      const { autopilot } = ctx.settings.get()
+      try {
+        // Sending applications stays tied to autopilot being on, so a paused autopilot never sends from the tray.
+        await pipeline.run({ discover: true, triage: true, prepare: autopilot.autoPrepare, submit: autopilot.enabled && autopilot.autoSubmit, trigger: 'manual' })
+      } catch {
+        // The run already wrote its failure to the activity log.
+      }
+      scheduler.reschedule()
+    },
+    resume: () => scheduler.resume(),
+    companyFor: (jobId) => ctx.jobs.get(jobId)?.company ?? null,
+    onChange: (listener) => void changeListeners.add(listener)
+  }
+
+  return { api, ctx, shutdown, controls }
 }
 
-export async function registerIpc(deps: IpcDeps): Promise<Shutdown> {
-  const { api, shutdown } = await createServices(deps)
+export async function registerIpc(deps: IpcDeps): Promise<{ shutdown: Shutdown; controls: BackgroundControls }> {
+  const { api, shutdown, controls } = await createServices(deps)
   deps.ipcMain.handle('api', async (event, method: string, args: unknown[]) => {
     if (!deps.isTrustedSender(event)) {
       return { ok: false, error: 'Calls are only accepted from the JobPilot window.', name: 'Forbidden' }
@@ -732,5 +1168,5 @@ export async function registerIpc(deps: IpcDeps): Promise<Shutdown> {
       return { ok: false, error: e.message || String(err), name: e.name || 'Error' }
     }
   })
-  return shutdown
+  return { shutdown, controls }
 }

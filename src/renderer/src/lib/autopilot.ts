@@ -9,5 +9,8 @@ export function autopilotConfirmMessage(settings: Pick<Settings, 'thresholds' | 
   const { thresholds, autopilot } = settings
   const base = `Auto-submit is on and dry run is off, so the app will click Submit on applications by itself. It does that when the fit score is ${thresholds.autoSubmitScore} or higher, and it sends up to ${plural(autopilot.dailySubmitCap, 'application')} a day.`
   if (!firstRun) return base
+  if (autopilot.mode === 'continuous') {
+    return `${base} It starts working right away and keeps going within the hourly and daily limits in Settings.`
+  }
   return `${base} If the last run was longer ago than ${autopilot.intervalHours === 1 ? 'an hour' : `${autopilot.intervalHours} hours`}, the first run starts in about a minute.`
 }

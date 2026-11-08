@@ -56,6 +56,18 @@ describe('a closed job whose posting comes back', () => {
   })
 })
 
+describe('ready applications for autopilot', () => {
+  it('leaves out an application that was opened for sending in assist mode', async () => {
+    const { ctx } = await makeTestEnv()
+    const job = ingestRaw(ctx, makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'acme', externalId: 'x' })).job
+    const app = ctx.applications.create(job.id)
+    ctx.applications.update(app.id, { status: 'ready' })
+    expect(ctx.applications.listReady()).toHaveLength(1)
+    ctx.applications.update(app.id, { submitMode: 'assist' })
+    expect(ctx.applications.listReady()).toHaveLength(0)
+  })
+})
+
 describe('refreshing a posting that arrives without a description', () => {
   it('keeps the stored pay, work type, links and description', async () => {
     const { ctx } = await makeTestEnv()
@@ -269,5 +281,125 @@ describe('bucketFor', () => {
     expect(bucketFor(85, 60)).toBe('perfect')
     expect(bucketFor(65, 60)).toBe('good')
     expect(bucketFor(59, 60)).toBe('weak')
+  })
+})
+
+describe('posting identity on an application system', () => {
+  const board = (externalId: string, over: Partial<Parameters<typeof makeRaw>[0]> = {}) =>
+    makeRaw({ source: 'greenhouse', ats: 'greenhouse', atsToken: 'acme', atsJobId: externalId, externalId, ...over })
+  const viaSite = (externalId: string, atsJobId: string | null, over: Partial<Parameters<typeof makeRaw>[0]> = {}) =>
+    makeRaw({ source: 'remotive', ats: atsJobId ? 'greenhouse' : 'unknown', atsToken: atsJobId ? 'acme' : null, atsJobId, externalId, ...over })
+
+  it('stores the posting id and reads it back', async () => {
+    const { ctx } = await makeTestEnv()
+    const job = ingestRaw(ctx, board('123')).job
+    expect(ctx.jobs.get(job.id)!.atsJobId).toBe('123')
+  })
+
+  it('keeps a stored posting id when a later copy has none', async () => {
+    const { ctx } = await makeTestEnv()
+    const job = ingestRaw(ctx, board('123')).job
+    ctx.jobs.upsertRaw(board('123', { atsJobId: null }), null)
+    expect(ctx.jobs.get(job.id)!.atsJobId).toBe('123')
+  })
+
+  it('fills the posting id on an older row when the same source lists it again', async () => {
+    const { ctx } = await makeTestEnv()
+    const job = ingestRaw(ctx, board('123', { atsJobId: null })).job
+    expect(ctx.jobs.get(job.id)!.atsJobId).toBeNull()
+    ctx.jobs.upsertRaw(board('123'), null)
+    expect(ctx.jobs.get(job.id)!.atsJobId).toBe('123')
+  })
+
+  it('marks a posting found through a job site as a duplicate of the board posting, whatever the text says', async () => {
+    const { ctx } = await makeTestEnv()
+    const original = ingestRaw(ctx, board('123', { description: 'Board text about building APIs.' })).job
+    const result = ingestRaw(ctx, viaSite('r-9', '123', { description: 'Completely different site text.', title: 'Other title' }))
+    expect(result.duplicate).toBe(true)
+    expect(result.job).toMatchObject({ stage: 'duplicate', dupOf: original.id })
+  })
+
+  it('stores the posting once when the board posting arrives second, with the board row as the original', async () => {
+    const { ctx } = await makeTestEnv()
+    const first = ingestRaw(ctx, viaSite('r-9', '123', { description: 'Site text.' })).job
+    const result = ingestRaw(ctx, board('123', { description: 'Board text.' }))
+    // The board read closes its own rows, so the board row is the one that has to stay the original.
+    expect(result.duplicate).toBe(false)
+    expect(result.job.dupOf).toBeNull()
+    expect(ctx.jobs.get(first.id)).toMatchObject({ stage: 'duplicate', dupOf: result.job.id })
+  })
+
+  it('treats postings with different ids on the same board as different', async () => {
+    const { ctx } = await makeTestEnv()
+    ingestRaw(ctx, board('123'))
+    const other = ingestRaw(ctx, viaSite('r-9', '124', { description: 'Other text.', title: 'Designer' }))
+    expect(other.duplicate).toBe(false)
+  })
+
+  it('does not match on the id alone when the board differs', async () => {
+    const { ctx } = await makeTestEnv()
+    ingestRaw(ctx, board('123'))
+    const other = ingestRaw(ctx, viaSite('r-9', '123', { atsToken: 'other', description: 'Other text.', title: 'Designer' }))
+    expect(other.duplicate).toBe(false)
+  })
+
+  it('lets a live copy replace a closed original', async () => {
+    const { ctx } = await makeTestEnv()
+    const original = ingestRaw(ctx, board('123', { description: 'Board text.' })).job
+    ctx.jobs.saveFit(original.id, fit(80, 'great'), 1)
+    ctx.db.run("UPDATE jobs SET stage = 'closed' WHERE id = :id", { id: original.id })
+    const result = ingestRaw(ctx, viaSite('r-9', '123', { description: 'Site text.' }))
+    expect(result.duplicate).toBe(false)
+    expect(result.job.stage).toBe('new')
+    expect(result.job.fit?.score).toBe(80)
+  })
+
+  it('keeps the job-site key and company name for a job-site posting that names an employer board', async () => {
+    const { ctx } = await makeTestEnv()
+    const job = ingestRaw(ctx, viaSite('r-9', '123', { company: 'Acme Robotics' })).job
+    expect(job.company).toBe('Acme Robotics')
+    expect(ctx.db.get<{ canonical_key: string }>('SELECT canonical_key FROM jobs WHERE id = :id', { id: job.id })!.canonical_key).toBe('remotive:acme robotics:r-9')
+  })
+
+  // Only a job without an application is marked here. prepare() creates the application first, so it checks for a handled
+  // twin itself before this runs (see "preparing" in ipc.test.ts).
+  it('makes a resolved job-board posting without an application a duplicate when the employer posting is already stored', async () => {
+    const { ctx } = await makeTestEnv()
+    const original = ingestRaw(ctx, board('123', { description: 'Board text.' })).job
+    const site = ingestRaw(ctx, viaSite('r-9', null, { description: 'Site text.', title: 'Other title' })).job
+    expect(site.stage).toBe('new')
+    const target = { applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/123', ats: 'greenhouse' as const, atsToken: 'acme', atsJobId: '123' }
+    expect(ctx.jobs.setApplyTarget(site.id, target)).toBe(original.id)
+    expect(ctx.jobs.get(site.id)).toMatchObject({ stage: 'duplicate', dupOf: original.id, atsJobId: '123' })
+  })
+
+  it('leaves a job with an application in its stage when it is resolved to a stored posting', async () => {
+    const { ctx } = await makeTestEnv()
+    ingestRaw(ctx, board('123', { description: 'Board text.' }))
+    const site = ingestRaw(ctx, viaSite('r-9', null, { description: 'Site text.', title: 'Other title' })).job
+    ctx.applications.create(site.id)
+    const target = { applyUrl: 'https://job-boards.greenhouse.io/acme/jobs/123', ats: 'greenhouse' as const, atsToken: 'acme', atsJobId: '123' }
+    expect(ctx.jobs.setApplyTarget(site.id, target)).toBeNull()
+    expect(ctx.jobs.get(site.id)!.stage).not.toBe('duplicate')
+    expect(ctx.jobs.get(site.id)!.atsJobId).toBe('123')
+  })
+
+  it('still accepts a target without a posting id', async () => {
+    const { ctx } = await makeTestEnv()
+    const site = ingestRaw(ctx, viaSite('r-9', null)).job
+    expect(ctx.jobs.setApplyTarget(site.id, { applyUrl: 'https://careers.acme.test/apply', ats: 'unknown', atsToken: null })).toBeNull()
+    expect(ctx.jobs.get(site.id)).toMatchObject({ applyUrl: 'https://careers.acme.test/apply', atsJobId: null })
+  })
+})
+
+describe('board scan indexes', () => {
+  it('uses the board index for the closed-posting scan and the posting index for identity lookups', async () => {
+    const { ctx } = await makeTestEnv()
+    const plan = (sql: string, params: Record<string, string>) =>
+      ctx.db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${sql}`, params).map((r) => r.detail).join(' | ')
+    expect(plan('SELECT id, external_id, stage FROM jobs WHERE source = :source AND ats_token = :token', { source: 'greenhouse', token: 'acme' })).toContain('idx_jobs_board')
+    expect(
+      plan('SELECT id FROM jobs WHERE ats = :ats AND ats_token = :token AND ats_job_id = :id', { ats: 'greenhouse', token: 'acme', id: '1' })
+    ).toContain('idx_jobs_ats_job')
   })
 })

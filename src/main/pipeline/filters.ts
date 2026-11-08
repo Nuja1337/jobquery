@@ -21,6 +21,11 @@ export interface FilterContext {
   blockedCompanies: Set<string>
   /** ISO time the user last applied to a company, or null. Takes a normalized name. */
   lastAppliedAt(companyNorm: string): string | null
+  /**
+   * How many applications to a company were sent, or had Submit clicked, at or after this epoch
+   * millisecond time. Takes a normalized name. Without it, the last application stands for one.
+   */
+  appliedCount?(companyNorm: string, sinceMs: number): number
 }
 
 export type FilterResult = { pass: true } | { pass: false; reason: string }
@@ -173,10 +178,15 @@ export function applyFilters(job: FilterJob, prefs: JobPreferences, ctx: FilterC
   if (prefs.needsVisaSponsorship && noSponsorship(job.description)) return fail('says no visa sponsorship')
 
   if (prefs.companyCooldownDays > 0) {
+    const limit = Math.max(1, Math.floor(prefs.perCompanyLimit ?? 1))
+    const since = ctx.now - prefs.companyCooldownDays * DAY_MS
     const last = ctx.lastAppliedAt(companyNorm)
-    if (last) {
-      const days = Math.floor((ctx.now - Date.parse(last)) / DAY_MS)
-      if (days < prefs.companyCooldownDays) return fail(`applied to this company ${Math.max(days, 0)} days ago`)
+    const lastMs = last ? Date.parse(last) : NaN
+    // A company stays open until it has had its limit of applications inside the window.
+    const recent = ctx.appliedCount ? ctx.appliedCount(companyNorm, since) : Number.isFinite(lastMs) && lastMs >= since ? 1 : 0
+    if (recent >= limit && Number.isFinite(lastMs)) {
+      const days = Math.floor((ctx.now - lastMs) / DAY_MS)
+      return fail(`applied to this company ${Math.max(days, 0)} days ago`)
     }
   }
 

@@ -1,0 +1,85 @@
+[
+  {
+    "id": "493d0eedba0f",
+    "friendly_id": "493d0eedba0f-sales-executive",
+    "name": "Sales Executive",
+    "url": "https://jobs.breezy.hr/p/493d0eedba0f-sales-executive",
+    "published_date": "2026-11-02T21:20:00.447Z",
+    "type": {
+      "id": "fullTime",
+      "name": "Full-Time"
+    },
+    "location": {
+      "id": "8f873327d9f4",
+      "country": {
+        "name": "Mexico",
+        "id": "MX"
+      },
+      "city": "Mexico City",
+      "primary": true,
+      "is_remote": true,
+      "remote_details": {
+        "value": "remote",
+        "label": "Fully remote, no location restrictions"
+      },
+      "name": "Mexico City, MX"
+    },
+    "department": "",
+    "salary": "",
+    "company": {
+      "name": "Breezy HR",
+      "logo_url": "https://nimble-media.s3.amazonaws.com/attachments/cd349/breezy_mark.png",
+      "friendly_id": "jobs",
+      "isMultipleLocationsEnabled": true
+    },
+    "locations": [
+      {
+        "id": "8f873327d9f4",
+        "country": {
+          "name": "Mexico",
+          "id": "MX"
+        },
+        "city": "Mexico City",
+        "primary": true,
+        "is_remote": true,
+        "remote_details": {
+          "value": "remote",
+          "label": "Fully remote, no location restrictions"
+        },
+        "name": "Mexico City, MX"
+      }
+    ]
+  },
+  {
+    "id": "088ac6d52139",
+    "friendly_id": "088ac6d52139-open-position",
+    "name": "Open Position",
+    "url": "https://breezy.breezy.hr/p/088ac6d52139-open-position",
+    "published_date": "2023-04-06T01:32:13.932Z",
+    "type": {
+      "id": "contract",
+      "name": "Contract"
+    },
+    "location": {
+      "country": {
+        "name": "United States",
+        "id": "US"
+      },
+      "state": {
+        "id": "NY",
+        "name": "New York"
+      },
+      "city": "New York",
+      "name": "New York, NY"
+    },
+    "department": "Sporting Goods",
+    "salary": "$1 – $5 / year",
+    "company": {
+      "name": "MS Breezy Trial",
+      "logo_url": null,
+      "friendly_id": "breezy",
+      "isMultipleLocationsEnabled": false
+    },
+    "locations": []
+  }
+]

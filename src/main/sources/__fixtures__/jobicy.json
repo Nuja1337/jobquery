@@ -1,0 +1,69 @@
+{
+  "apiVersion": "2.2.19",
+  "jobCount": 3,
+  "lastUpdate": "2026-11-07T16:33:27+00:00",
+  "jobs": [
+    {
+      "id": 159648,
+      "url": "https://jobicy.com/jobs/159648-staff-machine-learning-engineer-home-surfaces",
+      "jobSlug": "159648-staff-machine-learning-engineer-home-surfaces",
+      "jobTitle": "Staff Machine Learning Engineer, Home Surfaces",
+      "companyName": "Spotify",
+      "jobIndustry": [
+        "Data Science & Analytics"
+      ],
+      "jobType": [
+        "Full-Time"
+      ],
+      "jobGeo": "Canada,  USA",
+      "jobLevel": "Senior",
+      "jobExcerpt": "The Personalization team makes deciding what to play next easier and more enjoyable for every listener. From Blend to Discover Weekly, we're behind some of Spot",
+      "jobDescription": "<p>The Personalization team makes deciding what to play next easier and more enjoyable for every listener. From Blend to Discover Weekly, we're behind some of <a href=\"https://jobicy.com/company/spotify\" target=\"_blank\" rel=\"noopener\">Spotify</a>'s most-loved features. We built them by understanding the world of music and podcasts better than anyone else. Join us and you'll keep millions of users listening by making great recommendations to each and every one of them.</p>\n<p>Surfaces Moments is a ML team within the Personalization Mission focused on creating moment-based experiences across Spotify surfaces. The team owns and evolves the experiences that help listeners quickly connect with the content that matters most to them, including the Home Shortcuts experience and the underlying intelligence that powers it. By combining cutting-edge machine learning, recommendation systems, and product thinking, the team delivers highly relevant, personalized experiences to millions of listeners around the world.</p>\n<p>As a Staff Machine Learning Engineer, you will help shape the future of personalized discovery and engagement at Spotify. You'll work at the intersection of recommendation systems, large language models, and production-scale machine learning infrastructure to build experiences that delight users and drive meaningful impact. This role is ideal for someone who enjoys taking models from research to production, driving technical direction in ambiguous problem spaces, and solving complex personalization challenges at global scale.</p>\n<h3>What You'll Do</h3>",
+      "pubDate": "2026-11-07T16:33:27+00:00",
+      "salaryMin": 227495,
+      "salaryMax": 324993,
+      "salaryCurrency": "USD",
+      "salaryPeriod": "yearly"
+    },
+    {
+      "id": 159646,
+      "url": "https://jobicy.com/jobs/159646-1-on-1-math-tutor-u-s-online",
+      "jobSlug": "159646-1-on-1-math-tutor-u-s-online",
+      "jobTitle": "1-on-1 Math Tutor (U.S. Online)",
+      "companyName": "Think Academy US",
+      "jobIndustry": [
+        "Education & E-learning"
+      ],
+      "jobType": [
+        "Part-Time"
+      ],
+      "jobGeo": "USA",
+      "jobLevel": "Any",
+      "jobExcerpt": "Location: Remote (U.S. based candidates only) Job Type: Remote, Part-Time (flexible scheduling, W2) Compensation: $25/hour Join Think Academy as a part-time 1-o",
+      "jobDescription": "<p><strong>Location</strong>: Remote (U.S. based candidates only)</p>\n<p><strong>Job Type:</strong> Remote, Part-Time (flexible scheduling, W2)</p>\n<p><strong>Compensation:</strong> $25/hour</p>\n\n<p>Join Think Academy as a part-time 1-on-1 Math Tutor. Provide personalized, one-on-one support to help students strengthen their understanding of concepts from their long-term Think Academy classes on a schedule that works for you.</p>",
+      "pubDate": "2026-11-07T16:33:24+00:00",
+      "salaryMin": 25,
+      "salaryMax": 25,
+      "salaryCurrency": "USD",
+      "salaryPeriod": "hourly"
+    },
+    {
+      "id": 159643,
+      "url": "https://jobicy.com/jobs/159643-account-executive-enterprise-grower-3",
+      "jobSlug": "159643-account-executive-enterprise-grower-3",
+      "jobTitle": "Account Executive, Enterprise (Grower)",
+      "companyName": "Stripe",
+      "jobIndustry": [
+        "Sales"
+      ],
+      "jobType": [
+        "Full-Time"
+      ],
+      "jobGeo": "USA",
+      "jobLevel": "Director",
+      "jobExcerpt": "Who we are About Stripe Stripe is a financial infrastructure platform for businesses. Millions of companies—from the world’s largest enterprises to the most amb",
+      "jobDescription": "<h3><strong>Who we are</strong></h3>\n<h3><strong>About <a href=\"https://jobicy.com/company/stripe\" target=\"_blank\" rel=\"noopener\">Stripe</a></strong></h3>\n<p>Stripe is a financial infrastructure platform for businesses. Millions of companies—from the world’s largest enterprises to the most ambitious startups—use Stripe to accept payments, grow their revenue, and accelerate new business opportunities. Our mission is to increase the GDP of the internet, and we have a staggering amount of work ahead. That means you have an unprecedented opportunity to put the global economy within everyone’s reach while doing the most important work of your career.</p>\n<h3><strong>What you’ll do</strong></h3><p>Apply: <a href=\"https://jobs.lever.co/acme-games/0a1b2c3d-1111-2222-3333-444455556666/apply\">Lever</a></p>",
+      "pubDate": "2026-11-05 12:00:00"
+    }
+  ]
+}

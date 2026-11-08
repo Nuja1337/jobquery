@@ -12,7 +12,8 @@ import type {
   RemoteType,
   SourceKind
 } from '@shared/types'
-import { canonicalKey, contentHash, normalizeCompany } from '../../pipeline/dedupe'
+import { isJobBoardUrl } from '../../apply/jobBoards'
+import { SEARCH_SOURCES, canonicalKey, contentHash, normalizeCompany } from '../../pipeline/dedupe'
 import { type Db, type Params, newId, now, parseJson } from '../database'
 
 interface JobRow {
@@ -36,6 +37,7 @@ interface JobRow {
   apply_url: string | null
   ats: AtsKind
   ats_token: string | null
+  ats_job_id: string | null
   description: string
   posted_at: string | null
   discovered_at: string
@@ -55,6 +57,7 @@ interface JobRow {
   last_seen_at: string | null
   dismissed_at: string | null
   triage_failures: number
+  prepare_failures: number
   application_id: string | null
 }
 
@@ -91,6 +94,8 @@ function toJob(row: JobRow): Job {
     ...toSummary(row),
     externalId: row.external_id,
     applyUrl: row.apply_url,
+    atsToken: row.ats_token,
+    atsJobId: row.ats_job_id,
     description: row.description,
     employmentType: row.employment_type,
     fit: parseJson<FitAssessment | null>(row.fit_json, null),
@@ -111,10 +116,13 @@ export const SCORE_MOVABLE_STAGES: JobStage[] = ['new', 'filtered_out', 'prescor
 /** A job whose AI scoring failed this many times with the current profile is skipped by runs. */
 export const MAX_TRIAGE_FAILURES = 3
 
+/** A job whose application failed to prepare this many times is skipped by runs. The Prepare button still works. */
+export const MAX_PREPARE_FAILURES = 2
+
 /** A job that no source has listed for this many days is treated as gone. */
 export const STALE_JOB_DAYS = 30
 /** Sources that come from saved searches. They have no board, so nothing tells us when a posting is removed. */
-export const SEARCH_SOURCES: SourceKind[] = ['remotive', 'remoteok', 'arbeitnow', 'hn_whoishiring', 'adzuna']
+export { SEARCH_SOURCES }
 /** Stages where a search job that went unseen is closed. Later stages belong to the user. */
 const STALE_CLOSE_STAGES: JobStage[] = ['new', 'filtered_out', 'prescored_out', 'scored', 'shortlisted']
 
@@ -161,9 +169,11 @@ export class JobsRepo {
   upsertRaw(raw: RawJob, companyId: string | null): { job: Job; isNew: boolean } {
     const key = canonicalKey(raw)
     const hash = contentHash(raw)
-    const existing = this.db.get<{ id: string; stage: JobStage }>('SELECT id, stage FROM jobs WHERE canonical_key = :key', { key })
+    const existing = this.db.get<{ id: string; stage: JobStage; apply_url: string | null }>('SELECT id, stage, apply_url FROM jobs WHERE canonical_key = :key', { key })
     const at = now()
     if (existing) {
+      // A job-board posting resolved to the employer's form (setApplyTarget) keeps that link when the board lists it again.
+      const keepResolved = Boolean(existing.apply_url) && !isJobBoardUrl(existing.apply_url!) && (!raw.applyUrl || isJobBoardUrl(raw.applyUrl))
       this.db.run(
         `UPDATE jobs SET title = :title, location = :location, employment_type = :employmentType,
            company = :company, company_norm = :companyNorm,
@@ -172,12 +182,15 @@ export class JobsRepo {
            salary_max = CASE WHEN :description = '' THEN COALESCE(salary_max, :salaryMax) ELSE :salaryMax END,
            salary_currency = CASE WHEN :description = '' THEN COALESCE(salary_currency, :salaryCurrency) ELSE :salaryCurrency END,
            url = CASE WHEN :description = '' THEN url ELSE :url END,
-           apply_url = CASE WHEN :description = '' THEN COALESCE(apply_url, :applyUrl) ELSE :applyUrl END,
+           apply_url = CASE WHEN :description = '' OR :keepResolved = 1 THEN COALESCE(apply_url, :applyUrl) ELSE :applyUrl END,
+           ats_job_id = CASE WHEN :atsJobId IS NOT NULL AND :ats != 'unknown' AND (ats = 'unknown' OR (ats = :ats AND ats_token IS :atsToken)) THEN :atsJobId ELSE ats_job_id END,
+           ats_token = CASE WHEN ats = 'unknown' AND :ats != 'unknown' THEN :atsToken ELSE ats_token END,
+           ats = CASE WHEN ats = 'unknown' THEN :ats ELSE ats END,
            description = CASE WHEN :description = '' THEN description ELSE :description END, posted_at = COALESCE(:postedAt, posted_at),
            content_hash = CASE WHEN :description = '' THEN content_hash ELSE :hash END, company_id = COALESCE(:companyId, company_id),
            last_seen_at = :at, updated_at = :at
          WHERE id = :id`,
-        { ...rawParams(raw), company: raw.company, companyNorm: normalizeCompany(raw.company), hash, companyId, at, id: existing.id }
+        { ...rawParams(raw), company: raw.company, companyNorm: normalizeCompany(raw.company), ats: raw.ats, atsToken: raw.atsToken, hash, companyId, at, id: existing.id, keepResolved: keepResolved ? 1 : 0 }
       )
       if (existing.stage === 'closed') {
         const status = this.db.get<{ status: ApplicationStatus }>('SELECT status FROM applications WHERE job_id = :id', { id: existing.id })?.status ?? null
@@ -191,10 +204,10 @@ export class JobsRepo {
     const id = newId()
     this.db.run(
       `INSERT INTO jobs (id, source, external_id, canonical_key, content_hash, company, company_norm, company_id, title,
-         location, remote, salary_min, salary_max, salary_currency, employment_type, url, apply_url, ats, ats_token,
+         location, remote, salary_min, salary_max, salary_currency, employment_type, url, apply_url, ats, ats_token, ats_job_id,
          description, posted_at, discovered_at, last_seen_at, stage, updated_at)
        VALUES (:id, :source, :externalId, :key, :hash, :company, :companyNorm, :companyId, :title, :location, :remote,
-         :salaryMin, :salaryMax, :salaryCurrency, :employmentType, :url, :applyUrl, :ats, :atsToken, :description,
+         :salaryMin, :salaryMax, :salaryCurrency, :employmentType, :url, :applyUrl, :ats, :atsToken, :atsJobId, :description,
          :postedAt, :at, :at, 'new', :at)`,
       {
         ...rawParams(raw),
@@ -254,7 +267,7 @@ export class JobsRepo {
   }
 
   /** Full jobs in the given stages. orderBy 'prescore' and 'fit' both sort best first. */
-  listByStage(stages: JobStage | JobStage[], options: { orderBy?: 'prescore' | 'fit' | 'discovered'; limit?: number; skipRepeatedTriageFailures?: boolean } = {}): Job[] {
+  listByStage(stages: JobStage | JobStage[], options: { orderBy?: 'prescore' | 'fit' | 'discovered'; limit?: number; skipRepeatedTriageFailures?: boolean; skipRepeatedPrepareFailures?: boolean } = {}): Job[] {
     const list = Array.isArray(stages) ? stages : [stages]
     const params: Record<string, string | number> = {}
     const names = list.map((s, i) => {
@@ -272,6 +285,10 @@ export class JobsRepo {
       params.maxFailures = MAX_TRIAGE_FAILURES
       failures = 'AND j.triage_failures < :maxFailures'
     }
+    if (options.skipRepeatedPrepareFailures) {
+      params.maxPrepareFailures = MAX_PREPARE_FAILURES
+      failures += ' AND j.prepare_failures < :maxPrepareFailures'
+    }
     return this.db.all<JobRow>(`${SELECT_JOB} WHERE j.stage IN (${names.join(', ')}) ${failures} ORDER BY ${order} ${limit}`, params).map(toJob)
   }
 
@@ -282,6 +299,21 @@ export class JobsRepo {
         hash,
         excludeId: excludeId ?? ''
       })
+      .map(toJob)
+  }
+
+  /**
+   * Jobs for the same posting on an application system, found through another source or a pasted link.
+   * Originals come before duplicates, then the oldest first. Needs ats, token and id to all be known.
+   */
+  findByAtsJob(ats: AtsKind, atsToken: string, atsJobId: string, excludeId?: string): Job[] {
+    if (ats === 'unknown' || !atsToken || !atsJobId) return []
+    return this.db
+      .all<JobRow>(
+        `${SELECT_JOB} WHERE j.ats = :ats AND j.ats_token = :atsToken AND j.ats_job_id = :atsJobId AND j.id != :excludeId
+         ORDER BY (j.dup_of IS NOT NULL), j.discovered_at`,
+        { ats, atsToken, atsJobId, excludeId: excludeId ?? '' }
+      )
       .map(toJob)
   }
 
@@ -353,6 +385,44 @@ export class JobsRepo {
     this.db.run('UPDATE jobs SET triage_failures = triage_failures + 1 WHERE id = :id', { id })
   }
 
+  /** Clears every job's failed-prepare count, for example after the AI provider or its models changed. */
+  resetAllPrepareFailures(): void {
+    this.db.run('UPDATE jobs SET prepare_failures = 0 WHERE prepare_failures != 0')
+  }
+
+  /** Counts one failed attempt to prepare an application. Runs skip the job once it reaches MAX_PREPARE_FAILURES. */
+  recordPrepareFailure(id: string): void {
+    this.db.run('UPDATE jobs SET prepare_failures = prepare_failures + 1 WHERE id = :id', { id })
+  }
+
+  /** Clears the failed-prepare count after an application was prepared. */
+  resetPrepareFailures(id: string): void {
+    this.db.run('UPDATE jobs SET prepare_failures = 0 WHERE id = :id AND prepare_failures != 0', { id })
+  }
+
+  /**
+   * Points a job at the page where it really applies, for a posting found on a job board.
+   * When another live job already has the same posting on that system, this job becomes its
+   * duplicate, so two jobs don't lead to one form. A job that has an application keeps its stage.
+   * Returns the id of the job it became a duplicate of, or null.
+   */
+  setApplyTarget(id: string, target: { applyUrl: string; ats: AtsKind; atsToken: string | null; atsJobId?: string | null }): string | null {
+    this.db.run(
+      'UPDATE jobs SET apply_url = :applyUrl, ats = :ats, ats_token = :atsToken, ats_job_id = :atsJobId, updated_at = :at WHERE id = :id',
+      { id, applyUrl: target.applyUrl, ats: target.ats, atsToken: target.atsToken, atsJobId: target.atsJobId ?? null, at: now() }
+    )
+    if (!target.atsToken || !target.atsJobId) return null
+    const mine = this.db.get<{ stage: JobStage; has_application: number }>(
+      'SELECT stage, EXISTS (SELECT 1 FROM applications a WHERE a.job_id = jobs.id) AS has_application FROM jobs WHERE id = :id',
+      { id }
+    )
+    if (!mine || mine.has_application || ['applied', 'dismissed', 'duplicate', 'closed'].includes(mine.stage)) return null
+    const original = this.findByAtsJob(target.ats, target.atsToken, target.atsJobId, id).find((j) => !j.dupOf && j.stage !== 'closed' && j.stage !== 'duplicate')
+    if (!original) return null
+    this.markDuplicate(id, original.id)
+    return original.id
+  }
+
   /** Profile version the stored fit was computed against, or null when the job was never scored. */
   scoredProfileVersion(id: string): number | null {
     return this.db.get<{ v: number | null }>('SELECT scored_profile_version AS v FROM jobs WHERE id = :id', { id })?.v ?? null
@@ -404,9 +474,39 @@ export class JobsRepo {
   }
 
   /**
+   * Notes that a board's postings were seen just now, without reading them again. With no ids, every
+   * posting of the board counts. Closed postings are not reopened, since only a read of the posting can say it is back.
+   */
+  touchSeen(source: SourceKind, atsToken: string, externalIds?: string[]): void {
+    const at = now()
+    if (!externalIds) {
+      this.db.run("UPDATE jobs SET last_seen_at = :at WHERE source = :source AND ats_token = :token AND stage != 'closed'", { at, source, token: atsToken })
+      return
+    }
+    this.db.transaction(() => {
+      for (let i = 0; i < externalIds.length; i += 300) {
+        const chunk = externalIds.slice(i, i + 300)
+        const names = chunk.map((_, k) => `:id${k}`)
+        const params: Record<string, string> = { at, source, token: atsToken }
+        chunk.forEach((id, k) => (params[`id${k}`] = id))
+        this.db.run(
+          `UPDATE jobs SET last_seen_at = :at WHERE source = :source AND ats_token = :token AND stage != 'closed' AND external_id IN (${names.join(', ')})`,
+          params
+        )
+      }
+    })
+  }
+
+  /**
    * External ids already stored for a board with a description, so a source can skip fetching details
    * for them. A stored posting that has no description yet is not known, so its detail is fetched again.
    */
+  /** External ids stored for a job site, so a search can skip the detail pages of postings it already has. */
+  knownIdsForSource(source: SourceKind): Set<string> {
+    const rows = this.db.all<{ external_id: string }>("SELECT external_id FROM jobs WHERE source = :source AND description != ''", { source })
+    return new Set(rows.map((r) => r.external_id))
+  }
+
   knownExternalIds(source: SourceKind, atsToken: string): Set<string> {
     const rows = this.db.all<{ external_id: string }>(
       "SELECT external_id FROM jobs WHERE source = :source AND ats_token = :token AND description != ''",
@@ -564,6 +664,7 @@ function rawParams(raw: RawJob) {
     url: raw.url,
     applyUrl: raw.applyUrl,
     description: raw.description,
-    postedAt: raw.postedAt
+    postedAt: raw.postedAt,
+    atsJobId: raw.atsJobId ?? null
   }
 }

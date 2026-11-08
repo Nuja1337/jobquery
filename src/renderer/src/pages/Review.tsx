@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
-import { ArrowRight, CheckCheck, Download, FileCheck, Inbox, MousePointerClick, RefreshCw, SkipForward, TriangleAlert } from 'lucide-react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { ArrowLeft, ArrowRight, CheckCheck, Download, FileCheck, Inbox, MousePointerClick, RefreshCw, SkipForward, TriangleAlert } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Application, ApplicationSummary, LintReport, PreparedAnswer } from '@shared/types'
 import { api } from '@renderer/lib/api'
@@ -12,15 +12,99 @@ import { FitBadge, StatusBadge } from '@renderer/components/badges'
 import { answerNeedsUser, isGuess } from '@shared/answers'
 import { AnswerField } from '@renderer/components/AnswerField'
 import { LintPanel } from '@renderer/components/LintPanel'
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Input, Kbd, Loading, Notice, Page, PageHeader, Textarea } from '@renderer/components/ui'
+import { CouldNotSendList, NeedsYouList } from '@renderer/components/ExceptionsInbox'
+import { ReviewAll } from '@renderer/components/ReviewAll'
+import { SentDigest } from '@renderer/components/SentDigest'
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBlock, Input, Kbd, Loading, Notice, Page, PageHeader, Tabs, Textarea } from '@renderer/components/ui'
 
 export function Review(): React.JSX.Element {
   const { id } = useParams()
+  return id ? <ReviewWorkspace id={id} /> : <ReviewOverview />
+}
+
+type ReviewTab = 'needs' | 'failed' | 'sent' | 'all'
+const TABS: ReviewTab[] = ['needs', 'failed', 'sent', 'all']
+
+/** What needs the person across all applications: shared questions, failures by reason, a sample of what went out. */
+function ReviewOverview(): React.JSX.Element {
   const navigate = useNavigate()
-  const queue = useAsync(() => api.listApplications({ statuses: ['ready', 'needs_attention'], limit: 200 }), [], ['applications:changed'])
+  const [params, setParams] = useSearchParams()
+  const found = params.get('tab') as ReviewTab | null
+  const tab: ReviewTab = found && TABS.includes(found) ? found : 'needs'
+  const exceptions = useAsync(() => api.listExceptions(), [], ['applications:changed'])
+  const data = exceptions.data
+
+  const setTab = (next: ReviewTab): void => setParams(next === 'needs' ? {} : { tab: next }, { replace: true })
+
+  if (exceptions.error && !data) {
+    return (
+      <Page>
+        <PageHeader title="Review" />
+        <ErrorBlock message={exceptions.error} onRetry={exceptions.reload} />
+      </Page>
+    )
+  }
+  if (!data) {
+    return (
+      <Page>
+        <PageHeader title="Review" />
+        <Loading />
+      </Page>
+    )
+  }
+
+  const openCount = data.totals.ready + data.totals.needsAttention
+  if (openCount === 0 && data.sent.today === 0 && data.sent.week === 0) {
+    return (
+      <Page>
+        <PageHeader title="Review" intro="Questions to answer once, applications that could not be sent, and a check of what went out." />
+        <EmptyState
+          icon={<Inbox size={24} />}
+          title="Nothing to review"
+          text="When JobPilot drafts an application, it shows up here. Prepare one from your shortlist, or turn on auto-prepare in Settings."
+          action={
+            <Button variant="primary" icon={<ArrowRight size={14} />} onClick={() => navigate('/jobs')}>
+              Go to the shortlist
+            </Button>
+          }
+        />
+      </Page>
+    )
+  }
+
+  const failed = data.couldNotSend.reduce((n, g) => n + g.count, 0)
+  return (
+    <Page wide>
+      <PageHeader
+        title="Review"
+        intro={`${plural(data.totals.ready, 'application')} ready to send. ${plural(data.totals.needsAttention, 'application')} need attention.`}
+      />
+      <div className="space-y-4">
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: 'needs', label: 'Needs you', count: data.needsYou.length },
+            { id: 'failed', label: "Couldn't send", count: failed },
+            { id: 'sent', label: 'Sent', count: data.sent.today },
+            { id: 'all', label: 'All', count: openCount }
+          ]}
+        />
+        {tab === 'needs' && <NeedsYouList groups={data.needsYou} onChanged={exceptions.reload} />}
+        {tab === 'failed' && <CouldNotSendList groups={data.couldNotSend} onChanged={exceptions.reload} />}
+        {tab === 'sent' && <SentDigest sent={data.sent} onChanged={exceptions.reload} />}
+        {tab === 'all' && <ReviewAll />}
+      </div>
+    </Page>
+  )
+}
+
+function ReviewWorkspace({ id }: { id: string }): React.JSX.Element {
+  const navigate = useNavigate()
+  const queue = useAsync(() => api.listApplications({ statuses: ['ready', 'needs_attention'], sort: 'fit', limit: 200 }), [], ['applications:changed'])
 
   const items = useMemo<ApplicationSummary[]>(() => [...(queue.data?.items ?? [])].sort((a, b) => (b.fitScore ?? 0) - (a.fitScore ?? 0) || a.createdAt.localeCompare(b.createdAt)), [queue.data])
-  const activeId = id ?? items[0]?.id
+  const activeId = id
   const index = items.findIndex((a) => a.id === activeId)
   const itemsRef = useRef(items)
   itemsRef.current = items
@@ -28,11 +112,6 @@ export function Review(): React.JSX.Element {
   const lastOrderRef = useRef<string[]>([])
   if (index >= 0) lastOrderRef.current = items.map((a) => a.id)
 
-  // Keep the open application in the address, so a reload of the queue can't swap it for another one.
-  const firstId = items[0]?.id
-  useEffect(() => {
-    if (!id && firstId) navigate(`/review/${firstId}`, { replace: true })
-  }, [id, firstId, navigate])
   /** True while the open application is being submitted. Switching away then would hide the result. */
   const [navLocked, setNavLocked] = useState(false)
 
@@ -80,33 +159,20 @@ export function Review(): React.JSX.Element {
       </Page>
     )
   }
-  if (items.length === 0 && !id) {
-    return (
-      <Page>
-        <PageHeader title="Review queue" intro="Applications that are drafted and waiting for your click." />
-        <EmptyState
-          icon={<Inbox size={24} />}
-          title="Nothing to review"
-          text="When JobPilot drafts an application, it shows up here. Prepare one from your shortlist, or turn on auto-prepare in Settings."
-          action={
-            <Button variant="primary" icon={<ArrowRight size={14} />} onClick={() => navigate('/jobs')}>
-              Go to the shortlist
-            </Button>
-          }
-        />
-      </Page>
-    )
-  }
-
   return (
     <Page wide>
       <PageHeader
         title="Review queue"
         intro="Check each draft, then click Submit."
         actions={
-          <span className="flex items-center gap-1.5 text-xs text-faint">
-            <Kbd>J</Kbd> next <Kbd>K</Kbd> previous
-          </span>
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1.5 text-xs text-faint">
+              <Kbd>J</Kbd> next <Kbd>K</Kbd> previous
+            </span>
+            <Link to="/review" className="flex items-center gap-1.5 text-sm text-accent-strong hover:underline">
+              <ArrowLeft size={14} /> All exceptions
+            </Link>
+          </div>
         }
       />
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[17rem_minmax(0,1fr)]">
@@ -134,7 +200,9 @@ export function Review(): React.JSX.Element {
             </button>
           ))}
         </nav>
-        <div className="min-w-0">{activeId && <ReviewDetail key={activeId} id={activeId} onLeave={advance} onSubmitting={setNavLocked} />}</div>
+        <div className="min-w-0">
+          <ReviewDetail key={activeId} id={activeId} onLeave={advance} onSubmitting={setNavLocked} />
+        </div>
       </div>
     </Page>
   )

@@ -1,10 +1,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import initSqlJs from 'sql.js'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { contentHash } from '../pipeline/dedupe'
-import { Db } from './database'
+import { Db, migrationHandle } from './database'
 import { MIGRATIONS } from './schema'
 
 describe('Db', () => {
@@ -50,110 +50,142 @@ describe('Db', () => {
   })
 })
 
-describe('Db saving', () => {
-  it('schedules a save after a transaction commits', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
-    const file = path.join(dir, 'tx.sqlite')
-    const db = await Db.open(file, { saveDelayMs: 20 })
-    db.flush()
-    db.transaction(() => db.run("INSERT INTO settings (key, value) VALUES ('tx', '1')"))
-    await new Promise((r) => setTimeout(r, 120))
-    const reopened = await Db.open(file)
-    expect(reopened.get<{ value: string }>("SELECT value FROM settings WHERE key = 'tx'")?.value).toBe('1')
-    db.close()
-    reopened.close()
-    fs.rmSync(dir, { recursive: true, force: true })
-  })
+describe('Db on disk', () => {
+  const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+  const insertJob = (db: Db, id: string) =>
+    db.run(
+      `INSERT INTO jobs (id, source, external_id, canonical_key, content_hash, company, company_norm, title, url, ats, description, discovered_at, stage, updated_at)
+       VALUES (:id, 'greenhouse', :id, :key, 'h', 'Acme', 'acme', 'Engineer', 'https://example.com', 'greenhouse', 'Text.', '2026-01-01T00:00:00.000Z', 'new', '2026-01-01T00:00:00.000Z')`,
+      { id, key: `greenhouse:acme:${id}` }
+    )
 
-  it('saves during a stream of writes instead of waiting for a pause', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
-    const file = path.join(dir, 'busy.sqlite')
-    const db = await Db.open(file, { saveDelayMs: 400 })
-    db.flush()
-    const started = Date.now()
-    // Write every 100ms for 3.6 seconds, so a pause long enough for the normal save never comes.
-    while (Date.now() - started < 3600) {
-      db.run('INSERT OR REPLACE INTO settings (key, value) VALUES (:k, :v)', { k: 'busy', v: String(Date.now()) })
-      await new Promise((r) => setTimeout(r, 100))
-    }
-    const reopened = await Db.open(file)
-    expect(reopened.get("SELECT value FROM settings WHERE key = 'busy'")).toBeDefined()
-    db.close()
-    reopened.close()
-    fs.rmSync(dir, { recursive: true, force: true })
-  }, 10_000)
-
-  it('opens the temp copy when the main file is damaged', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
-    const file = path.join(dir, 'damaged.sqlite')
+  it('opens a file written by the sql.js version and keeps its rows', async () => {
+    const dir = tempDir()
+    const file = path.join(dir, 'legacy.sqlite')
+    fs.copyFileSync(path.join(__dirname, '__fixtures__', 'legacy.sqlite'), file)
     const db = await Db.open(file)
-    db.run("INSERT INTO settings (key, value) VALUES ('kept', 'yes')")
+    expect(db.schemaVersion).toBe(MIGRATIONS.length)
+    expect(db.get<{ title: string; company: string }>("SELECT title, company FROM jobs WHERE id = 'legacy-1'")).toEqual({ title: 'Platform Engineer', company: 'Acme' })
     db.close()
-    fs.copyFileSync(file, `${file}.tmp`)
-    fs.writeFileSync(file, 'not a database')
-    const reopened = await Db.open(file)
-    expect(reopened.get<{ value: string }>("SELECT value FROM settings WHERE key = 'kept'")?.value).toBe('yes')
-    reopened.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  describe('a temp file left by a save that failed at the rename', () => {
-    async function setup(): Promise<{ dir: string; file: string }> {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
-      const file = path.join(dir, 'main.sqlite')
-      const db = await Db.open(file)
-      db.run("INSERT INTO settings (key, value) VALUES ('which', 'old')")
-      db.close()
-      return { dir, file }
-    }
-
-    /** A copy of the main file with a different value, standing in for the newest save. */
-    async function writeNewerTmp(file: string): Promise<void> {
-      const copy = `${file}.copy`
-      fs.copyFileSync(file, copy)
-      const db = await Db.open(copy)
-      db.run("UPDATE settings SET value = 'new' WHERE key = 'which'")
-      db.close()
-      fs.renameSync(copy, `${file}.tmp`)
-    }
-
-    const which = (db: Db) => db.get<{ value: string }>("SELECT value FROM settings WHERE key = 'which'")?.value
-
-    it('is used when it is newer than the main file and intact', async () => {
-      const { dir, file } = await setup()
-      await writeNewerTmp(file)
-      fs.utimesSync(file, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
-      const db = await Db.open(file)
-      expect(which(db)).toBe('new')
-      // The next save writes it to the main file.
-      db.close()
-      const again = await Db.open(file)
-      expect(which(again)).toBe('new')
-      again.close()
-      fs.rmSync(dir, { recursive: true, force: true })
+  it('writes 20,000 rows in a transaction quickly and a second open sees them after close', async () => {
+    const dir = tempDir()
+    const file = path.join(dir, 'many.sqlite')
+    const db = await Db.open(file)
+    const started = performance.now()
+    db.transaction(() => {
+      for (let i = 0; i < 20_000; i++) insertJob(db, `job-${i}`)
     })
+    expect(performance.now() - started).toBeLessThan(5000) // Generous, since the suite runs many files at once. Serial inserts would take far longer.
+    db.close()
+    const reopened = await Db.open(file)
+    expect(reopened.get<{ n: number }>('SELECT COUNT(*) AS n FROM jobs')?.n).toBe(20_000)
+    reopened.close()
+    expect(fs.existsSync(`${file}-wal`)).toBe(false)
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
 
-    it('is ignored when the main file is newer', async () => {
-      const { dir, file } = await setup()
-      await writeNewerTmp(file)
-      fs.utimesSync(`${file}.tmp`, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
-      const db = await Db.open(file)
-      expect(which(db)).toBe('old')
-      db.close()
-      fs.rmSync(dir, { recursive: true, force: true })
-    })
+  it('makes a committed write visible to another connection before close, and flush never throws', async () => {
+    const dir = tempDir()
+    const file = path.join(dir, 'live.sqlite')
+    const db = await Db.open(file)
+    db.run("INSERT INTO settings (key, value) VALUES ('live', '1')")
+    db.flush()
+    const other = await Db.open(file)
+    expect(other.get<{ value: string }>("SELECT value FROM settings WHERE key = 'live'")?.value).toBe('1')
+    other.close()
+    db.close()
+    expect(() => db.flush()).not.toThrow()
+    expect(() => db.close()).not.toThrow()
+    expect(db.saveError).toBeNull()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
 
-    it('is ignored when it is newer but cut short', async () => {
-      const { dir, file } = await setup()
-      await writeNewerTmp(file)
-      const bytes = fs.readFileSync(`${file}.tmp`)
-      fs.writeFileSync(`${file}.tmp`, bytes.subarray(0, Math.floor(bytes.length / 3)))
-      fs.utimesSync(file, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
-      const db = await Db.open(file)
-      expect(which(db)).toBe('old')
-      db.close()
-      fs.rmSync(dir, { recursive: true, force: true })
+  it('creates the folder for a new database file', async () => {
+    const dir = tempDir()
+    const db = await Db.open(path.join(dir, 'nested', 'deeper', 'new.sqlite'))
+    expect(db.schemaVersion).toBe(MIGRATIONS.length)
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('refuses a file that is not a database', async () => {
+    const dir = tempDir()
+    const file = path.join(dir, 'bad.sqlite')
+    fs.writeFileSync(file, 'not a database, but long enough that SQLite does not read it as an empty file '.repeat(5))
+    await expect(Db.open(file)).rejects.toThrow()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('Db values', () => {
+  it('binds booleans and undefined in positional and named params', async () => {
+    const db = await Db.open(null)
+    expect(db.get('SELECT ? AS a, ? AS b, typeof(?) AS t, typeof(?) AS u', [true, undefined, 5, 2.5])).toEqual({ a: 1, b: null, t: 'integer', u: 'real' })
+    db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['count', 7 as unknown as string])
+    expect(db.get<{ value: string }>("SELECT value FROM settings WHERE key = 'count'")?.value).toBe('7')
+    db.run('INSERT INTO providers (id, kind, label, base_url, created_at) VALUES (:id, :kind, :label, :base_url, :created_at)', {
+      id: 'p', kind: 'openai', label: 'p', base_url: undefined, created_at: 'x'
     })
+    expect(db.get<{ base_url: string | null }>("SELECT base_url FROM providers WHERE id = 'p'")?.base_url).toBeNull()
+  })
+
+  it('round-trips a Uint8Array and returns plain objects', async () => {
+    const db = await Db.open(null)
+    db.run('CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)')
+    db.run('INSERT INTO blobs (id, data) VALUES (:id, :data)', { id: 1, data: new Uint8Array([1, 2, 3]) })
+    const row = db.get<{ id: number; data: Uint8Array }>('SELECT * FROM blobs')!
+    expect(Array.from(row.data)).toEqual([1, 2, 3])
+    expect(Object.getPrototypeOf(row)).toBe(Object.prototype)
+  })
+
+  it('returns COUNT, SUM and length() as numbers', async () => {
+    const db = await Db.open(null)
+    db.run("INSERT INTO settings (key, value) VALUES ('a', 'xyz'), ('b', 'xy')")
+    const row = db.get<{ n: unknown; total: unknown; len: unknown }>("SELECT COUNT(*) AS n, SUM(length(value)) AS total, length('abc') AS len FROM settings")!
+    expect(row).toEqual({ n: 2, total: 5, len: 3 })
+  })
+
+  it('runs a parameterless run with several statements', async () => {
+    const db = await Db.open(null)
+    db.run("INSERT INTO settings (key, value) VALUES ('a', '1'); INSERT INTO settings (key, value) VALUES ('b', '2')")
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM settings')?.n).toBe(2)
+  })
+})
+
+describe('Db transactions', () => {
+  it('lets nested calls join the outer transaction and rolls everything back on a throw', async () => {
+    const db = await Db.open(null)
+    expect(() =>
+      db.transaction(() => {
+        db.run("INSERT INTO settings (key, value) VALUES ('outer', '1')")
+        db.transaction(() => db.run("INSERT INTO settings (key, value) VALUES ('inner', '1')"))
+        throw new Error('boom')
+      })
+    ).toThrow('boom')
+    expect(db.get('SELECT * FROM settings')).toBeUndefined()
+    // The failed transaction leaves the database usable.
+    expect(db.transaction(() => 7)).toBe(7)
+  })
+
+  it('returns the value of fn and commits', async () => {
+    const db = await Db.open(null)
+    const value = db.transaction(() => {
+      db.run("INSERT INTO settings (key, value) VALUES ('k', 'v')")
+      return 'done'
+    })
+    expect(value).toBe('done')
+    expect(db.get<{ value: string }>("SELECT value FROM settings WHERE key = 'k'")?.value).toBe('v')
+  })
+
+  it('reports a failed write through saveError until the next good write', async () => {
+    const db = await Db.open(null)
+    expect(() => db.run('INSERT INTO no_such_table (x) VALUES (1)')).toThrow()
+    expect(db.saveError).toBeInstanceOf(Error)
+    db.run("INSERT INTO settings (key, value) VALUES ('k', 'v')")
+    expect(db.saveError).toBeNull()
   })
 })
 
@@ -162,11 +194,13 @@ describe('migration 3', () => {
 
   /** A database file at schema version 2, as an installed app would have it. */
   async function oldDatabase(setup: (insertJob: (row: Row) => void, run: (sql: string, params?: Array<string | number | null>) => void) => void) {
-    const SQL = await initSqlJs()
-    const raw = new SQL.Database()
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const file = path.join(dir, 'old.sqlite')
+    const raw = new DatabaseSync(file)
+    const rawRun = (sql: string, params: Array<string | number | null> = []) => void raw.prepare(sql).run(...params)
     raw.exec(MIGRATIONS[0] as string)
     raw.exec(MIGRATIONS[1] as string)
-    raw.run("INSERT INTO meta (key, value) VALUES ('schema_version', '2')")
+    rawRun("INSERT INTO meta (key, value) VALUES ('schema_version', '2')")
     const insertJob = (row: Row) => {
       const full: Record<string, string | number | null> = {
         source: 'greenhouse',
@@ -186,12 +220,10 @@ describe('migration 3', () => {
         ...row
       }
       const names = Object.keys(full)
-      raw.run(`INSERT INTO jobs (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`, names.map((n) => full[n]))
+      rawRun(`INSERT INTO jobs (${names.join(', ')}) VALUES (${names.map(() => '?').join(', ')})`, names.map((n) => full[n]))
     }
-    setup(insertJob, (sql, params) => raw.run(sql, params))
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
-    const file = path.join(dir, 'old.sqlite')
-    fs.writeFileSync(file, raw.export())
+    setup(insertJob, rawRun)
+    raw.close()
     const db = await Db.open(file)
     return { db, dir }
   }
@@ -284,29 +316,29 @@ describe('migration 3', () => {
 
 describe('migration 4', () => {
   it('adds the free-tier columns to a version 3 database and marks local providers free', async () => {
-    const SQL = await initSqlJs()
-    const raw = new SQL.Database()
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
+    const file = path.join(dir, 'v3.sqlite')
+    const raw = new DatabaseSync(file)
+    const rawRun = (sql: string, params: Array<string | number | null> = []) => void raw.prepare(sql).run(...params)
     raw.exec(MIGRATIONS[0] as string)
     raw.exec(MIGRATIONS[1] as string)
-    ;(MIGRATIONS[2] as (db: typeof raw) => void)(raw)
-    raw.run("INSERT INTO meta (key, value) VALUES ('schema_version', '3')")
+    ;(MIGRATIONS[2] as (db: unknown) => void)(migrationHandle(raw))
+    rawRun("INSERT INTO meta (key, value) VALUES ('schema_version', '3')")
     const provider = (id: string, kind: string, baseUrl: string | null) =>
-      raw.run("INSERT INTO providers (id, kind, label, base_url, created_at) VALUES (?, ?, ?, ?, '2026-01-01T00:00:00.000Z')", [id, kind, id, baseUrl])
+      rawRun("INSERT INTO providers (id, kind, label, base_url, created_at) VALUES (?, ?, ?, ?, '2026-01-01T00:00:00.000Z')", [id, kind, id, baseUrl])
     provider('ollama', 'ollama', null)
     provider('lmstudio', 'openai_compatible', 'http://localhost:1234/v1')
     provider('loopback', 'openai_compatible', 'http://127.0.0.1:8080/v1')
     provider('openai', 'openai', null)
     provider('groq', 'openai_compatible', 'https://api.groq.com/openai/v1')
     provider('not-local', 'openai_compatible', 'https://localhost.example.com/v1')
-    raw.run(
+    rawRun(
       "INSERT INTO llm_calls (id, at, task, stage, provider_kind, model) VALUES ('c1', '2026-01-02T00:00:00.000Z', 'triage', 'triage', 'ollama', 'llama'), ('c2', '2026-01-02T00:00:00.000Z', 'triage', 'triage', 'openai', 'gpt-5')"
     )
-    raw.run(
+    rawRun(
       "INSERT INTO jobs (id, source, external_id, canonical_key, content_hash, company, company_norm, title, url, description, discovered_at, stage, updated_at) VALUES ('j1', 'greenhouse', '1', 'k1', 'h', 'Acme', 'acme', 'Engineer', 'https://example.com', 'Text.', '2026-01-01T00:00:00.000Z', 'new', '2026-01-01T00:00:00.000Z')"
     )
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpilot-db-'))
-    const file = path.join(dir, 'v3.sqlite')
-    fs.writeFileSync(file, raw.export())
+    raw.close()
 
     const db = await Db.open(file)
     expect(db.schemaVersion).toBe(MIGRATIONS.length)

@@ -1,0 +1,129 @@
+{
+  "updatedAt": 1794098317,
+  "offset": 0,
+  "limit": 20,
+  "totalCount": 197,
+  "nextCursor": "MjAyNi0xMS0wN1QyMzo0NDoyNS43ODQ3ODZafDI1MjMyNzQ",
+  "jobs": [
+    {
+      "title": "Gameplay Engineer",
+      "excerpt": "At Gardens Interactive, we're building games centered on connection, collective adventure, and emergent stories.",
+      "companyName": "Gardens Interactive",
+      "companySlug": "gardens-interactive",
+      "employmentType": "Full Time",
+      "minSalary": 155000,
+      "maxSalary": 171000,
+      "salaryPeriod": "annual",
+      "seniority": [
+        "Mid-level"
+      ],
+      "currency": "USD",
+      "locationRestrictions": [
+        "United States"
+      ],
+      "timezoneRestrictions": [
+        -10,
+        -9,
+        -8,
+        -7,
+        -6,
+        -5,
+        14
+      ],
+      "categories": [
+        "Gameplay-Engineer",
+        "Game-Engineer",
+        "Gameplay-Programmer",
+        "Gameplay-Developer",
+        "Developer"
+      ],
+      "parentCategories": [
+        "Developer"
+      ],
+      "description": "<p>At <a href=\"https://himalayas.app/companies/gardens-interactive\">Gardens Interactive</a>, we're building games centered on connection, collective adventure, and emergent stories. We believe the spirit with which we build games is reflected in the experiences our players have. The way we collaborate, solve problems, navigate uncertainty, and care for one another ultimately shapes the worlds we create. We're creating magical, shared experiences that bring players together and we know those experiences come from teams that are curious, resilient, ambitious, and deeply committed to one another.</p><p>We're a fully remote studio that embraces collaboration, thoughtful iteration, and the courage to explore new ideas. If you're excited by ambiguity, enjoy solving difficult problems with kind, talented teammates, and want to help build worlds where friendships flourish, we'd love to meet you.</p><p>As a Gameplay Engineer, you will craft tactile and immersive gameplay systems that will fuel the adventure and enable the stories within our games. You will partner with designers to understand the vision and intent behind game features, realize those features in Unreal using C++ and Blueprints, and apply your architectural expertise to enable the iterative development and evolution of our game. You will be a key player in connecting our players to the game world and enabling them to explore, interact and create memorable multiplayer moments.</p><h3>A Day in the Life:</h3><p>Originally posted on <a href=\"https://himalayas.app\">Himalayas</a></p>",
+      "pubDate": 1794098317,
+      "expiryDate": 1799282315,
+      "applicationLink": "https://himalayas.app/companies/gardens-interactive/jobs/gameplay-engineer?utm_source=api",
+      "guid": "https://himalayas.app/companies/gardens-interactive/jobs/gameplay-engineer"
+    },
+    {
+      "title": "Gameplay Tools Engineer",
+      "excerpt": "At Gardens Interactive, we're building games centered on connection, collective adventure, and emergent stories.",
+      "companyName": "Gardens Interactive",
+      "companySlug": "gardens-interactive",
+      "employmentType": "Full Time",
+      "minSalary": null,
+      "maxSalary": null,
+      "salaryPeriod": "annual",
+      "seniority": [
+        "Mid-level",
+        "Senior"
+      ],
+      "currency": null,
+      "locationRestrictions": [
+        "United States"
+      ],
+      "timezoneRestrictions": [
+        -10,
+        -9,
+        -8,
+        -7,
+        -6,
+        -5,
+        14
+      ],
+      "categories": [
+        "Gameplay-Tools-Engineer",
+        "Game-Tools-Developer",
+        "Developer-Tools-Engineer"
+      ],
+      "parentCategories": [],
+      "description": "<p>At <a href=\"https://himalayas.app/companies/gardens-interactive\">Gardens Interactive</a>, we're building games centered on connection, collective adventure, and emergent stories. We believe the spirit with which we build games is reflected in the experiences our players have. The way we collaborate, solve problems, navigate uncertainty, and care for one another ultimately shapes the worlds we create. We're creating magical, shared experiences that bring players together and we know those experiences come from teams that are curious, resilient, ambitious, and deeply committed to one another.</p><p>We're a fully remote studio that embraces collaboration, thoughtful iteration, and the courage to explore new ideas. If you're excited by ambiguity, enjoy solving difficult problems with kind, talented teammates, and want to help build worlds where friendships flourish, we'd love to meet you.</p><p>As a Gameplay Tools Engineer, you will create custom Unreal Engine tools that support teams across the studio. You will partner with stakeholders to understand the unique needs of their iteration workflows and author bespoke tools using C++ within the Unreal editor and in-game environments that will accelerate those pipelines. You will be a force-multipler for the team, enabling rapid exploration of new features and comprehensive analysis of and decision-making regarding the breadth of content that powers the emergent interactions of our games.</p><h3>A Day in the Life:</h3><p>Apply at <a href=\"https://job-boards.greenhouse.io/gardens/jobs/4412345001?gh_src=himalayas\">our careers page</a>.</p><p>Originally posted on <a href=\"https://himalayas.app\">Himalayas</a></p>",
+      "pubDate": 1794095476,
+      "expiryDate": 1799279474,
+      "applicationLink": "https://himalayas.app/companies/gardens-interactive/jobs/gameplay-tools-engineer?utm_source=api",
+      "guid": "https://himalayas.app/companies/gardens-interactive/jobs/gameplay-tools-engineer"
+    },
+    {
+      "title": "Panda3D Game Develope - Remote",
+      "excerpt": "Job Description: Python Game Developer (Panda3D)Job Type: Contract Location: Remote About the RoleWe are seeking experienced Panda3D Developers to contribute to",
+      "companyName": "YO AI Labs",
+      "companySlug": "yo-ai-labs",
+      "employmentType": "Contractor",
+      "minSalary": 40,
+      "maxSalary": 60,
+      "salaryPeriod": "hourly",
+      "seniority": [
+        "Mid-level"
+      ],
+      "currency": "USD",
+      "locationRestrictions": [
+        "United States"
+      ],
+      "timezoneRestrictions": [
+        -10,
+        -9,
+        -8,
+        -7,
+        -6,
+        -5,
+        14
+      ],
+      "categories": [
+        "Game-Developer",
+        "Python-Game-Developer",
+        "3D-Graphics-Developer",
+        "Game-Programmer",
+        "Software-Engineer"
+      ],
+      "parentCategories": [
+        "Developer"
+      ],
+      "description": "<h3>Job Description: Python Game Developer (Panda3D)</h3><p><strong>Job Type:</strong> Contract<br><strong>Location:</strong> Remote</p><h3>About the Role</h3><p>We are seeking experienced <strong>Panda3D Developers</strong> to contribute to an AI training project. In this role, you will use Panda3D to perform real-world 3D game development tasks and explain your workflows step by step. Your expertise will help enhance AI systems' understanding of game development, 3D graphics, and interactive simulations.</p><p>Originally posted on <a href=\"https://himalayas.app\">Himalayas</a></p>",
+      "pubDate": 1794076561,
+      "expiryDate": 1700000000,
+      "applicationLink": "https://himalayas.app/companies/yo-ai-labs/jobs/panda3d-game-develope-remote?utm_source=api",
+      "guid": "https://himalayas.app/companies/yo-ai-labs/jobs/panda3d-game-develope-remote"
+    }
+  ]
+}

@@ -1,14 +1,16 @@
 import path from 'node:path'
-import type { Page } from 'playwright-core'
-import { AUTO_SUBMIT_MIN_CONFIDENCE, answerNeedsUser, isGuess } from '@shared/answers'
+import type { Frame, Page } from 'playwright-core'
+import { AUTO_SUBMIT_MIN_CONFIDENCE, answerNeedsUser, isGuess, isUnreviewedLive } from '@shared/answers'
 import type { Application, ApplicationStatus, FormField, Job, PreparedAnswer, Settings } from '@shared/types'
 import { answerFields, COVER_LETTER_PDF, type AnswerDeps } from './answers'
 import { type BrowserManager, readForm } from './browser'
+import { previouslyAppliedAnswer } from './companyQuestions'
 import type { ExtractedField } from './extractScript'
-import { mustAskUser } from './fieldMap'
+import { mustAskUser, wasAgreedBySettings } from './fieldMap'
 import { fillForm, matchAnswers, readComboboxOptions, toFormField } from './fill'
+import { isJobBoardUrl } from './jobBoards'
 import { applyUrlFor } from './prepare'
-import { captureBaseline, clickSubmit, waitForOutcome, waitForUserToFinish } from './submit'
+import { captureBaseline, clickSubmit, hasMorePages, waitForOutcome, waitForUserToFinish } from './submit'
 
 export { AUTO_SUBMIT_MIN_CONFIDENCE }
 
@@ -19,6 +21,8 @@ export interface SubmitRunDeps {
   /** Renders the cover letter PDF and returns its path. */
   renderCoverLetter: (text: string) => Promise<string>
   screenshotsDir: string
+  /** Stores a cover letter written during the live fill, for forms that could not be read ahead of time. */
+  saveCoverLetter?: (text: string) => void
   /**
    * Called with the time right before auto mode clicks Submit, and with null if no button was
    * clicked after all. Stored at once, so even a crash mid-submit never leads to a second click.
@@ -47,6 +51,8 @@ export interface SubmitRunResult {
   answers: PreparedAnswer[]
   formFields: FormField[]
   costUsd: number
+  /** True when autopilot filled the form in a dry run and closed it. Nothing was sent. */
+  dryRun?: boolean
   /**
    * Settles when the user finishes in the browser (assist mode, a captcha, a fix). Confirmed means a
    * new confirmation page appeared. Null when there's nothing left to wait for.
@@ -62,6 +68,8 @@ async function screenshot(page: Page, dir: string, appId: string): Promise<strin
 }
 
 interface PageFill {
+  /** The frame the form was read from. */
+  frame: Frame
   fieldCount: number
   /** Required fields with no answer, and any answer flagged for the user. */
   flagged: string[]
@@ -69,7 +77,11 @@ interface PageFill {
   unsure: string[]
   /** Fields first seen on the live form, so they weren't on the draft the user could review. */
   unreviewed: string[]
-  /** Questions only the user may answer (AI use, legal, consent), filled from their saved answers. */
+  /**
+   * Questions only the user may answer (AI use, legal, consent) that were filled with something
+   * the user didn't just see settle. Unticked optional boxes, boxes Settings agreed to, and saved
+   * answers when Settings allows sending them are left out.
+   */
   userOnly: string[]
   failures: string[]
 }
@@ -89,14 +101,63 @@ export async function runSubmission(
 ): Promise<SubmitRunResult> {
   const page = await deps.browser.newVisiblePage(deps.settings.browser)
   await page.bringToFront().catch(() => {})
-  await page.goto(applyUrlFor(job), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  try {
+    await page.goto(applyUrlFor(job), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  } catch (err) {
+    // A page that never loaded would stay open with nobody watching it.
+    await page.close().catch(() => {})
+    throw err
+  }
+
+  // Whether the Submit click was recorded and not taken back. Once it was, a person has to look at the tab.
+  const click = { recorded: false }
+  const tracked: SubmitRunDeps = {
+    ...deps,
+    recordSubmitClick: (at) => {
+      const accepted = deps.recordSubmitClick(at)
+      click.recorded = at !== null && accepted
+      return accepted
+    }
+  }
+  try {
+    return await fillAndSubmit(tracked, page, job, app, mode, by, click)
+  } catch (err) {
+    // Nobody is watching an unattended run, so a failure must not leave its tab open.
+    if (by === 'autopilot' && !click.recorded && !deps.settings.browser.keepOpen) await page.close().catch(() => {})
+    throw err
+  }
+}
+
+async function fillAndSubmit(
+  deps: SubmitRunDeps,
+  page: Page,
+  job: Job,
+  app: Application,
+  mode: 'assist' | 'auto',
+  by: 'user' | 'autopilot',
+  click: { recorded: boolean }
+): Promise<SubmitRunResult> {
+  /**
+   * An unattended run that did not click Submit has nothing left for a person to do in the tab. It
+   * takes a screenshot, closes the tab and stops watching. A run that clicked, or one the user
+   * started, keeps its tab and its watcher.
+   */
+  const unattended = (): boolean => by === 'autopilot' && !click.recorded
+  const leave = async (result: Omit<SubmitRunResult, 'completion'>, watcher: (() => Promise<SubmitCompletion>) | null): Promise<SubmitRunResult> => {
+    if (!unattended()) return { ...result, completion: watcher ? watcher() : null }
+    const shot = result.screenshotPath ?? (await screenshot(page, deps.screenshotsDir, app.id))
+    if (!deps.settings.browser.keepOpen) await page.close().catch(() => {})
+    return { ...result, screenshotPath: shot, completion: null }
+  }
 
   let costUsd = 0
   const answers = [...app.answers]
   const formFields = [...app.formFields]
   let coverPdf: string | null = null
+  /** The letter on the draft, or one written during the fill when the live form asked for it. */
+  let letterText: string | null = app.coverLetter
   const files = async () => {
-    if (!coverPdf && app.coverLetter) coverPdf = await deps.renderCoverLetter(app.coverLetter)
+    if (!coverPdf && letterText) coverPdf = await deps.renderCoverLetter(letterText)
     return { resume: deps.answerDeps.resumePath, coverLetter: coverPdf }
   }
 
@@ -111,21 +172,40 @@ export async function runSubmission(
     for (const f of fresh) filledIds.add(f.jpId)
     const toFill = pass.keepExisting ? fresh.filter((f) => !f.hasValue) : fresh
     const { matched, unmatched } = matchAnswers(toFill, answers)
-    const unreviewed: string[] = []
+    // "Have you applied to us before?" depends on the log of applications, which changes between the
+    // draft and the fill. An earlier application may have been sent since, so the answer is worked out again.
+    for (const m of matched) {
+      if (m.answer.rule !== 'previously_applied') continue
+      const fresh = previouslyAppliedAnswer(toFormField(m.field), job.company, deps.answerDeps.previouslyApplied)
+      const next: PreparedAnswer = {
+        ...m.answer,
+        ...(fresh ?? { value: '', source: 'settings' as const, confidence: 0, needsUser: m.answer.required || m.field.required, note: 'You applied here before. Answer this yourself.' })
+      }
+      const at = answers.indexOf(m.answer)
+      if (at !== -1) answers[at] = next
+      m.answer = next
+    }
     if (unmatched.length) {
       const newFields = unmatched.map(toFormField)
-      const res = await answerFields(deps.answerDeps, job, newFields, app.coverLetter)
+      // A form read for the first time here may ask for a cover letter that the draft never had.
+      const wantsLetter = !letterText && newFields.some((f) => f.fileHint === 'cover_letter' || /cover\s*letter/i.test(f.label))
+      const res = await answerFields(deps.answerDeps, job, newFields, letterText, { writeCoverLetter: wantsLetter })
+      if (res.letter && !res.letter.needsInput) {
+        letterText = res.letter.text
+        deps.saveCoverLetter?.(letterText)
+      }
       costUsd += res.costUsd
-      answers.push(...res.answers)
+      // Whatever filled these (the profile, a saved answer or the AI), nobody saw them before now. The flag
+      // stays until a person saves the application, so a later run does not take them for reviewed answers.
+      const written = res.answers.map((a) => ({ ...a, liveOnly: true }))
+      answers.push(...written)
       formFields.push(...newFields)
       for (const field of unmatched) {
-        const answer = res.answers.find((a) => a.fieldKey === field.key)
-        if (!answer) continue
-        matched.push({ field, answer })
-        // Whatever filled it (the profile, a saved answer or the AI), nobody saw this answer before now.
-        if (field.type !== 'file' && answer.value !== '') unreviewed.push(field.label || field.key)
+        const answer = written.find((a) => a.fieldKey === field.key)
+        if (answer) matched.push({ field, answer })
       }
     }
+    const unreviewed = matched.filter((m) => isUnreviewedLive(m.answer)).map((m) => m.field.label || m.field.key)
     const usesCoverPdf = matched.some((m) => m.answer.value === COVER_LETTER_PDF || m.field.fileHint === 'cover_letter')
     const fileSet = usesCoverPdf ? await files() : { resume: deps.answerDeps.resumePath, coverLetter: null }
     const failures = await fillForm(page, snap.frame, matched, fileSet)
@@ -134,11 +214,18 @@ export async function runSubmission(
       .filter((m) => m.field.type !== 'file' && answerNeedsUser({ ...m.answer, required: m.answer.required || m.field.required }))
       .map(label)
     const unsure = matched.filter((m) => isGuess(m.answer)).map(label)
+    const { tickRequiredConsent, sendSavedUserAnswers } = deps.settings.autopilot
     const userOnly = matched
       .filter((m) => m.field.type !== 'file' && !m.answer.needsUser && m.answer.value !== '' && (mustAskUser(m.field) || mustAskUser(m.answer)))
+      // An unticked box says nothing on the person's behalf.
+      .filter((m) => !(m.field.type === 'checkbox' && m.answer.value !== 'true'))
+      .filter((m) => !(tickRequiredConsent && wasAgreedBySettings(m.answer)))
+      // The person wrote these themselves, in the answer bank or on the draft, and Settings lets autopilot send them.
+      .filter((m) => !(sendSavedUserAnswers && (m.answer.source === 'answer_bank' || m.answer.source === 'user')))
       .map(label)
     const missingFiles = matched.filter((m) => m.field.type === 'file' && m.field.required && failures.some((f) => f.label === label(m))).map(label)
     return {
+      frame: snap.frame,
       fieldCount: snap.fields.length,
       flagged: [...flagged, ...missingFiles],
       unsure,
@@ -155,12 +242,12 @@ export async function runSubmission(
     const message = LOGIN_WALL.test(text) || (await page.locator('input[type="password"]').count()) > 0
       ? 'This site wants you to sign in first. Sign in in the browser window, then press Fill again. The browser remembers the login next time.'
       : 'No form fields were found on this page. Open the application in the browser window and click its Apply button, then press Fill again.'
-    return { ok: false, status: 'needs_attention', message, screenshotPath: null, confirmation: null, answers, formFields, costUsd, completion: null }
+    return leave({ ok: false, status: 'needs_attention', message, screenshotPath: null, confirmation: null, answers, formFields, costUsd }, null)
   }
 
   // Everything on the page now (descriptions included) is the baseline. Only a confirmation that
   // appears after this point, with the form gone or the page changed, counts as submitted.
-  const baseline = await captureBaseline(page)
+  const baseline = await captureBaseline(page, first.frame)
 
   // Keeps filling new pages until a confirmation appears or the user closes the tab. It never
   // clicks anything itself, so only the user can move the form forward or send it.
@@ -203,11 +290,29 @@ export async function runSubmission(
   // answer. Autopilot leaves them. When the user presses Submit on the Review page, they have seen
   // the answer on the draft and it's their call.
   if (by === 'autopilot') {
-    problems.push(...first.userOnly.map((l) => `"${l}" is a question you answer yourself, so autopilot won't send it. Check it and press Submit on the Review page`))
+    problems.push(...first.userOnly.map((l) => `"${l}" is a question you answer yourself, so autopilot won't send it unless Settings allows it. Check it and press Submit on the Review page`))
   }
 
   if (deps.settings.autopilot.dryRun) {
     const shot = await screenshot(page, deps.screenshotsDir, app.id)
+    // Autopilot has nobody to look at the tab. The screenshot shows the filled form, and the application
+    // goes back to the queue marked as dry-run, so the same form is not filled again and again.
+    if (by === 'autopilot') {
+      if (!deps.settings.browser.keepOpen) await page.close().catch(() => {})
+      // A dry run that met a problem is not ready. A person has to look at it, and the real run would stop at the same place.
+      return {
+        ok: problems.length === 0,
+        status: problems.length ? 'needs_attention' : 'ready',
+        message: `Dry run: filled and not sent.${problems.length ? ` ${problems.slice(0, 4).join('. ')}.` : ''} See the screenshot.`,
+        screenshotPath: shot,
+        confirmation: null,
+        answers,
+        formFields,
+        costUsd,
+        dryRun: true,
+        completion: null
+      }
+    }
     return {
       ok: true,
       status: 'submitting',
@@ -223,37 +328,75 @@ export async function runSubmission(
 
   // Auto mode only clicks when every answer is settled, confident and was reviewed.
   if (problems.length) {
-    return {
-      ok: false,
-      status: 'needs_attention',
-      message: `Didn't submit. ${problems.slice(0, 4).join('. ')}. Fix it in the browser and press submit there.`,
-      screenshotPath: null,
-      confirmation: null,
-      answers,
-      formFields,
-      costUsd,
-      completion: watch()
-    }
+    return leave(
+      {
+        ok: false,
+        status: 'needs_attention',
+        message: `Didn't submit. ${problems.slice(0, 4).join('. ')}. Fix it in the browser and press submit there.`,
+        screenshotPath: null,
+        confirmation: null,
+        answers,
+        formFields,
+        costUsd
+      },
+      watch
+    )
   }
 
   const snap = await readForm(page, { clickApply: false })
-  const preClick = await captureBaseline(page)
+  // A job board lists other companies' jobs. A button there belongs to a search or a newsletter.
+  if (isJobBoardUrl(page.url())) {
+    return leave(
+      {
+        ok: false,
+        status: 'needs_attention',
+        message: "This page is a job board, not the employer's form. Open the posting and apply on the company's site.",
+        screenshotPath: null,
+        confirmation: null,
+        answers,
+        formFields,
+        costUsd
+      },
+      watch
+    )
+  }
+  if (await hasMorePages(snap.frame)) {
+    return leave(
+      {
+        ok: false,
+        status: 'needs_attention',
+        message: 'This form has more than one page. Use Fill and let me submit, then press Next and Submit in the browser.',
+        screenshotPath: null,
+        confirmation: null,
+        answers,
+        formFields,
+        costUsd
+      },
+      watch
+    )
+  }
+  const preClick = await captureBaseline(page, snap.frame)
   if (!deps.recordSubmitClick(new Date().toISOString())) {
-    return {
-      ok: false,
-      status: 'needs_attention',
-      message: "Didn't submit. The application changed while the form was being filled, so the app left it for you.",
-      screenshotPath: null,
-      confirmation: null,
-      answers,
-      formFields,
-      costUsd,
-      completion: watch()
-    }
+    return leave(
+      {
+        ok: false,
+        status: 'needs_attention',
+        message: "Didn't submit. Autopilot was paused or the application changed while the form was being filled, so the app left it for you.",
+        screenshotPath: null,
+        confirmation: null,
+        answers,
+        formFields,
+        costUsd
+      },
+      watch
+    )
   }
   if (!(await clickSubmit(snap.frame))) {
     deps.recordSubmitClick(null)
-    return { ok: false, status: 'needs_attention', message: "Couldn't find the submit button. Press it in the browser window.", screenshotPath: null, confirmation: null, answers, formFields, costUsd, completion: watch() }
+    return leave(
+      { ok: false, status: 'needs_attention', message: "Couldn't find the submit button. Press it in the browser window.", screenshotPath: null, confirmation: null, answers, formFields, costUsd },
+      watch
+    )
   }
 
   const outcome = await waitForOutcome(page, snap.frame, preClick)

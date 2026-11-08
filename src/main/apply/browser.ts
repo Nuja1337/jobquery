@@ -9,12 +9,29 @@ import { EXTRACT_FIELDS_SCRIPT, type ExtractedField } from './extractScript'
  * LinkedIn and so on) stay signed in between runs. A separate headless browser reads forms
  * in the background while applications are being prepared.
  */
+/** Playwright's default is no limit on evaluate and waits. A stuck page then blocks an unattended run for good. */
+const PAGE_TIMEOUT_MS = 30_000
+
+/**
+ * Rejects when a page script takes longer than the limit. Playwright's default timeout covers
+ * waits and clicks but not frame.evaluate, so a page stuck in a loop would hang the run.
+ */
+export function withTimeout<T>(work: Promise<T>, ms = PAGE_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('The page took too long to answer.')), ms)
+  })
+  return Promise.race([work, limit]).finally(() => clearTimeout(timer))
+}
+
 export class BrowserManager {
   private visible: BrowserContext | null = null
   private headless: Browser | null = null
   // Two callers asking at once share one launch instead of starting two browsers.
   private visibleLaunch: Promise<BrowserContext> | null = null
   private headlessLaunch: Promise<Browser> | null = null
+  /** Blank tabs already handed to a caller, so two submits never share one. */
+  private readonly claimed = new Set<Page>()
 
   constructor(private readonly profileDir: string) {}
 
@@ -82,8 +99,12 @@ export class BrowserManager {
 
   async newVisiblePage(settings: BrowserSettings): Promise<Page> {
     const ctx = await this.visibleContext(settings)
-    const blank = ctx.pages().find((p) => p.url() === 'about:blank')
-    return blank ?? ctx.newPage()
+    const blank = ctx.pages().find((p) => p.url() === 'about:blank' && !this.claimed.has(p))
+    const page = blank ?? (await ctx.newPage())
+    this.claimed.add(page)
+    page.once('close', () => this.claimed.delete(page))
+    page.setDefaultTimeout(PAGE_TIMEOUT_MS)
+    return page
   }
 
   async headlessPage(settings: BrowserSettings): Promise<Page> {
@@ -94,6 +115,7 @@ export class BrowserManager {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
     })
     const page = await ctx.newPage()
+    page.setDefaultTimeout(PAGE_TIMEOUT_MS)
     page.on('close', () => void ctx.close().catch(() => {}))
     return page
   }
@@ -146,14 +168,47 @@ export async function readForm(page: Page, options: { clickApply?: boolean } = {
 async function bestFrame(page: Page): Promise<FormSnapshot> {
   let best: FormSnapshot = { frame: page.mainFrame(), fields: [] }
   for (const frame of page.frames()) {
+    // Challenge frames hold a puzzle, not the application.
+    if (frame !== page.mainFrame() && isBotCheckHost(frame.url())) continue
     try {
-      const fields = (await frame.evaluate(EXTRACT_FIELDS_SCRIPT)) as ExtractedField[]
+      const fields = (await withTimeout(frame.evaluate(EXTRACT_FIELDS_SCRIPT))) as ExtractedField[]
       if (fields.length > best.fields.length) best = { frame, fields }
     } catch {
       // Cross-origin frames that are still loading can throw. Skip them.
     }
   }
   return best
+}
+
+const BOT_CHECK_HOSTS =
+  /(^|\.)(captcha-delivery\.com|recaptcha\.net|hcaptcha\.com|challenges\.cloudflare\.com|perimeterx\.net|px-cdn\.net|px-cloud\.net|px-client\.net|humansecurity\.com)$/
+const PX_HOSTS = /(^|\.)(perimeterx\.net|px-cdn\.net|px-cloud\.net|px-client\.net|humansecurity\.com)$/
+const DATADOME_HOST = /(^|\.)captcha-delivery\.com$/
+
+function hostOf(url: string): { host: string; path: string } | null {
+  try {
+    const u = new URL(url)
+    return { host: u.hostname.toLowerCase(), path: u.pathname }
+  } catch {
+    return null
+  }
+}
+
+/** True for frames served by a captcha or bot-check provider. */
+export function isBotCheckHost(url: string): boolean {
+  const u = hostOf(url)
+  if (!u) return false
+  return BOT_CHECK_HOSTS.test(u.host) || (/(^|\.)google\.com$/.test(u.host) && u.path.startsWith('/recaptcha/'))
+}
+
+/** True when the site put a DataDome or PerimeterX (HUMAN) challenge in front of the page. */
+export async function botCheckShown(page: Page): Promise<boolean> {
+  for (const frame of page.frames()) {
+    const u = hostOf(frame.url())
+    if (!u) continue
+    if (DATADOME_HOST.test(u.host) || PX_HOSTS.test(u.host)) return true
+  }
+  return (await page.locator('#px-captcha').count().catch(() => 0)) > 0
 }
 
 /** Blocking challenges only. Invisible reCAPTCHA badges don't count. */
@@ -168,5 +223,5 @@ export async function hasVisibleCaptcha(page: Page): Promise<boolean> {
       }
     }
   }
-  return false
+  return botCheckShown(page)
 }

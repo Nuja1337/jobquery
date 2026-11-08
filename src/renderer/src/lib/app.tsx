@@ -55,6 +55,11 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
     api.getPipelineStatus().then(setProgress, () => undefined)
     api.getAppInfo().then(setAppInfo, () => undefined)
     const offProgress = onPush('pipeline:progress', setProgress)
+    // Settings can change from the tray menu. The login item state may have moved with them.
+    const offSettings = onPush('settings:changed', (next) => {
+      setSettings(next)
+      api.getAppInfo().then(setAppInfo, () => undefined)
+    })
     const offUpdate = onPush('update:status', (status) => {
       updatePushes.current += 1
       setUpdateStatus(status)
@@ -68,6 +73,7 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
     )
     return () => {
       offProgress()
+      offSettings()
       offUpdate()
     }
   }, [])
@@ -82,6 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }): React.JSX.El
       try {
         const next = await api.updateSettings(patch)
         setSettings(next)
+        api.getAppInfo().then(setAppInfo, () => undefined)
         reloadUsage()
         return next
       } catch (e) {

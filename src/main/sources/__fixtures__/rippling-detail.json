@@ -1,0 +1,43 @@
+{
+  "uuid": "51ec1407-4563-4927-8b39-ee89d589dc7c",
+  "name": "Engineering Manager, HRIS Flow Platform",
+  "description": {
+    "company": "<div><body><h2><b><strong>About Rippling</strong></b></h2><p><span>Rippling gives businesses one place to run HR, IT, and Finance. It brings together all of the workforce systems that are normally scattered across a company, like payroll, expenses, benefits, and computers. For the first time ever, you can manage and automate every part of the employee lifecycle in a single system.</span></p><p><br></p><p><span>Take onboarding, for example. With Rippling, you can hire a new employee anywhere in the world and set up their payroll, corporate card, computer, benefits, and even third-party apps like Slack and Microsoft 365—all within 90 seconds.</span></p>",
+    "role": "<div><body><h2><b><strong>About the role</strong></b></h2><p><br></p><p><span>Rippling is looking for an Engineering Manager to lead our HRIS Flow Platform team — the foundational workflow orchestration platform powering how customers manage employee and organizational changes globally. This platform underpins 300+ critical workflows used across HR, Payroll, IT, and Finance products, and is central to Rippling’s international expansion and enterprise growth strategy.</span></p><p><br></p><p><span>This is a highly strategic and deeply technical management role focused on rebuilding and scaling one of Rippling’s most heavily utilized internal platforms. The existing system has reached scale limitations and now requires significant modernization to support increasingly complex workflows across countries, industries, employment types, and product surfaces including web, mobile, APIs, and AI-driven experiences.</span></p>"
+  },
+  "workLocations": [
+    "Toronto, Canada",
+    "New York, NY",
+    "San Francisco, CA"
+  ],
+  "department": {
+    "name": "HRIS",
+    "base_department": "Engineering",
+    "department_tree": [
+      "Engineering",
+      "HR Products",
+      "HRIS"
+    ]
+  },
+  "employmentType": {
+    "label": "SALARIED_FT",
+    "id": "Salaried, full-time"
+  },
+  "createdOn": "2026-05-27T16:53:05.205000-07:00",
+  "url": "https://ats.rippling.com/rippling/jobs/51ec1407-4563-4927-8b39-ee89d589dc7c",
+  "payRangeDetails": [
+    {
+      "location": "US",
+      "currency": "USD",
+      "frequency": "YEAR",
+      "rangeStart": 186000,
+      "rangeEnd": 310000,
+      "isRemote": false
+    }
+  ],
+  "companyName": "Rippling",
+  "board": {
+    "companyName": "Rippling",
+    "slug": "rippling"
+  }
+}

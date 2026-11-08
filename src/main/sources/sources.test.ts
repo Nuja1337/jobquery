@@ -5,10 +5,10 @@ import { parseAdzuna } from './adzuna'
 import { parseArbeitnow } from './arbeitnow'
 import { parseAshby } from './ashby'
 import { findJobPostings, fetchJobByUrl, rawFromJsonLd, rawFromPage } from './byUrl'
-import { detectAts } from './detect'
+import { detectAts, withAtsIdentity } from './detect'
 import { parseGreenhouse, parseGreenhouseJob } from './greenhouse'
 import { parseHnHeader, parseHnThread, pickLatestThread } from './hn'
-import { parseLever, parseLeverPosting } from './lever'
+import { fetchLeverBoard, parseLever, parseLeverPosting } from './lever'
 import {
   decodeEntities,
   detectRemote,
@@ -257,6 +257,50 @@ describe('company board parsers', () => {
   })
 })
 
+describe('posting ids', () => {
+  it('every company board parser sets the posting id on its application system', () => {
+    expect(parseGreenhouse(fixture('greenhouse.json'), 'stripe')[0].atsJobId).toBe('8172510')
+    const lever = parseLever(fixture('lever.json'), 'spotify', 'Spotify')[0]
+    expect(lever.atsJobId).toBe(lever.externalId)
+    const ashby = parseAshby(fixture('ashby.json'), 'ramp', 'Ramp')[0]
+    expect(ashby.atsJobId).toBe(ashby.externalId)
+    expect(parseWorkable(fixture('workable.json'), 'huggingface')[0].atsJobId).toBe('81B46579FE')
+    const list = fixture('smartrecruiters-list.json')
+    const sr = parseSmartRecruitersPosting(list.content[0], null, 'SmartRecruiters', 'SmartRecruiters')
+    expect(sr.atsJobId).toBe('744000158320111')
+  })
+
+  it('a pasted link keeps the posting id from its address', () => {
+    expect(rawFromPage('<title>Role</title><body>Text</body>', 'https://jobs.lever.co/acme/0a1b2c3d-1111-2222-3333-444455556666')).toMatchObject({
+      ats: 'lever',
+      atsToken: 'acme',
+      atsJobId: '0a1b2c3d-1111-2222-3333-444455556666'
+    })
+    expect(rawFromPage('<title>Role</title><body>Text</body>', 'https://example.com/careers/1').atsJobId).toBeNull()
+  })
+
+  it('a job-board posting gets the employer system from its apply link and keeps its own source and id', () => {
+    const base = parseRemotive(fixture('remotive.json'))[0]
+    const linked = withAtsIdentity({ ...base, applyUrl: 'https://job-boards.greenhouse.io/lemon/jobs/4455667' })
+    expect(linked).toMatchObject({ source: 'remotive', externalId: base.externalId, ats: 'greenhouse', atsToken: 'lemon', atsJobId: '4455667' })
+    const embed = withAtsIdentity({ ...base, applyUrl: 'https://job-boards.greenhouse.io/embed/job_app?for=lemon&token=4455667' })
+    expect(embed).toMatchObject({ ats: 'greenhouse', atsToken: 'lemon', atsJobId: '4455667' })
+  })
+
+  it('a job-board posting with no employer link, or a board link without a posting, stays unchanged', () => {
+    const base = parseRemotive(fixture('remotive.json'))[0]
+    expect(base.atsJobId ?? null).toBeNull()
+    expect(withAtsIdentity(base)).toBe(base)
+    const boardOnly = { ...base, applyUrl: 'https://boards.greenhouse.io/lemon' }
+    expect(withAtsIdentity(boardOnly)).toBe(boardOnly)
+  })
+
+  it('a Workable shortcode from a link is upper case like the board feed', () => {
+    const base = parseRemotive(fixture('remotive.json'))[0]
+    expect(withAtsIdentity({ ...base, applyUrl: 'https://apply.workable.com/acme/j/81b46579fe/' }).atsJobId).toBe('81B46579FE')
+  })
+})
+
 describe('aggregator parsers', () => {
   it('Remotive: keeps its own url and reads the salary text', () => {
     const jobs = parseRemotive(fixture('remotive.json'))
@@ -413,6 +457,22 @@ describe('fetchJobByUrl', () => {
     expect((await fetchJobByUrl('https://jobs.lever.co/spotify/2a55d6c9-c564-443a-be3e-a3851db5a93b')).source).toBe('lever')
     const ashby = await fetchJobByUrl('https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245')
     expect(ashby).toMatchObject({ source: 'ashby', title: 'Security Engineer, Cloud' })
+  })
+
+  it('retries a Lever posting on the EU API when the global one has no such account', async () => {
+    const id = '2a55d6c9-c564-443a-be3e-a3851db5a93b'
+    const { hostedUrl: _hosted, ...posting } = fixture('lever-single.json')
+    const seen = stubFetch({ [`https://api.eu.lever.co/v0/postings/spotify/${id}`]: { json: posting } })
+    const raw = await fetchJobByUrl(`https://jobs.eu.lever.co/spotify/${id}`)
+    expect(seen).toEqual([`https://api.lever.co/v0/postings/spotify/${id}`, `https://api.eu.lever.co/v0/postings/spotify/${id}`])
+    expect(raw).toMatchObject({ source: 'lever', url: `https://jobs.eu.lever.co/spotify/${id}` })
+  })
+
+  it('retries a Lever board on the EU API and reports the first error when both answer 404', async () => {
+    const seen = stubFetch({ 'https://api.eu.lever.co/v0/postings/acme?mode=json': { json: [] } })
+    expect(await fetchLeverBoard('acme')).toEqual([])
+    expect(seen).toEqual(['https://api.lever.co/v0/postings/acme?mode=json', 'https://api.eu.lever.co/v0/postings/acme?mode=json'])
+    await expect(fetchLeverBoard('nobody')).rejects.toThrow(/api\.lever\.co answered 404/)
   })
 
   it('falls back to the page when the ATS API has no such posting', async () => {
