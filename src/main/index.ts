@@ -1,4 +1,3 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { app, BrowserWindow, ipcMain, Notification, powerMonitor, powerSaveBlocker, safeStorage, shell, type IpcMainInvokeEvent } from 'electron'
@@ -188,26 +187,6 @@ function createWindow(): void {
 // while the normal one is open.
 if (process.env.JOBPLS_DATA_DIR) app.setPath('userData', process.env.JOBPLS_DATA_DIR)
 
-/**
- * The app was called JobPilot before. Its data folder and database file carry the new name now, so an
- * existing folder is moved once, before anything opens it. A folder set through the environment is left alone.
- */
-function adoptOldDataFolder(): void {
-  if (process.env.JOBPLS_DATA_DIR) return
-  const dir = app.getPath('userData')
-  const old = path.join(path.dirname(dir), 'JobPilot')
-  try {
-    if (!fs.existsSync(dir) && fs.existsSync(old)) fs.renameSync(old, dir)
-    for (const suffix of ['', '-wal', '-shm']) {
-      const from = path.join(dir, `jobpilot.sqlite${suffix}`)
-      const to = path.join(dir, `jobpls.sqlite${suffix}`)
-      if (fs.existsSync(from) && !fs.existsSync(to)) fs.renameSync(from, to)
-    }
-  } catch (err) {
-    console.error('Could not move the old data folder.', err)
-  }
-}
-
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
@@ -217,7 +196,6 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     // Notifications on Windows are filed under this ID. Unpackaged, the Electron binary is the app.
     if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? APP_USER_MODEL_ID : process.execPath)
-    adoptOldDataFolder()
     const paths = appPaths(app.getPath('userData'))
     const vault = await createSafeStorageVault(safeStorage)
     const ipc = await registerIpc({
