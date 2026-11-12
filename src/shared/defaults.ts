@@ -152,7 +152,7 @@ function mergeInto<T>(base: T, patch: DeepPartial<T> | undefined): T {
  * The public page where new versions are published. It must match `build.publish` in
  * package.json, which tells installed copies where to look (a test checks that they match).
  */
-export const RELEASES_URL = 'https://github.com/Nuja1337/jobquery-releases/releases/latest'
+export const RELEASES_URL = 'https://github.com/Nuja1337/jobquery/releases/latest'
 
 export const EMPTY_APPLICATION_FACTS: ApplicationFacts = {
   address: { street: '', city: '', region: '', postalCode: '', country: '' },

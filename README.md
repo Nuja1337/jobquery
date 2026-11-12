@@ -74,7 +74,16 @@ Filling a job application needs a real browser where you're signed in to the job
 
 ## Getting started
 
-You need [Node.js](https://nodejs.org) 24 or later and Chrome or Edge.
+You need Chrome or Edge, because JobQuery fills in forms there.
+
+- **Windows.** Download `JobQuery-Setup-<version>.exe` from the [latest release](https://github.com/Nuja1337/jobquery/releases/latest) and run it. The installer isn't code-signed yet, so Windows SmartScreen may say it doesn't recognize the app. Click **More info**, then **Run anyway**. After that, the app updates itself.
+- **macOS and Linux.** There's no installer yet, so [run it from source](#run-from-source).
+
+The first launch walks you through setup. You add an AI provider, upload your resume, check the profile it reads from it, add writing samples and your preferences, and pick where to look for jobs. Then press **Run now**.
+
+### Run from source
+
+You need [Node.js](https://nodejs.org) 24 or later.
 
 ```bash
 git clone https://github.com/Nuja1337/jobquery.git
@@ -82,8 +91,6 @@ cd jobquery
 npm install
 npm run dev
 ```
-
-The first launch walks you through setup. You add an AI provider, upload your resume, check the profile it reads from it, add writing samples and your preferences, and pick where to look for jobs. Then press **Run now**.
 
 To build an installer:
 

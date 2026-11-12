@@ -1,10 +1,10 @@
-// Uploads this version's installers to a draft GitHub release on the public releases repo.
+// Uploads this version's installers to a draft GitHub release on the JobQuery repo.
 // Installed copies only see a release once it's published, so check the draft before publishing.
 //
 //   npm run release                          notes say "JobQuery <version>"
 //   npm run release -- --notes-file notes.md notes come from a file
 //
-// Needs the gh CLI, signed in with write access to the releases repo. See docs/RELEASING.md.
+// Needs the gh CLI, signed in with write access to the repo. See docs/RELEASING.md.
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -28,6 +28,9 @@ function git(...args) {
 
 // The release should match a commit, so the source of every installer can be found later.
 if (git('status', '--porcelain')) fail('Commit or stash your changes first, so the release matches a commit.')
+// Publishing the release tags this commit, so it has to be on GitHub already.
+const head = git('rev-parse', 'HEAD')
+if (!git('branch', '--remotes', '--contains', head)) fail('Push your commits first, so the release can tag a commit that is on GitHub.')
 
 // Each platform build writes a latest*.yml that lists its files. Only files built for this version go up.
 const files = []
@@ -61,7 +64,7 @@ const notesArgs = notesIndex > -1 ? ['--notes-file', process.argv[notesIndex + 1
 
 console.log(`Uploading ${files.length} files to a draft release ${tag} on ${repo}:`)
 for (const f of files) console.log(`  ${path.basename(f)}`)
-const created = spawnSync('gh', ['release', 'create', tag, '--repo', repo, '--draft', '--title', `JobQuery ${version}`, ...notesArgs, ...files], { stdio: 'inherit' })
+const created = spawnSync('gh', ['release', 'create', tag, '--repo', repo, '--target', head, '--draft', '--title', `JobQuery ${version}`, ...notesArgs, ...files], { stdio: 'inherit' })
 if (created.status !== 0) fail('gh release create failed. Nothing was published.')
 
 console.log(`\nDraft ready. Check it on GitHub, then publish it with:\n  gh release edit ${tag} --repo ${repo} --draft=false\n`)
