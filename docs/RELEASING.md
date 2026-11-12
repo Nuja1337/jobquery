@@ -25,8 +25,8 @@ The location is set in two places, `build.publish` in `package.json` and `RELEAS
 
 | Platform | Files |
 |---|---|
-| Windows | `jobquery-Setup-<version>.exe`, `jobquery-Setup-<version>.exe.blockmap`, `latest.yml` |
-| Linux | `jobquery-<version>.AppImage`, `latest-linux.yml` |
+| Windows | `JobQuery-Setup-<version>.exe`, `JobQuery-Setup-<version>.exe.blockmap`, `latest.yml` |
+| Linux | `JobQuery-<version>.AppImage`, `latest-linux.yml` |
 | macOS | the `.dmg`, the `.zip`, `latest-mac.yml` |
 
 The `latest*.yml` files tell installed copies which version is newest and how to verify the download. Upload them with the installer, or updates for that platform won't work.
