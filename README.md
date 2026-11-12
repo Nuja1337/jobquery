@@ -4,8 +4,6 @@ A desktop app that finds jobs that fit you, writes your applications in your own
 
 You review each application and click Submit. If you trust it, auto-submit can do that part too, within limits you set.
 
-JobQuery was called jobpls before. On startup it moves an existing jobpls data folder to the new name and keeps everything in it.
-
 ## What it does
 
 - **Finds jobs.** It reads public job boards from company career pages (Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Rippling, Breezy, Personio) and job sites with open APIs (The Muse, Himalayas, Jobicy, We Work Remotely, Remotive, RemoteOK, Arbeitnow, Hacker News "Who is hiring", Adzuna). A starter pack adds 100 game studios and tech companies in one click, you can paste a list of careers links, and any company board a posting links to is watched from then on. Boards are checked on a schedule that follows how often they change, and an unchanged board costs one small request.
