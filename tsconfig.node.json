@@ -14,5 +14,5 @@
     "types": ["node"],
     "paths": { "@shared/*": ["./src/shared/*"] }
   },
-  "include": ["electron.vite.config.mts", "vitest.config.mts", "vite.demo.config.mts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+  "include": ["electron.vite.config.mts", "vitest.config.mts", "vitest.globalSetup.mts", "vite.demo.config.mts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
 }
