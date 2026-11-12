@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { z } from 'zod'
-import { LlmFormatError, LlmRefusalError, asRateLimited } from './errors'
+import { LlmFormatError, LlmRefusalError, asOutOfCredits, asRateLimited } from './errors'
 import { jsonInstructions, parseWithSchema } from './json'
 import type { LlmClient, LlmJsonResult, LlmRequest, LlmTextResult, LlmUsage } from './types'
 
@@ -50,7 +50,7 @@ export class AnthropicClient implements LlmClient {
         ...(req.effort && supportsEffort(model) ? { output_config: { effort: req.effort } } : {})
       })
     } catch (err) {
-      throw asRateLimited(err) ?? err
+      throw asOutOfCredits(err) ?? asRateLimited(err) ?? err
     }
     return toResult(res)
   }
@@ -68,6 +68,9 @@ export class AnthropicClient implements LlmClient {
         }
       })
     } catch (err) {
+      // A credits refusal can arrive as a 400, so it is checked before the structured-output fallback.
+      const outOfCredits = asOutOfCredits(err)
+      if (outOfCredits) throw outOfCredits
       // Older models don't support structured outputs. Ask for JSON in the prompt instead.
       if (err instanceof Anthropic.BadRequestError && /output_config|format|schema|structured/i.test(err.message)) {
         return this.completeJsonByPrompt(model, req, schema, schemaName)

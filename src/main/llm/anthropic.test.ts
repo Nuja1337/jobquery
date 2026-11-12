@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { AnthropicClient } from './anthropic'
-import { LlmFormatError, LlmRefusalError, RateLimitedError } from './errors'
+import { LlmFormatError, LlmRefusalError, OutOfCreditsError, RateLimitedError } from './errors'
 import { priceFor } from './pricing'
 import type { LlmRequest } from './types'
 
@@ -95,6 +95,41 @@ describe('AnthropicClient rate limits', () => {
     const boom = new Anthropic.InternalServerError(500, undefined, 'down', new Headers())
     const err = await clientFailing(boom).complete('m', req).catch((e: unknown) => e)
     expect(err).toBe(boom)
+  })
+})
+
+describe('AnthropicClient out of credits', () => {
+  /** A client whose API call fails with the given error, and counts the calls. */
+  function clientFailing(error: Error): { client: AnthropicClient; calls: () => number } {
+    let calls = 0
+    const client = new AnthropicClient('sk-ant-test')
+    const sdk = (client as unknown as { client: { beta: { messages: { create: unknown } } } }).client
+    sdk.beta.messages.create = async () => {
+      calls += 1
+      throw error
+    }
+    return { client, calls: () => calls }
+  }
+
+  const creditsBody = {
+    type: 'error',
+    error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.' }
+  }
+
+  it('turns a 400 about the credit balance into OutOfCreditsError and does not retry with a JSON prompt', async () => {
+    const { client, calls } = clientFailing(new Anthropic.BadRequestError(400, creditsBody, undefined, new Headers()))
+    const text = await client.complete('claude-sonnet-5-5', req).catch((e: unknown) => e)
+    expect(text).toBeInstanceOf(OutOfCreditsError)
+    expect(calls()).toBe(1)
+    const json = await client.completeJson('claude-sonnet-5-5', req, schema, 'fit').catch((e: unknown) => e)
+    expect(json).toBeInstanceOf(OutOfCreditsError)
+    expect(calls()).toBe(2)
+  })
+
+  it('turns a 402 billing_error into OutOfCreditsError', async () => {
+    const { client } = clientFailing(new Anthropic.APIError(402, { type: 'error', error: { type: 'billing_error', message: 'Billing problem.' } }, 'Billing problem.', new Headers()))
+    const err = await client.complete('claude-sonnet-5-5', req).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(OutOfCreditsError)
   })
 })
 

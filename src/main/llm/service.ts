@@ -7,7 +7,7 @@ import { type Db, newId, now, parseJson } from '../db/database'
 import type { ProvidersRepo } from '../db/repos/providers'
 import type { SettingsRepo } from '../db/repos/settings'
 import { AnthropicClient } from './anthropic'
-import { BudgetExceededError, LlmCancelledError, LlmFormatError, LlmRefusalError, NoModelConfiguredError, RateLimitedError } from './errors'
+import { BudgetExceededError, LlmCancelledError, LlmFormatError, LlmRefusalError, NoModelConfiguredError, OutOfCreditsError, RateLimitedError } from './errors'
 import { OpenAiCompatClient } from './openaiCompat'
 import { costOf, priceFor, totalTokens, UNKNOWN_MODEL_PRICE } from './pricing'
 import { type Effort, type LlmClient, type LlmUsage, ZERO_USAGE } from './types'
@@ -84,7 +84,7 @@ export function pickChatModel(models: string[], preferFree = false): string | un
  * network has no status.
  */
 function providerAnswered(err: unknown): boolean {
-  if (err instanceof RateLimitedError || err instanceof LlmFormatError || err instanceof LlmRefusalError) return true
+  if (err instanceof RateLimitedError || err instanceof OutOfCreditsError || err instanceof LlmFormatError || err instanceof LlmRefusalError) return true
   return typeof err === 'object' && err !== null && typeof (err as { status?: unknown }).status === 'number'
 }
 
@@ -299,6 +299,11 @@ export class LlmService {
       const billed = (err as { usage?: LlmUsage }).usage ?? ZERO_USAGE
       const cost = free ? 0 : this.price(ref.model, billed)
       this.record(opts, provider, ref.model, billed, cost, Date.now() - started, false, (err as Error).message, free)
+      if (err instanceof OutOfCreditsError) {
+        throw new OutOfCreditsError(
+          `${provider.label} says the account is out of credits. jobpls tries again after midnight, or as soon as you change your AI provider or models.`
+        )
+      }
       throw err
     } finally {
       this.pending.set(provider.id, Math.max(0, (this.pending.get(provider.id) ?? 1) - 1))

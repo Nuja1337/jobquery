@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
 import type { ProviderKind } from '@shared/types'
-import { LlmFormatError, LlmRefusalError, asRateLimited } from './errors'
+import { LlmFormatError, LlmRefusalError, asOutOfCredits, asRateLimited } from './errors'
 import { jsonInstructions, parseWithSchema } from './json'
 import type { LlmClient, LlmJsonResult, LlmRequest, LlmTextResult } from './types'
 
@@ -51,7 +51,7 @@ export class OpenAiCompatClient implements LlmClient {
     try {
       res = await this.client.chat.completions.create(this.params(model, req))
     } catch (err) {
-      throw asRateLimited(err) ?? err
+      throw asOutOfCredits(err) ?? asRateLimited(err) ?? err
     }
     return toResult(res, model)
   }
@@ -81,6 +81,9 @@ export class OpenAiCompatClient implements LlmClient {
         throw new LlmFormatError(`The model's ${schemaName} reply was not valid: ${parsed.error}`, result.text, result.usage)
       } catch (err) {
         lastError = err
+        // Out of credits ends the call. Another JSON mode would be refused the same way.
+        const outOfCredits = asOutOfCredits(err)
+        if (outOfCredits) throw outOfCredits
         // A 400 usually means this server doesn't support the response_format we sent. Try the next mode.
         if (err instanceof OpenAI.BadRequestError && mode !== 'prompt') continue
         throw asRateLimited(err) ?? err

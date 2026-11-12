@@ -16,7 +16,7 @@ import { runSubmission } from './apply/submitRun'
 import { getAnalytics } from './analytics'
 import { type AppContext, createContext } from './context'
 import { newId } from './db/database'
-import { BudgetExceededError, RateLimitedError, isJobFault } from './llm/errors'
+import { BudgetExceededError, OutOfCreditsError, RateLimitedError, isJobFault } from './llm/errors'
 import type { AppPaths } from './paths'
 import { dismissJob, restoreJob, scoreJobNow } from './pipeline/actions'
 import { autoWatchBoard, noteStartedWatching } from './pipeline/ingest'
@@ -509,7 +509,12 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         // a site that would not load, must not take the application out of the queue for good.
         inFlight.delete(app.id)
         if (err instanceof BudgetExceededError || err instanceof RateLimitedError) {
-          const note = err instanceof BudgetExceededError ? 'Paused because the AI budget is used up.' : "Paused because the AI provider's limit was reached."
+          const note =
+            err instanceof OutOfCreditsError
+              ? 'Paused because the AI provider is out of credits.'
+              : err instanceof BudgetExceededError
+                ? 'Paused because the AI budget is used up.'
+                : "Paused because the AI provider's limit was reached."
           changed(ctx.applications.update(app.id, { status: 'ready', submitMode: null, error: `${note} It is tried again on a later run.` }))
           throw err
         }

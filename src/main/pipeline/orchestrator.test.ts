@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RawJob, SubmitResult } from '@shared/types'
-import { BudgetExceededError, LlmFormatError, NoModelConfiguredError, RateLimitedError } from '../llm/errors'
+import { BudgetExceededError, LlmFormatError, NoModelConfiguredError, OutOfCreditsError, RateLimitedError } from '../llm/errors'
 import { type DiscoveryTask, defaultTasks } from '../sources'
 import { HttpError, fetchJson, hostPauseUntil, setHttpClock } from '../sources/http'
 import { type TestEnv, makeProfile, makeRaw, makeTestEnv } from '../testing'
@@ -1210,6 +1210,7 @@ describe('Pipeline steps', () => {
     const midnight = new Date(new Date().setHours(24, 0, 0, 0)).toISOString()
     const cases: Array<[Error, string, string | null]> = [
       [new BudgetExceededError('Budget used up.'), 'budget', midnight],
+      [new OutOfCreditsError(), 'budget', midnight],
       [new RateLimitedError('Too many.'), 'rate_limit', midnight],
       [new NoModelConfiguredError(), 'no_model', null]
     ]

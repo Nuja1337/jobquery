@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { RateLimitedError } from './errors'
+import { OutOfCreditsError, RateLimitedError } from './errors'
 import { OpenAiCompatClient } from './openaiCompat'
 import type { LlmRequest } from './types'
 
@@ -51,5 +51,32 @@ describe('OpenAiCompatClient rate limits', () => {
     const boom = new OpenAI.InternalServerError(500, undefined, 'down', new Headers())
     const err = await clientFailing(boom).complete('m', req).catch((e: unknown) => e)
     expect(err).toBe(boom)
+  })
+})
+
+describe('OpenAiCompatClient out of credits', () => {
+  it('turns an HTTP 402 into OutOfCreditsError and does not try the other JSON modes', async () => {
+    let attempts = 0
+    const client = new OpenAiCompatClient('openrouter', 'key', 'https://example.invalid/v1')
+    const sdk = (client as unknown as { client: { chat: { completions: { create: unknown } } } }).client
+    sdk.chat.completions.create = async () => {
+      attempts += 1
+      throw new OpenAI.APIError(402, { message: 'Insufficient credits' }, 'Insufficient credits', new Headers())
+    }
+    const text = await client.complete('m', req).catch((e: unknown) => e)
+    expect(text).toBeInstanceOf(OutOfCreditsError)
+    expect(attempts).toBe(1)
+    const json = await client.completeJson('m', req, schema, 'fit').catch((e: unknown) => e)
+    expect(json).toBeInstanceOf(OutOfCreditsError)
+    expect(attempts).toBe(2)
+  })
+
+  it('turns a 429 with code insufficient_quota into OutOfCreditsError, not RateLimitedError', async () => {
+    const client = clientFailing(new OpenAI.RateLimitError(429, { code: 'insufficient_quota', message: 'You exceeded your current quota' }, 'You exceeded your current quota', new Headers()))
+    const text = await client.complete('gpt-5-mini', req).catch((e: unknown) => e)
+    expect(text).toBeInstanceOf(OutOfCreditsError)
+    expect(text).not.toBeInstanceOf(RateLimitedError)
+    const json = await client.completeJson('gpt-5-mini', req, schema, 'fit').catch((e: unknown) => e)
+    expect(json).toBeInstanceOf(OutOfCreditsError)
   })
 })

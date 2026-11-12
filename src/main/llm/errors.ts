@@ -7,6 +7,36 @@ export class BudgetExceededError extends Error {
   }
 }
 
+/**
+ * The provider refused because the account has no credits left. Nothing is charged for a refused
+ * call. It is a BudgetExceededError so every path that pauses on the spending cap pauses here too,
+ * and it ends when the person saves a provider or changes models, or at the next local midnight.
+ */
+export class OutOfCreditsError extends BudgetExceededError {
+  constructor(message = 'Your AI provider says the account is out of credits.') {
+    super(message)
+    this.name = 'OutOfCreditsError'
+  }
+}
+
+const OUT_OF_CREDITS_MESSAGE = /credit balance is too low|reached your specified API usage limits/i
+
+/**
+ * Turns an SDK error into an OutOfCreditsError when the provider says the account has no credits.
+ * That is HTTP 402 from any provider (Anthropic billing_error, OpenRouter insufficient credits), an
+ * Anthropic HTTP 400 that says the credit balance is too low or the Console usage limit was reached,
+ * and an OpenAI HTTP 429 with code insufficient_quota. Returns null for anything else.
+ */
+export function asOutOfCredits(err: unknown): OutOfCreditsError | null {
+  if (err instanceof OutOfCreditsError) return err
+  if (typeof err !== 'object' || err === null) return null
+  const e = err as { status?: unknown; message?: unknown; code?: unknown; error?: { code?: unknown } | null }
+  if (e.status === 402) return new OutOfCreditsError()
+  if (e.status === 400 && typeof e.message === 'string' && OUT_OF_CREDITS_MESSAGE.test(e.message)) return new OutOfCreditsError()
+  if (e.status === 429 && (e.code === 'insufficient_quota' || e.error?.code === 'insufficient_quota')) return new OutOfCreditsError()
+  return null
+}
+
 export class NoModelConfiguredError extends Error {
   constructor(message = 'No AI model is set up yet. Add a provider and pick models in Settings.') {
     super(message)

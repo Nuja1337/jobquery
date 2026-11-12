@@ -4,7 +4,7 @@ import { Db } from '../db/database'
 import { ProvidersRepo } from '../db/repos/providers'
 import { SettingsRepo } from '../db/repos/settings'
 import { testVault } from '../secrets'
-import { BudgetExceededError, LlmCancelledError, RateLimitedError } from './errors'
+import { BudgetExceededError, LlmCancelledError, OutOfCreditsError, RateLimitedError } from './errors'
 import { type Clock, LlmService, pickChatModel } from './service'
 import type { LlmClient, LlmRequest } from './types'
 
@@ -108,6 +108,20 @@ describe('free providers', () => {
     expect(rows).toHaveLength(3)
     for (const r of rows) expect(r).toMatchObject({ free: 1, provider_id: p.id })
     expect(rows.map((r) => [r.cache_hit, r.ok])).toEqual([[0, 1], [1, 1], [0, 0]])
+  })
+
+  it('names the provider when it says the account is out of credits, and records the refused call once', async () => {
+    const { llm, add, db, fake } = await setup()
+    await add({ ...GEMINI, label: 'My Gemini', billing: 'free' }, 'gemini-2.5-flash')
+    fake.fail = new OutOfCreditsError()
+    const err = await llm.text(writing).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(OutOfCreditsError)
+    expect((err as Error).message.startsWith('My Gemini says the account is out of credits.')).toBe(true)
+    expect((err as Error).message).toMatch(/after midnight/)
+    const rows = db.all<{ ok: number; error: string | null }>('SELECT ok, error FROM llm_calls')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].ok).toBe(0)
+    expect(rows[0].error).toBeTruthy()
   })
 
   it('counts free calls today without cache hits', async () => {
