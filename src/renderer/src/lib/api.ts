@@ -17,7 +17,7 @@ export const api: Api = new Proxy({} as Api, {
     (...args: unknown[]) =>
       bridge
         ? (bridge.call as (m: string, ...a: unknown[]) => Promise<unknown>)(method, ...args)
-        : Promise.reject(new Error("jobpls couldn't connect to its background process. Restart the app."))
+        : Promise.reject(new Error("JobQuery couldn't connect to its background process. Restart the app."))
 })
 
 export function onPush<C extends PushChannel>(channel: C, listener: (payload: PushEvents[C]) => void): () => void {

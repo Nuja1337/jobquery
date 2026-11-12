@@ -105,7 +105,7 @@ export function ProfilePage(): React.JSX.Element {
     <Page narrow>
       <PageHeader
         title="Profile and materials"
-        intro="What jobpls knows about you and writes from."
+        intro="What JobQuery knows about you and writes from."
         actions={
           (tab === 'profile' || tab === 'applying') && <span className="text-xs text-faint">{saved.updatedAt ? `Saved ${relativeTime(saved.updatedAt)}` : 'Not saved yet'}</span>
         }
@@ -175,7 +175,7 @@ export function ProfilePage(): React.JSX.Element {
         <>
           <Card className="mb-4 p-4">
             <p className="text-sm font-medium text-fg">Answers for application forms</p>
-            <p className="text-xs text-faint">Forms ask for these again and again. jobpls answers from here, and a form waits for you only when a fact is missing.</p>
+            <p className="text-xs text-faint">Forms ask for these again and again. JobQuery answers from here, and a form waits for you only when a fact is missing.</p>
           </Card>
           <ApplicationFactsEditor profile={draft} onChange={setDraft} defaultCurrency={settings?.preferences.salaryCurrency} />
         </>

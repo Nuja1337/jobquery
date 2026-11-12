@@ -70,9 +70,9 @@ export interface FormRead {
   resolved: ResolvedApply | null
 }
 
-const BOT_CHECK_ERROR = 'The site showed a bot check to the background browser. jobpls reads the form when you open it.'
+const BOT_CHECK_ERROR = 'The site showed a bot check to the background browser. JobQuery reads the form when you open it.'
 const NO_EMPLOYER_LINK_ERROR = "This job board doesn't link to the employer's form. Open the posting and apply on the company's site."
-const NOT_AN_APPLICATION_ERROR = "The page jobpls found doesn't look like an application form. Open the posting and apply on the company's site."
+const NOT_AN_APPLICATION_ERROR = "The page JobQuery found doesn't look like an application form. Open the posting and apply on the company's site."
 
 /**
  * True when the fields look like a job application: an upload, or an email box among at least four

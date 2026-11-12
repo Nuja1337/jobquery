@@ -219,7 +219,7 @@ describe('Bulk company actions', () => {
 })
 
 async function services(options: { beforeStart?: (dir: string) => void; emit?: (channel: string, payload: unknown) => void } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-ipc-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-ipc-'))
   const paths = appPaths(dir)
   options.beforeStart?.(dir)
   const s = await createServices({ paths, vault: testVault, emit: options.emit ?? (() => {}), appVersion: '0.0.0' })
@@ -1056,7 +1056,7 @@ describe('preparing a posting from a job board', () => {
 
 describe('startup recovery', () => {
   async function restart(seed: (env: Awaited<ReturnType<typeof services>>) => void) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-ipc-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-ipc-'))
     const paths = appPaths(dir)
     const first = await createServices({ paths, vault: testVault, emit: () => {}, appVersion: '0.0.0' })
     seed(first as never)

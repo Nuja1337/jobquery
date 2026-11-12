@@ -39,7 +39,7 @@ export function DismissDialog({ subject, onConfirm, onClose }: Props): React.JSX
         </>
       }
     >
-      <p className="mb-3 text-sm text-muted">Pick the reasons that apply. jobpls uses them to suggest filter changes, so fewer jobs like this reach the AI.</p>
+      <p className="mb-3 text-sm text-muted">Pick the reasons that apply. JobQuery uses them to suggest filter changes, so fewer jobs like this reach the AI.</p>
       <div className="mb-4 flex flex-wrap gap-1.5">
         {DISMISS_TAGS.map((t) => (
           <Chip key={t} selected={tags.includes(t)} onClick={() => setTags((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]))}>

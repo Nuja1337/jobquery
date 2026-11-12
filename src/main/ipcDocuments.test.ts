@@ -46,7 +46,7 @@ afterEach(async () => {
 })
 
 async function services() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-docs-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-docs-'))
   const paths = appPaths(dir)
   const s = await createServices({ paths, vault: testVault, emit: () => {}, appVersion: '0.0.0' })
   open.push(async () => {

@@ -122,7 +122,7 @@ export function QuotaCard({ quota, usage }: { quota: AnalyticsReport['quota']; u
   )
 }
 
-/** Company boards jobpls watches, with the ones that fail and the ones due for a check. */
+/** Company boards JobQuery watches, with the ones that fail and the ones due for a check. */
 export function BoardHealth({ boards, onOpen }: { boards: AnalyticsReport['boards']; onOpen: () => void }): React.JSX.Element {
   const cells: Array<{ label: string; value: number; tone?: 'warn' | 'bad' }> = [
     { label: 'Watched', value: boards.watched },

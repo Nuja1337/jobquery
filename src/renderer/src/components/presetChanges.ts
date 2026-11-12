@@ -41,7 +41,7 @@ export const PRESET_FIELDS: Record<string, FieldInfo> = {
   'autopilot.sendSavedUserAnswers': { label: 'Sending your saved answers to questions only you answer', kind: 'bool' },
   'preferences.perCompanyLimit': { label: 'The number of applications one company may get inside the cooldown', kind: 'number' },
   'preferences.companyCooldownDays': { label: 'The cooldown between applications to one company', kind: 'days' },
-  'preferences.maxPostingAgeDays': { label: 'The oldest posting jobpls looks at', kind: 'days' },
+  'preferences.maxPostingAgeDays': { label: 'The oldest posting JobQuery looks at', kind: 'days' },
   'browser.slowMoMs': { label: 'The pause between browser actions', kind: 'ms' },
   'writing.coverLetterLength': { label: 'The cover letter length', kind: 'text' },
   'writing.minLintScore': { label: 'The writing check score a draft needs', kind: 'number' },

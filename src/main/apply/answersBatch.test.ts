@@ -334,7 +334,7 @@ describe('optional open boxes', () => {
     expect(env.seen).toHaveLength(0)
     expect(costUsd).toBe(0)
     expect(answers.map((a) => a.value)).toEqual(['', ''])
-    expect(answers.every((a) => !a.needsUser && a.note === 'Optional, so jobpls leaves it blank.')).toBe(true)
+    expect(answers.every((a) => !a.needsUser && a.note === 'Optional, so JobQuery leaves it blank.')).toBe(true)
   })
 
   it('writes the required ones and skips the optional ones in the same form', async () => {
@@ -365,7 +365,7 @@ describe('optional open boxes', () => {
     const labels = ["Anything else you'd like us to know?", 'Additional information', 'Is there anything else we should know?', 'Other comments', 'Notes']
     const { answers } = await answerFields(env.deps, job, labels.map((l, i) => field(`c${i}`, l, { type: 'text' })), null)
     expect(env.seen).toHaveLength(0)
-    expect(answers.every((a) => a.value === '' && !a.needsUser && a.note === 'Optional, so jobpls leaves it blank.')).toBe(true)
+    expect(answers.every((a) => a.value === '' && !a.needsUser && a.note === 'Optional, so JobQuery leaves it blank.')).toBe(true)
   })
 
   it('keeps required catch-all boxes on their usual path and short factual boxes untouched', async () => {

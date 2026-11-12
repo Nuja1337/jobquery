@@ -454,7 +454,7 @@ describe.skipIf(!executablePath)('reading and filling live-style forms (headless
     }, 20_000)
 
     describe('uploads', () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-upload-'))
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-upload-'))
       const stored = path.join(dir, 'resume-8f3a.pdf')
       const odt = path.join(dir, 'resume-8f3a.odt')
       fs.writeFileSync(stored, '%PDF-1.4 test')

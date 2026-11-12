@@ -32,7 +32,7 @@ export function isLiveDatabaseFile(dbFile: string, target: string): boolean {
  */
 export function exportDatabaseCopy(db: Db, dbFile: string, target: string): string {
   const out = path.resolve(target)
-  if (isLiveDatabaseFile(dbFile, out)) throw new Error('That is the file jobpls is using. Pick a different file name.')
+  if (isLiveDatabaseFile(dbFile, out)) throw new Error('That is the file JobQuery is using. Pick a different file name.')
   fs.mkdirSync(path.dirname(out), { recursive: true })
   const partial = `${out}.${process.pid}.partial`
   fs.rmSync(partial, { force: true })

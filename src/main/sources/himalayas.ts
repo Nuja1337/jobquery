@@ -11,7 +11,7 @@ import { cleanTitle, findSalaryInText, htmlToPlain, matchesQuery, toIsoDate } fr
 // Himalayas' terms ask for attribution. Each job keeps its himalayas.app page as `url` and the text
 // "Originally posted on Himalayas" that the feed puts at the end of the description. The site's own
 // pages answer 403 to plain HTTP, so the apply link stays the Himalayas page unless the description
-// links to an employer posting on an application system jobpls can read.
+// links to an employer posting on an application system JobQuery can read.
 // Politeness: the feed changes slowly. The source registration should set MIN_HOURS_BETWEEN_CALLS to 6, so a saved search
 // calls it at most four times a day. One call reads at most `pages` pages (default 3, at most 10).
 // The browse feed covers every kind of job, so a query switches the fetcher to the search endpoint,

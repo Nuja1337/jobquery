@@ -801,7 +801,7 @@ export function demographicAnswer(field: FormField, settings: Settings, saved: S
     return { value: multi ? JSON.stringify(result) : result[0], source: 'settings', confidence: 0.9, needsUser: false, note: null }
   }
 
-  const note = result === null ? "Your self-identification setting matched none of this form's options, so jobpls chose the decline option." : null
+  const note = result === null ? "Your self-identification setting matched none of this form's options, so JobQuery chose the decline option." : null
   if (field.type === 'checkbox') {
     return field.required ? needsYou() : { value: 'false', source: 'settings', confidence: 0.95, needsUser: false, note: null }
   }

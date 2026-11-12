@@ -75,7 +75,7 @@ const executablePath = findBrowser()
 describe.skipIf(!executablePath)('form extraction, filling and submit (headless browser)', () => {
   let browser: Browser
   let page: Page
-  const resumePath = path.join(os.tmpdir(), 'jobpls-test-resume.pdf')
+  const resumePath = path.join(os.tmpdir(), 'jobquery-test-resume.pdf')
 
   beforeAll(async () => {
     fs.writeFileSync(resumePath, '%PDF-1.4 test')

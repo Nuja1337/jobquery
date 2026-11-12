@@ -34,16 +34,16 @@ function oneLine(line: string): ParsedBoard | BoardLineError {
   if (pair) {
     const ats = pair[1].toLowerCase() as AtsKind
     if (!READABLE_ATS.includes(ats)) {
-      return { line, error: `"${pair[1]}" is not a system jobpls can read. Use one of ${READABLE_ATS.join(', ')}.` }
+      return { line, error: `"${pair[1]}" is not a system JobQuery can read. Use one of ${READABLE_ATS.join(', ')}.` }
     }
     const token = pair[2]
     return { ats, token, name: starterName(ats, token) ?? (prettifyToken(token) || null), line }
   }
   if (/\s/.test(line)) return { line, error: 'Put one address or ats:token on each line.' }
   const found = detectAts(line)
-  if (!found?.token) return { line, error: 'jobpls could not tell which application system this address uses.' }
+  if (!found?.token) return { line, error: 'JobQuery could not tell which application system this address uses.' }
   if (!READABLE_ATS.includes(found.ats)) {
-    return { line, error: `This is a ${found.ats} careers page. jobpls can detect it but cannot read its jobs yet.` }
+    return { line, error: `This is a ${found.ats} careers page. JobQuery can detect it but cannot read its jobs yet.` }
   }
   return { ats: found.ats, token: found.token, name: starterName(found.ats, found.token) ?? found.companyName, line }
 }
@@ -129,7 +129,7 @@ async function probeCount(ats: AtsKind, token: string, signal?: AbortSignal): Pr
       return { name: null, jobs: jobs.length }
     }
     default:
-      throw new Error(`jobpls cannot read ${ats} boards yet.`)
+      throw new Error(`JobQuery cannot read ${ats} boards yet.`)
   }
 }
 

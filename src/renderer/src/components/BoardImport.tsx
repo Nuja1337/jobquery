@@ -169,7 +169,7 @@ export function BoardImport({ onAdded }: { onAdded: () => void }): React.JSX.Ele
           <p className="font-medium text-warn">
             {plural(unreadable.length, 'line')} cannot be read, so {unreadable.length === 1 ? 'it stays' : 'they stay'} manual.
           </p>
-          <p className="mt-0.5 text-xs text-muted">jobpls cannot read the jobs on systems such as Workday yet. Add one from its careers page address above to keep it on your list without automatic checks.</p>
+          <p className="mt-0.5 text-xs text-muted">JobQuery cannot read the jobs on systems such as Workday yet. Add one from its careers page address above to keep it on your list without automatic checks.</p>
           <ul className="mt-2 space-y-1 text-xs">
             {unreadable.slice(0, MAX_UNREADABLE).map((l) => (
               <li key={l.line}>

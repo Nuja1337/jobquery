@@ -11,7 +11,7 @@ import { useToast } from '@renderer/lib/toast'
 import { Button, Field, Input, Notice, NumberInput, Select } from './ui'
 
 export const KEY_STORAGE_NOTE = "Your key is encrypted with your operating system's key store when one is available, and stays on your computer."
-export const KEY_STORAGE_WARNING = 'This computer has no key store jobpls can use, so your key is saved on disk without real encryption. Anyone with access to your user account could read it.'
+export const KEY_STORAGE_WARNING = 'This computer has no key store JobQuery can use, so your key is saved on disk without real encryption. Anyone with access to your user account could read it.'
 
 /** True once the app knows this computer has no real key store. */
 export function useKeyStorageWeak(): boolean {
@@ -44,7 +44,7 @@ const PAID_PRESETS = PROVIDER_PRESETS.filter((p) => p.billing === 'paid')
 const CUSTOM_PRESET_ID = 'custom'
 
 const BILLING_OPTIONS: Array<{ id: ProviderBilling; label: string; text: string }> = [
-  { id: 'free', label: 'Free', text: "Use this for a free tier or a model on this computer, and only when the key can't be charged. jobpls won't count it toward your budget." },
+  { id: 'free', label: 'Free', text: "Use this for a free tier or a model on this computer, and only when the key can't be charged. JobQuery won't count it toward your budget." },
   { id: 'paid', label: 'Paid', text: 'Each call is priced and counts toward your budget.' }
 ]
 
@@ -140,7 +140,7 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
         </Field>
       </div>
       <p className={clsx('text-xs', !collapsibleLimits && '-mt-1', badLimits ? 'text-bad' : 'text-faint')}>
-        {badLimits ? 'Limits are whole numbers of 1 or more. Leave a box empty for no limit.' : 'Free tiers have limits. jobpls paces itself to stay under the ones you enter.'}
+        {badLimits ? 'Limits are whole numbers of 1 or more. Leave a box empty for no limit.' : 'Free tiers have limits. JobQuery paces itself to stay under the ones you enter.'}
       </p>
     </>
   )
@@ -291,7 +291,7 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
 
           {kind === 'openrouter' ? (
             <p className="rounded-md border border-line px-3 py-2 text-sm text-muted">
-              On OpenRouter, models whose names end in &quot;:free&quot; cost nothing and every other model is priced, so jobpls decides for each model.
+              On OpenRouter, models whose names end in &quot;:free&quot; cost nothing and every other model is priced, so JobQuery decides for each model.
             </p>
           ) : (
           <fieldset className="space-y-1.5">
@@ -351,7 +351,7 @@ export function ProviderForm({ initial, onSaved, onCancel }: Props): React.JSX.E
         <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-line px-3 py-2 text-sm text-muted has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent">
           <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
           <span>
-            I understand that {providerName} bills me directly for anything that isn&apos;t free, that jobpls&apos;s cost figures are estimates, and that jobpls isn&apos;t responsible for charges from {providerName}.
+            I understand that {providerName} bills me directly for anything that isn&apos;t free, that JobQuery&apos;s cost figures are estimates, and that JobQuery isn&apos;t responsible for charges from {providerName}.
           </span>
         </label>
       )}

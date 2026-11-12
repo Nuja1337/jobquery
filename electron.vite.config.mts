@@ -21,7 +21,7 @@ const CSP = [
 ].join('; ')
 
 const csp: Plugin = {
-  name: 'jobpls-csp',
+  name: 'jobquery-csp',
   apply: 'build',
   transformIndexHtml: (html) => html.replace('<head>', `<head>\n    <meta http-equiv="Content-Security-Policy" content="${CSP}" />`)
 }

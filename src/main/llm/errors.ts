@@ -46,12 +46,12 @@ export class NoModelConfiguredError extends Error {
 
 /**
  * The provider refused because a rate or quota limit was reached (HTTP 429, or the provider's
- * per-day limit set in jobpls). The caller should stop starting new AI work for this run and
+ * per-day limit set in JobQuery). The caller should stop starting new AI work for this run and
  * pick up again later. It is not the item's fault, so it never counts as a failure of the job.
  */
 export class RateLimitedError extends Error {
   constructor(
-    message = 'Your AI provider says too many requests were sent. jobpls will try again on a later run.',
+    message = 'Your AI provider says too many requests were sent. JobQuery will try again on a later run.',
     /** When the provider said to try again, if it said. */
     readonly retryAfterMs: number | null = null
   ) {

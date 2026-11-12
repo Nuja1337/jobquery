@@ -131,7 +131,7 @@ export interface AppInfo {
    */
   secureKeyStorage: boolean
   /**
-   * Whether Windows will start jobpls at sign-in right now. Null when the app can't register
+   * Whether Windows will start JobQuery at sign-in right now. Null when the app can't register
    * itself, as in development or on a system without this feature.
    */
   openAtLogin: boolean | null

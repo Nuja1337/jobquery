@@ -284,15 +284,15 @@ export interface UpdateSettings {
   autoCheck: boolean
 }
 
-/** How jobpls behaves on this PC while it runs unattended. */
+/** How JobQuery behaves on this PC while it runs unattended. */
 export interface SystemSettings {
   /** Closing the window hides it to the system tray and the app keeps running. */
   closeToTray: boolean
-  /** Start jobpls when the user signs in to the computer. */
+  /** Start JobQuery when the user signs in to the computer. */
   startAtLogin: boolean
   /** Stop the computer from sleeping while a run is going or autopilot is on. */
   keepAwake: boolean
-  /** Show a system notification when jobpls needs the user. */
+  /** Show a system notification when JobQuery needs the user. */
   notifications: boolean
 }
 

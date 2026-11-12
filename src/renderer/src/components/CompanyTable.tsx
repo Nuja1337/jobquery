@@ -44,7 +44,7 @@ function status(c: CompanyWithBoard): { tone: Tone; text: string; title?: string
   if (c.blocked) return { tone: 'neutral', text: 'Blocked' }
   if (!c.watch && c.failures >= STOP_AFTER_FAILURES) return { tone: 'bad', text: 'Stopped', title: c.lastError ?? undefined }
   if (c.failures > 0) return { tone: 'warn', text: plural(c.failures, 'failure'), title: c.lastError ?? undefined }
-  if (!c.atsToken || c.ats === 'unknown') return { tone: 'neutral', text: 'Manual', title: 'jobpls cannot read this board, so it is not checked.' }
+  if (!c.atsToken || c.ats === 'unknown') return { tone: 'neutral', text: 'Manual', title: 'JobQuery cannot read this board, so it is not checked.' }
   if (!c.watch) return { tone: 'neutral', text: 'Off' }
   return c.lastCheckedAt ? { tone: 'good', text: 'OK' } : { tone: 'neutral', text: 'Waiting', title: 'This board has not been checked yet.' }
 }
@@ -186,7 +186,7 @@ export function CompanyTable({ page, error, pageNumber, filters, onFilters, onPa
           {filtered ? (
             <EmptyState icon={<Search size={22} />} title="No companies match" text="Change the search or the filters to see more." />
           ) : (
-            <EmptyState icon={<Building2 size={22} />} title="No boards yet" text="Use Start fast above, paste a list of careers links, or add one careers page. jobpls checks every watched board on each run." />
+            <EmptyState icon={<Building2 size={22} />} title="No boards yet" text="Use Start fast above, paste a list of careers links, or add one careers page. JobQuery checks every watched board on each run." />
           )}
         </div>
       ) : (

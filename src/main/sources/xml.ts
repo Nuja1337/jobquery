@@ -1,6 +1,6 @@
 import { decodeEntities } from './normalize'
 
-// A small reader for the two XML feeds jobpls uses (We Work Remotely and Personio). There is no XML
+// A small reader for the two XML feeds JobQuery uses (We Work Remotely and Personio). There is no XML
 // library in the project and these feeds are flat and well formed, so this finds tags with indexOf
 // and handles CDATA and entities. It does not validate and does not handle namespaces or attributes.
 

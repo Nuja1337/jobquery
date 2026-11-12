@@ -23,7 +23,7 @@ export function ReviewAll(): React.JSX.Element {
 
   if (list.error) return <ErrorBlock message={list.error} onRetry={list.reload} />
   if (!list.data) return <Loading />
-  if (total === 0) return <EmptyState title="Nothing to review" text="When jobpls drafts an application, it shows up here." />
+  if (total === 0) return <EmptyState title="Nothing to review" text="When JobQuery drafts an application, it shows up here." />
 
   const from = page * PAGE_SIZE + 1
   const to = Math.min(total, from + list.data.items.length - 1)

@@ -10,8 +10,8 @@ describe('notificationFor', () => {
   it('asks for a sign-in and names the company', () => {
     const e = event('submit_failed', 'Engineer at Acme: This site wants you to sign in first. Sign in in the browser window, then press Fill again.')
     expect(notificationFor(e, 'Acme')).toEqual({
-      title: 'jobpls needs you to sign in',
-      body: 'Acme wants you to sign in before jobpls can apply. Open jobpls to finish it.'
+      title: 'JobQuery needs you to sign in',
+      body: 'Acme wants you to sign in before JobQuery can apply. Open JobQuery to finish it.'
     })
   })
 
@@ -46,7 +46,7 @@ describe('notificationFor', () => {
   it('tells about crashes but not ordinary errors', () => {
     expect(notificationFor(event('error', 'Could not prepare a job.'))).toBeNull()
     expect(notificationFor(event('error', 'A background task failed. boom', { process: true }))).toEqual({
-      title: 'jobpls hit an unexpected error',
+      title: 'JobQuery hit an unexpected error',
       body: 'A background task failed. boom'
     })
   })
@@ -106,7 +106,7 @@ describe('Notifier', () => {
     notifier.handle(event('submit_failed', 'x: captcha'))
     notifier.handle(event('budget_stop', 'Budget.'))
     notifier.handle(event('submit_failed', 'x: This site wants you to sign in first.'))
-    expect(shown.map((n) => n.title)).toEqual(['A captcha stopped an application', 'AI budget reached for today', 'jobpls needs you to sign in'])
+    expect(shown.map((n) => n.title)).toEqual(['A captcha stopped an application', 'AI budget reached for today', 'JobQuery needs you to sign in'])
   })
 
   it('treats digests with different counts as one kind', () => {

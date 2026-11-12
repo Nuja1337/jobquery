@@ -63,7 +63,7 @@ afterEach(async () => {
 })
 
 async function services() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-grounding-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-grounding-'))
   const s = await createServices({ paths: appPaths(dir), vault: testVault, emit: () => {}, appVersion: '0.0.0' })
   open.push(async () => {
     await s.shutdown()

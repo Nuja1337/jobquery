@@ -33,7 +33,7 @@ export const STANCE_SLOTS: AnswerSlot[] = [
   }
 ]
 
-/** Answers in the person's own words. jobpls adapts them to each company. */
+/** Answers in the person's own words. JobQuery adapts them to each company. */
 export const TEMPLATE_SLOTS: AnswerSlot[] = [
   { topic: 'why_company', question: 'Why do you want to work here?', kind: 'template', label: 'Why this company', hint: 'What usually draws you to a company.', rows: 4 },
   { topic: 'about_you', question: 'Tell us about yourself', kind: 'template', label: 'About you', hint: 'How you would introduce yourself in a few sentences.', rows: 4 },

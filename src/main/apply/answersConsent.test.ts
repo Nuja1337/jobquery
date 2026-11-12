@@ -49,7 +49,7 @@ describe('optional questions that only the person answers', () => {
 
   it('leaves an optional box unticked with a note and no flag', async () => {
     const a = await answerOne(field(palantir, 'checkbox', [], false))
-    expect(a).toMatchObject({ value: 'false', needsUser: false, note: 'Optional, so jobpls leaves it unticked.' })
+    expect(a).toMatchObject({ value: 'false', needsUser: false, note: 'Optional, so JobQuery leaves it unticked.' })
   })
 
   it('leaves an optional question blank with a note and no flag', async () => {
