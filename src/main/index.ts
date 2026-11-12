@@ -6,6 +6,7 @@ import type { PushChannel, PushEvents } from '@shared/api'
 import { KeepAwake, shouldKeepAwake } from './background'
 import { Notifier } from './notify'
 import { createSafeStorageVault } from './secrets'
+import { moveOldDataFolder } from './dataFolderMove'
 import { appPaths } from './paths'
 import { recordProcessError, registerIpc, type BackgroundControls, type Shutdown } from './ipc'
 import { AppTray } from './tray'
@@ -30,7 +31,7 @@ const keepAwake = new KeepAwake(powerSaveBlocker)
 const LOGIN_ARG = '--hidden'
 const startedHidden = process.argv.includes(LOGIN_ARG)
 /** Matches build.appId in package.json, which electron-builder gives the Start menu shortcut. */
-const APP_USER_MODEL_ID = 'dev.jobpls.app'
+const APP_USER_MODEL_ID = 'dev.jobquery.app'
 
 const rendererIndex = path.join(__dirname, '../renderer/index.html')
 const devUrl = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined
@@ -98,7 +99,7 @@ let appliedLoginItem: boolean | null = null
 
 /**
  * Registers or removes the start at sign-in entry. In development (an unpackaged app) it does
- * nothing, because the entry would point at the Electron binary and not at jobpls.
+ * nothing, because the entry would point at the Electron binary and not at JobQuery.
  */
 function applyLoginItem(wanted: boolean): void {
   if (!app.isPackaged || appliedLoginItem === wanted) return
@@ -121,7 +122,7 @@ function createWindow(): void {
     minWidth: 1040,
     minHeight: 680,
     show: false,
-    title: 'jobpls',
+    title: 'JobQuery',
     backgroundColor: '#0b0d12',
     autoHideMenuBar: true,
     webPreferences: {
@@ -158,7 +159,7 @@ function createWindow(): void {
     mainWindow?.hide()
     if (!trayHintShown && Notification.isSupported()) {
       trayHintShown = true
-      showNote('jobpls keeps running in the tray.', 'Open it from the tray icon, or quit it from the tray menu.')
+      showNote('JobQuery keeps running in the tray.', 'Open it from the tray icon, or quit it from the tray menu.')
     }
   })
   // Windows is signing out or shutting down.
@@ -182,10 +183,14 @@ function createWindow(): void {
   }
 }
 
-// JOBPLS_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
+// JOBQUERY_DATA_DIR points the app at another data folder, for tests and side-by-side profiles.
 // Electron's own files and the one-copy-at-a-time lock follow it, so a second profile can run
 // while the normal one is open.
-if (process.env.JOBPLS_DATA_DIR) app.setPath('userData', process.env.JOBPLS_DATA_DIR)
+if (process.env.JOBQUERY_DATA_DIR) app.setPath('userData', process.env.JOBQUERY_DATA_DIR)
+
+// The data folder of the app's old name moves to the new name here, at the top level and before
+// the lock below, because taking the lock makes Electron create the new folder and the move needs it missing.
+moveOldDataFolder(app.getPath('userData'))
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

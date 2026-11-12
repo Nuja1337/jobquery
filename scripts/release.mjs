@@ -1,7 +1,7 @@
 // Uploads this version's installers to a draft GitHub release on the public releases repo.
 // Installed copies only see a release once it's published, so check the draft before publishing.
 //
-//   npm run release                          notes say "jobpls <version>"
+//   npm run release                          notes say "JobQuery <version>"
 //   npm run release -- --notes-file notes.md notes come from a file
 //
 // Needs the gh CLI, signed in with write access to the releases repo. See docs/RELEASING.md.
@@ -57,11 +57,11 @@ if (exists.error) fail("The gh CLI isn't installed or isn't on PATH. Install it 
 if (exists.status === 0) fail(`${repo} already has a release ${tag}. Raise the version in package.json instead of reusing one.`)
 
 const notesIndex = process.argv.indexOf('--notes-file')
-const notesArgs = notesIndex > -1 ? ['--notes-file', process.argv[notesIndex + 1]] : ['--notes', `jobpls ${version}`]
+const notesArgs = notesIndex > -1 ? ['--notes-file', process.argv[notesIndex + 1]] : ['--notes', `JobQuery ${version}`]
 
 console.log(`Uploading ${files.length} files to a draft release ${tag} on ${repo}:`)
 for (const f of files) console.log(`  ${path.basename(f)}`)
-const created = spawnSync('gh', ['release', 'create', tag, '--repo', repo, '--draft', '--title', `jobpls ${version}`, ...notesArgs, ...files], { stdio: 'inherit' })
+const created = spawnSync('gh', ['release', 'create', tag, '--repo', repo, '--draft', '--title', `JobQuery ${version}`, ...notesArgs, ...files], { stdio: 'inherit' })
 if (created.status !== 0) fail('gh release create failed. Nothing was published.')
 
 console.log(`\nDraft ready. Check it on GitHub, then publish it with:\n  gh release edit ${tag} --repo ${repo} --draft=false\n`)

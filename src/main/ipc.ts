@@ -139,7 +139,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     deps.emit(channel, payload)
   }
   const ctx = await createContext({ dbFile: deps.paths.dbFile, paths: deps.paths, vault: deps.vault, emit })
-  log.write('info', `jobpls ${deps.appVersion} started, database version ${ctx.db.schemaVersion}`)
+  log.write('info', `JobQuery ${deps.appVersion} started, database version ${ctx.db.schemaVersion}`)
   const browser = new BrowserManager(deps.paths.browserProfileDir)
   const pipeline = new Pipeline(ctx)
   const loop = new WorkLoop(ctx, pipeline)
@@ -671,13 +671,13 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async openPath(p) {
       // Only files the app created, such as screenshots and cover letter PDFs.
-      if (!insideDataDir(p)) throw new Error('That file is outside the jobpls data folder.')
+      if (!insideDataDir(p)) throw new Error('That file is outside the JobQuery data folder.')
       const err = await shell.openPath(p)
       if (err) throw new Error(err)
     },
     async exportDatabase() {
       const win = BrowserWindow.getFocusedWindow()
-      const defaultPath = path.join(deps.paths.exportsDir, `jobpls-backup-${new Date().toISOString().slice(0, 10)}.sqlite`)
+      const defaultPath = path.join(deps.paths.exportsDir, `jobquery-backup-${new Date().toISOString().slice(0, 10)}.sqlite`)
       const opts = { defaultPath, filters: [{ name: 'SQLite database', extensions: ['sqlite'] }] }
       const res = win ? await dialog.showSaveDialog(win, opts) : { canceled: false, filePath: defaultPath }
       if (res.canceled || !res.filePath) return null
@@ -692,7 +692,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async exportData() {
       const win = BrowserWindow.getFocusedWindow()
-      const defaultPath = path.join(deps.paths.exportsDir, `jobpls-export-${new Date().toISOString().slice(0, 10)}.json`)
+      const defaultPath = path.join(deps.paths.exportsDir, `jobquery-export-${new Date().toISOString().slice(0, 10)}.json`)
       const res = win ? await dialog.showSaveDialog(win, { defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }] }) : { canceled: false, filePath: defaultPath }
       if (res.canceled || !res.filePath) return null
       const tables = ['settings', 'profile', 'documents', 'answer_bank', 'companies', 'searches', 'jobs', 'applications', 'events', 'runs', 'llm_calls']
@@ -1053,7 +1053,7 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
         const max = latest.formFields.find((f) => f.key === a.fieldKey)?.maxLength ?? null
         if (max !== null && written.text.length > max) {
           const size = `The cover letter is ${written.text.length} characters and this box takes ${max}.`
-          return { ...a, value: '', needsUser: a.required, confidence: 0, lint: null, note: a.required ? `${size} Write a shorter one.` : `${size} This box is optional, so jobpls left it blank.` }
+          return { ...a, value: '', needsUser: a.required, confidence: 0, lint: null, note: a.required ? `${size} Write a shorter one.` : `${size} This box is optional, so JobQuery left it blank.` }
         }
         return { ...a, value: written.text, needsUser: false, confidence: passes ? 0.9 : 0.6, lint: written.lint, note: passes ? (a.note?.startsWith(HELD_LETTER_NOTE) ? null : a.note) : `${HELD_LETTER_NOTE} ${failureReason(written.lint, minLintScore)}` }
       })
@@ -1225,9 +1225,9 @@ export async function createServices(deps: Omit<IpcDeps, 'ipcMain' | 'isTrustedS
     },
     async installUpdate() {
       if (!updater) throw new Error('Updates work only in the installed app.')
-      if (pipeline.status().phase !== 'idle' && !loop.isRunning()) throw new Error('A run is in progress. Restart to update after it finishes, or close jobpls to install the update then.')
+      if (pipeline.status().phase !== 'idle' && !loop.isRunning()) throw new Error('A run is in progress. Restart to update after it finishes, or close JobQuery to install the update then.')
       const busy = inFlight.size > 0 || ctx.applications.list({ statuses: ['draft', 'submitting'], limit: 1 }).total > 0
-      if (busy) throw new Error('jobpls is preparing or sending an application. Restart to update after it finishes.')
+      if (busy) throw new Error('JobQuery is preparing or sending an application. Restart to update after it finishes.')
       await updater.install()
     }
   }
@@ -1282,7 +1282,7 @@ export async function registerIpc(deps: IpcDeps): Promise<{ shutdown: Shutdown; 
   const { api, shutdown, controls } = await createServices(deps)
   deps.ipcMain.handle('api', async (event, method: string, args: unknown[]) => {
     if (!deps.isTrustedSender(event)) {
-      return { ok: false, error: 'Calls are only accepted from the jobpls window.', name: 'Forbidden' }
+      return { ok: false, error: 'Calls are only accepted from the JobQuery window.', name: 'Forbidden' }
     }
     if (!Object.prototype.hasOwnProperty.call(api, method)) {
       return { ok: false, error: `Unknown method ${method}.`, name: 'UnknownMethod' }

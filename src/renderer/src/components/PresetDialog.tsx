@@ -44,10 +44,10 @@ export function PresetDialog({ current, onClose, onApplied }: { current: Setting
       }
     >
       <div className="space-y-4 text-sm text-muted">
-        <p>This sets jobpls up to find, score, prepare and send hundreds of applications a day. Nothing changes until you confirm.</p>
+        <p>This sets JobQuery up to find, score, prepare and send hundreds of applications a day. Nothing changes until you confirm.</p>
 
         <Notice tone="warn" title="Auto-submit and dry run">
-          <p>Auto-submit will be on, and so will dry run. In a dry run jobpls fills each form and takes a screenshot, and never clicks Submit. It stays that way until you turn dry run off in Settings.</p>
+          <p>Auto-submit will be on, and so will dry run. In a dry run JobQuery fills each form and takes a screenshot, and never clicks Submit. It stays that way until you turn dry run off in Settings.</p>
         </Notice>
 
         <div className="flex items-start gap-2">

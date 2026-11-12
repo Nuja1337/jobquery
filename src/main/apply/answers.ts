@@ -191,7 +191,7 @@ function fitToField(field: FormField, value: string): string | null {
 /** The note for a field that was left empty because its text is longer than the box allows. */
 function tooLongNote(field: FormField, what: string, length: number, limit: number | null = field.maxLength): string {
   const size = limit === field.maxLength ? `${what} is ${length} characters and this box takes ${limit}.` : `${what} is ${length} characters and the form's own limit works out to about ${limit}.`
-  return field.required ? `${size} Write a shorter one.` : `${size} This box is optional, so jobpls left it blank.`
+  return field.required ? `${size} Write a shorter one.` : `${size} This box is optional, so JobQuery left it blank.`
 }
 
 /** The note for a required question that asks for a link when the profile has none. */
@@ -302,7 +302,7 @@ export async function answerFields(
   const flaggedSaved = (field: FormField, text: string, name: string): PreparedAnswer =>
     field.required
       ? blank(field, { value: text, source: 'answer_bank', needsUser: true, note: `This answer names ${name}, a company you applied to. Edit it for ${job.company}.` })
-      : blank(field, { source: 'answer_bank', note: `A saved answer names ${name}, so jobpls left this blank.` })
+      : blank(field, { source: 'answer_bank', note: `A saved answer names ${name}, so JobQuery left this blank.` })
 
   for (const field of fields) {
     if (field.type === 'file') {
@@ -357,8 +357,8 @@ export async function answerFields(
         results.set(
           field.key,
           field.type === 'checkbox'
-            ? blank(field, { value: 'false', source: 'settings', confidence: 1, note: 'Optional, so jobpls leaves it unticked.' })
-            : blank(field, { source: 'settings', note: 'Optional, so jobpls leaves it blank.' })
+            ? blank(field, { value: 'false', source: 'settings', confidence: 1, note: 'Optional, so JobQuery leaves it unticked.' })
+            : blank(field, { source: 'settings', note: 'Optional, so JobQuery leaves it blank.' })
         )
       } else {
         results.set(field.key, blank(field, { source: 'settings', needsUser: true, note: ask }))
@@ -449,13 +449,13 @@ export async function answerFields(
     const base = saved?.kind === 'template' ? saved.answer : null
     // A one-line catch-all box ("Anything else?", "Notes") is an open box too, whatever its type.
     if (!field.required && !base && !asked && isCatchAllField(field)) {
-      results.set(field.key, blank(field, { source: 'settings', note: 'Optional, so jobpls leaves it blank.' }))
+      results.set(field.key, blank(field, { source: 'settings', note: 'Optional, so JobQuery leaves it blank.' }))
       continue
     }
 
     if (isLongAnswer(field)) {
       if (!field.required && !base && !asked) {
-        results.set(field.key, blank(field, { source: 'settings', note: 'Optional, so jobpls leaves it blank.' }))
+        results.set(field.key, blank(field, { source: 'settings', note: 'Optional, so JobQuery leaves it blank.' }))
         continue
       }
       // A form that asks for a link the profile lacks is flagged. The model must not invent one.
@@ -473,7 +473,7 @@ export async function answerFields(
     if (family) {
       results.set(
         field.key,
-        field.required ? blank(field, { source: 'settings', needsUser: true, note: willingnessNote(family) }) : blank(field, { source: 'settings', note: 'Optional, so jobpls leaves it blank.' })
+        field.required ? blank(field, { source: 'settings', needsUser: true, note: willingnessNote(family) }) : blank(field, { source: 'settings', note: 'Optional, so JobQuery leaves it blank.' })
       )
       continue
     }

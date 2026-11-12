@@ -131,7 +131,7 @@ export function greenhouseFields(data: GhJobWithQuestions): FormField[] {
 export async function fetchGreenhouseFields(boardToken: string, jobId: string): Promise<FormField[] | null> {
   const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(boardToken)}/jobs/${encodeURIComponent(jobId)}?questions=true`
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'jobpls/0.1 (+https://github.com/Nuja1337/jobpls)' },
+    headers: { 'User-Agent': 'jobquery/0.1 (+https://github.com/Nuja1337/jobquery)' },
     signal: AbortSignal.timeout(20_000)
   })
   if (!res.ok) return null

@@ -41,7 +41,7 @@ export function Analytics(): React.JSX.Element {
           />
         }
       />
-      {report.error ? <ErrorBlock message={report.error} onRetry={report.reload} /> : !report.data ? <Loading /> : report.data.funnel.discovered === 0 ? <EmptyState icon={<BarChart3 size={24} />} title="Nothing to chart yet" text="Press Run now to find jobs. Charts fill in as jobpls works." /> : <Report r={report.data} />}
+      {report.error ? <ErrorBlock message={report.error} onRetry={report.reload} /> : !report.data ? <Loading /> : report.data.funnel.discovered === 0 ? <EmptyState icon={<BarChart3 size={24} />} title="Nothing to chart yet" text="Press Run now to find jobs. Charts fill in as JobQuery works." /> : <Report r={report.data} />}
     </Page>
   )
 }

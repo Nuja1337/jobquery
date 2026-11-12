@@ -7,7 +7,7 @@ import { makeRaw, makeTestEnv } from '../testing'
 import { Db, migrationHandle } from './database'
 import { MIGRATIONS, type Migration } from './schema'
 
-const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-scale-'))
+const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-scale-'))
 const indexNames = (db: Db) => db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'applications'").map((r) => r.name)
 
 describe('migration 12', () => {

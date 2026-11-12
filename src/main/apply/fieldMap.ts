@@ -280,7 +280,7 @@ export function isOptIn(label: string): boolean {
 export function optInAnswer(field: FormField): MappedAnswer | null {
   // Text and textarea fields ask for a written answer, never for an opt-in.
   if (field.type === 'file' || field.type === 'text' || field.type === 'textarea' || !isOptIn(field.label)) return null
-  const declined = (value: string): MappedAnswer => ({ value, source: 'settings', confidence: 1, needsUser: false, note: 'jobpls declines opt-ins to messages and marketing.' })
+  const declined = (value: string): MappedAnswer => ({ value, source: 'settings', confidence: 1, needsUser: false, note: 'JobQuery declines opt-ins to messages and marketing.' })
   const ask: MappedAnswer = { value: '', source: 'settings', confidence: 0, needsUser: true, note: 'This form requires opting in to messages. Tick it yourself if you want to.' }
   if (field.type === 'checkbox') return field.required ? ask : declined('false')
   if (isChoiceWithOptions(field)) {

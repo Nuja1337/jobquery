@@ -561,7 +561,7 @@ function mapField(field: FormField, ctx: MapContext): MappedAnswer | null {
 export function mapAvailabilityField(field: FormField, ctx: MapContext): MappedAnswer | null {
   const got = mapField(field, ctx)
   if (!got || !got.needsUser) return got
-  if (!field.required) return { value: '', source: 'profile', confidence: 0, needsUser: false, note: 'Optional, so jobpls leaves it blank.' }
+  if (!field.required) return { value: '', source: 'profile', confidence: 0, needsUser: false, note: 'Optional, so JobQuery leaves it blank.' }
   const family = GAPS.has(got) ? willingnessFamily(field.label) : null
   return family ? { ...got, note: willingnessNote(family) } : got
 }

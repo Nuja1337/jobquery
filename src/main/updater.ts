@@ -3,7 +3,7 @@ import { RELEASES_URL } from '@shared/defaults'
 import type { UpdateStatus } from '@shared/types'
 
 /**
- * The parts of electron-updater's autoUpdater that jobpls uses. Tests pass a fake.
+ * The parts of electron-updater's autoUpdater that JobQuery uses. Tests pass a fake.
  *
  * Updates come from the public releases repo set in `build.publish` in package.json. The updater
  * checks each download against the SHA-512 hash in the release's latest.yml before installing it.
@@ -40,7 +40,7 @@ export interface UpdaterOptions {
 }
 
 /**
- * electron-updater sends a random ID, kept per install, with each check. jobpls doesn't use
+ * electron-updater sends a random ID, kept per install, with each check. JobQuery doesn't use
  * staged rollouts, so every install sends this same blank ID and GitHub can't tell them apart.
  */
 export const BLANK_INSTALL_ID = '00000000-0000-0000-0000-000000000000'
@@ -55,7 +55,7 @@ export class Updater {
   private timer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
   private installing = false
-  /** macOS installs only signed updates, and jobpls isn't signed yet, so there it only reports them. */
+  /** macOS installs only signed updates, and JobQuery isn't signed yet, so there it only reports them. */
   private readonly notifyOnly: boolean
 
   constructor(private readonly o: UpdaterOptions) {
@@ -94,8 +94,8 @@ export class Updater {
     b.on('error', (err) => {
       console.warn('[updater]', err?.message ?? err)
       const message = this.status.state === 'downloading'
-        ? "The update didn't finish downloading. jobpls tries again at the next check."
-        : "jobpls couldn't check for updates. Check your internet connection, or try again later."
+        ? "The update didn't finish downloading. JobQuery tries again at the next check."
+        : "JobQuery couldn't check for updates. Check your internet connection, or try again later."
       this.set({ state: 'error', percent: null, message })
     })
   }
@@ -174,5 +174,5 @@ export class Updater {
 function disabledReason(o: Pick<UpdaterOptions, 'isPackaged' | 'platform'>): string {
   if (!o.isPackaged) return 'Updates work only in the installed app.'
   if (o.platform === 'linux') return 'Updates work only in the AppImage version. Download new versions from the releases page.'
-  return "This copy of jobpls can't update itself. Download new versions from the releases page."
+  return "This copy of JobQuery can't update itself. Download new versions from the releases page."
 }

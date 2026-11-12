@@ -1,5 +1,5 @@
 {
-  "name": "jobpls",
+  "name": "jobquery",
   "version": "0.1.0",
   "private": true,
   "description": "Local-first desktop app that finds jobs that fit you, writes your applications in your own voice with your own AI key, and tracks everything you applied to.",
@@ -26,8 +26,8 @@
     "make-icon": "node scripts/make-icon.mjs"
   },
   "build": {
-    "appId": "dev.jobpls.app",
-    "productName": "jobpls",
+    "appId": "dev.jobquery.app",
+    "productName": "JobQuery",
     "directories": {
       "output": "release"
     },
@@ -40,7 +40,7 @@
       {
         "provider": "github",
         "owner": "Nuja1337",
-        "repo": "jobpls-releases",
+        "repo": "jobquery-releases",
         "releaseType": "release"
       }
     ],

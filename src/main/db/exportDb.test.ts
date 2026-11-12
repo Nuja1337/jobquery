@@ -8,7 +8,7 @@ import { exportDatabaseCopy, isLiveDatabaseFile } from './exportDb'
 
 const dirs: string[] = []
 const tempDir = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-export-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-export-'))
   dirs.push(dir)
   return dir
 }
@@ -18,7 +18,7 @@ afterEach(() => {
 
 async function seeded() {
   const dir = tempDir()
-  const dbFile = path.join(dir, 'jobpls.sqlite')
+  const dbFile = path.join(dir, 'jobquery.sqlite')
   const db = await Db.open(dbFile)
   db.run("INSERT INTO providers (id, kind, label, api_key_enc, created_at) VALUES ('p1', 'anthropic', 'Claude', 'enc:TOPSECRETKEYBYTES', '2026-01-01T00:00:00.000Z')")
   db.run("INSERT INTO searches (id, source, label, params) VALUES ('s1', 'adzuna', 'Adzuna', :p)", {
@@ -62,10 +62,10 @@ describe('exportDatabaseCopy', () => {
   it('refuses the live database and its side files, and changes nothing', async () => {
     const { dbFile, db } = await seeded()
     for (const suffix of ['', '-wal', '-shm']) {
-      expect(() => exportDatabaseCopy(db, dbFile, `${dbFile}${suffix}`)).toThrow(/file jobpls is using/)
+      expect(() => exportDatabaseCopy(db, dbFile, `${dbFile}${suffix}`)).toThrow(/file JobQuery is using/)
     }
     // A different spelling of the same path is the same file.
-    expect(() => exportDatabaseCopy(db, dbFile, path.join(path.dirname(dbFile), 'sub', '..', path.basename(dbFile)))).toThrow(/file jobpls is using/)
+    expect(() => exportDatabaseCopy(db, dbFile, path.join(path.dirname(dbFile), 'sub', '..', path.basename(dbFile)))).toThrow(/file JobQuery is using/)
     expect(isLiveDatabaseFile(dbFile, path.join(path.dirname(dbFile), 'other.sqlite'))).toBe(false)
     expect(db.get("SELECT label FROM providers WHERE id = 'p1'")).toEqual({ label: 'Claude' })
     db.close()

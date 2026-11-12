@@ -178,7 +178,7 @@ export function AnswerField({ answer, minLint, maxLength, readOnly, canRegenerat
           )}
           <AnswerSourceBadge source={answer.source} />
           {answer.source !== 'user' && answer.source !== 'file' && (answer.value.trim() || flagged) && (
-            <Badge tone={guess ? 'warn' : answer.confidence >= 0.8 ? 'good' : 'neutral'} title="How sure jobpls is about this answer">
+            <Badge tone={guess ? 'warn' : answer.confidence >= 0.8 ? 'good' : 'neutral'} title="How sure JobQuery is about this answer">
               {Math.round(answer.confidence * 100)}%
             </Badge>
           )}

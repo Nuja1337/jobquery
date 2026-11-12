@@ -43,7 +43,7 @@ export function WorkArrangementBlock({ facts, onChange }: FactsProps): React.JSX
   const w = facts.workArrangement
   const set = (patch: Partial<ApplicationFacts['workArrangement']>): void => onChange({ ...facts, workArrangement: { ...w, ...patch } })
   return (
-    <Block title="Work arrangement and commute" hint="Answers for forms that ask about remote, hybrid or on-site work. Not answered makes jobpls ask you on the form.">
+    <Block title="Work arrangement and commute" hint="Answers for forms that ask about remote, hybrid or on-site work. Not answered makes JobQuery ask you on the form.">
       <div className="grid grid-cols-3 gap-3">
         <TriState label="Work remotely" value={w.remote} onChange={(v) => set({ remote: v })} />
         <TriState label="Work hybrid" value={w.hybrid} onChange={(v) => set({ hybrid: v })} />
@@ -67,7 +67,7 @@ export function EmploymentBlock({ facts, onChange }: FactsProps): React.JSX.Elem
   const set = (patch: Partial<ApplicationFacts['employment']>): void => onChange({ ...facts, employment: { ...e, ...patch } })
   return (
     <Block title="Employment and hours" hint="Forms ask whether you want full time, contract and so on.">
-      <Field label="Types of work you accept" hint="Select every type you accept. These answer form questions. The filter for which jobs jobpls shows you is in Settings.">
+      <Field label="Types of work you accept" hint="Select every type you accept. These answer form questions. The filter for which jobs JobQuery shows you is in Settings.">
         <EmploymentTypeChips value={e.types} onChange={(v) => set({ types: v })} />
       </Field>
       <div className="grid grid-cols-3 gap-3">
@@ -92,7 +92,7 @@ export function CurrentJobPayBlock({ facts, onChange, defaultCurrency = 'USD' }:
         <Field label="Position you want" hint="Sent when a form asks for your desired position.">
           <Input value={e.desiredTitle} onChange={(ev) => set({ desiredTitle: ev.target.value })} placeholder="Gameplay Programmer" />
         </Field>
-        <Field label="If a form asks your current pay" hint="Not answered makes jobpls ask you on the form.">
+        <Field label="If a form asks your current pay" hint="Not answered makes JobQuery ask you on the form.">
           <Select
             value={pay.stance}
             onChange={(ev) => {
@@ -139,7 +139,7 @@ export function ScheduleBlock({ facts, onChange }: FactsProps): React.JSX.Elemen
   const s = facts.schedule
   const set = (patch: Partial<ApplicationFacts['schedule']>): void => onChange({ ...facts, schedule: { ...s, ...patch } })
   return (
-    <Block title="Schedule" hint="Whether you can work outside the usual hours. Not answered makes jobpls ask you on the form.">
+    <Block title="Schedule" hint="Whether you can work outside the usual hours. Not answered makes JobQuery ask you on the form.">
       <div className="grid grid-cols-3 gap-3">
         <TriState label="Evenings" value={s.evenings} onChange={(v) => set({ evenings: v })} />
         <TriState label="Weekends" value={s.weekends} onChange={(v) => set({ weekends: v })} />
@@ -231,7 +231,7 @@ export function ExperienceBlock({ facts, onChange }: FactsProps): React.JSX.Elem
   const x = facts.experience
   const set = (patch: Partial<ApplicationFacts['experience']>): void => onChange({ ...facts, experience: { ...x, ...patch } })
   return (
-    <Block title="Experience details" hint="Enter 0 when the answer is none. Empty means not answered, and jobpls asks you on the form.">
+    <Block title="Experience details" hint="Enter 0 when the answer is none. Empty means not answered, and JobQuery asks you on the form.">
       <div className="grid grid-cols-3 gap-3">
         {EXPERIENCE_FIELDS.map((f) => (
           <Field key={f.key} label={f.label}>

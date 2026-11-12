@@ -46,7 +46,7 @@ export function cleanLine(text: string, maxLength = DEFAULT_MAX_MESSAGE): string
 }
 
 /**
- * A log file in `dir` that rotates by size: jobpls.log, then jobpls.1.log and so on, oldest dropped.
+ * A log file in `dir` that rotates by size: jobquery.log, then jobquery.1.log and so on, oldest dropped.
  * It holds ids, counts and error messages the app already shows in its activity log. Callers must
  * not pass prompts, documents, cookies or keys. Redaction is a second guard, not the first.
  */
@@ -55,13 +55,13 @@ export function createFileLog(dir: string, options: FileLogOptions = {}): FileLo
   const files = Math.max(1, options.files ?? DEFAULT_FILES)
   const maxMessage = options.maxMessage ?? DEFAULT_MAX_MESSAGE
   const now = options.now ?? (() => new Date())
-  const file = path.join(dir, 'jobpls.log')
-  const older = (n: number): string => path.join(dir, `jobpls.${n}.log`)
+  const file = path.join(dir, 'jobquery.log')
+  const older = (n: number): string => path.join(dir, `jobquery.${n}.log`)
   let size: number | null = null
   let broken = false
 
   function rotate(): void {
-    // jobpls.(files-2).log is the oldest kept file, so the one after it goes.
+    // jobquery.(files-2).log is the oldest kept file, so the one after it goes.
     fs.rmSync(older(files - 1), { force: true })
     for (let n = files - 2; n >= 1; n--) {
       if (fs.existsSync(older(n))) fs.renameSync(older(n), older(n + 1))

@@ -1,8 +1,10 @@
-# jobpls
+# JobQuery
 
 A desktop app that finds jobs that fit you, writes your applications in your own voice with your own AI key, fills in the forms and keeps track of everything you've applied to.
 
 You review each application and click Submit. If you trust it, auto-submit can do that part too, within limits you set.
+
+JobQuery was called jobpls before. On startup it moves an existing jobpls data folder to the new name and keeps everything in it.
 
 ## What it does
 
@@ -27,7 +29,7 @@ Use a free option or a paid key, whichever you prefer. Each step of the pipeline
 
 | Provider | Notes |
 |---|---|
-| Google Gemini (free tier) | You don't need a card. Use a key from a Google project without billing, since a billed key is charged for each call and jobpls treats it as free. Google may use free-tier requests to improve its products, and people may read them. This doesn't apply in the European Economic Area, Switzerland or the UK |
+| Google Gemini (free tier) | You don't need a card. Use a key from a Google project without billing, since a billed key is charged for each call and JobQuery treats it as free. Google may use free-tier requests to improve its products, and people may read them. This doesn't apply in the European Economic Area, Switzerland or the UK |
 | Groq (free tier) | You don't need a card. It runs fast open models with daily limits |
 | OpenRouter free models | Pick models whose names end in `:free`. You get about 50 requests a day until you've bought credits, and any other model on OpenRouter is paid |
 | Mistral (free plan) | You don't need a card. Mistral may use free-plan requests to train its models |
@@ -45,17 +47,17 @@ Use a free option or a paid key, whichever you prefer. Each step of the pipeline
 
 A ChatGPT or Claude subscription doesn't include API use, so a paid key is billed separately by its provider.
 
-jobpls spaces out its requests to stay under a free tier's per-minute and per-day limits. When a provider says the limit is reached, it pauses and carries on with the next run.
+JobQuery spaces out its requests to stay under a free tier's per-minute and per-day limits. When a provider says the limit is reached, it pauses and carries on with the next run.
 
 Your key stays on your computer. It's encrypted with your operating system's key store when one is available, and the app warns you when there isn't one.
 
 ## Costs and billing
 
-Your AI provider bills you directly, and jobpls isn't responsible for any charges from your provider.
+Your AI provider bills you directly, and JobQuery isn't responsible for any charges from your provider.
 
-- A free tier costs nothing while billing is off for the key. A key with billing turned on gets charged for each call, even if you marked it free in jobpls.
-- jobpls's costs and budgets are estimates from published prices, so your bill can be higher. Providers change their prices, so check the prices in Settings against your provider's price page.
-- jobpls stops making paid calls when its estimate reaches your daily or monthly budget. A call that is already running can go a little over. A budget of 0 means no limit, and free and local providers don't count toward budgets.
+- A free tier costs nothing while billing is off for the key. A key with billing turned on gets charged for each call, even if you marked it free in JobQuery.
+- JobQuery's costs and budgets are estimates from published prices, so your bill can be higher. Providers change their prices, so check the prices in Settings against your provider's price page.
+- JobQuery stops making paid calls when its estimate reaches your daily or monthly budget. A call that is already running can go a little over. A budget of 0 means no limit, and free and local providers don't count toward budgets.
 - Set a spend limit with your provider too.
 
 Each provider below has a price page and a place to check usage or set a limit.
@@ -77,8 +79,8 @@ Filling a job application needs a real browser where you're signed in to the job
 You need [Node.js](https://nodejs.org) 24 or later and Chrome or Edge.
 
 ```bash
-git clone https://github.com/Nuja1337/jobpls.git
-cd jobpls
+git clone https://github.com/Nuja1337/jobquery.git
+cd jobquery
 npm install
 npm run dev
 ```
@@ -121,19 +123,19 @@ Then open http://localhost:5173. Add `?onboarding=1` to see the first-run setup.
 ## Applying responsibly
 
 - Every fact in a draft comes from your profile, documents and notes. When an honest answer needs something the app doesn't know, the field is flagged for you instead of guessed.
-- Some employers ask you not to use AI on applications, or to say whether you did. jobpls never uses AI to answer those questions. It leaves them to you, and auto-submit never sends an application that has one, even when you saved your own answer for it. Read the employer's policy and respect it.
+- Some employers ask you not to use AI on applications, or to say whether you did. JobQuery never uses AI to answer those questions. It leaves them to you, and auto-submit never sends an application that has one, even when you saved your own answer for it. Read the employer's policy and respect it.
 - Legal agreements, terms, attestations and consent boxes are handled the same way. Salary, start dates and legal history are only filled from facts you added to your profile. A saved answer of your own is reused on later forms. Demographic questions default to "decline to answer" and never go to the AI. Questions about commuting, schedule, hours, drug tests and background checks are answered only from facts you gave and are flagged otherwise.
 - Auto-submit is off by default. When on, it only submits applications at or above a fit score you choose, under daily, hourly, per-company and per-job-site caps, and only when nothing is flagged, no answer is a low-confidence guess and every answer was on the draft you could review. It clicks Submit at most once per application. If no confirmation follows, the application waits for you. Three captchas or two sign-in walls in a row on one job site pause that site for two hours, and a wrong submission you report pauses auto-submit.
 - A dry-run setting makes every automatic submit, including the Submit button on the Review page, fill the form, take a screenshot and stop before the final click.
 - Nothing counts as submitted until the page changes after the click and shows a new confirmation message or moves to a thank-you page, or until you mark it yourself. A screenshot is saved for each submission the app sees.
-- Jobs come from public APIs and feeds meant for listing jobs. jobpls doesn't scrape LinkedIn, Indeed or Glassdoor. RemoteOK, Remotive, Himalayas, Jobicy and We Work Remotely ask for a link back to their listings, and the app links each of their jobs to its page there. Requests to each job site are paced, and a site that asks the app to slow down is paused.
+- Jobs come from public APIs and feeds meant for listing jobs. JobQuery doesn't scrape LinkedIn, Indeed or Glassdoor. RemoteOK, Remotive, Himalayas, Jobicy and We Work Remotely ask for a link back to their listings, and the app links each of their jobs to its page there. Requests to each job site are paced, and a site that asks the app to slow down is paused.
 
 ## Updates
 
-Installed copies of jobpls look for new versions on GitHub. They check about 10 seconds after the app opens and then every 4 hours, while "Check for updates automatically" is on in Settings, Updates. A check you start yourself works either way.
+Installed copies of JobQuery look for new versions on GitHub. They check about 10 seconds after the app opens and then every 4 hours, while "Check for updates automatically" is on in Settings, Updates. A check you start yourself works either way.
 
-- **Windows and the Linux AppImage.** A new version downloads in the background and installs the next time jobpls closes. The top bar shows "Restart to update" if you would rather install it right away. jobpls saves your work, closes, installs and opens again.
-- **macOS.** The app isn't signed yet, and macOS won't install unsigned updates. jobpls shows "Update available" instead, which opens the download page, and you install the new version yourself.
+- **Windows and the Linux AppImage.** A new version downloads in the background and installs the next time JobQuery closes. The top bar shows "Restart to update" if you would rather install it right away. JobQuery saves your work, closes, installs and opens again.
+- **macOS.** The app isn't signed yet, and macOS won't install unsigned updates. JobQuery shows "Update available" instead, which opens the download page, and you install the new version yourself.
 - **Development builds and other Linux installs.** These can't update themselves. Settings, Updates says so and links to the download page when there is one.
 
 Updates keep your data. Your jobs, profile, settings and API keys stay where they are. [Privacy](#privacy) says what a check sends.
@@ -144,13 +146,13 @@ Everything lives in one SQLite file in the app's data folder, along with copies 
 
 ## Privacy
 
-jobpls has no account, server or tracking of its own. It doesn't send telemetry or crash reports. The list below covers everything that leaves your computer.
+JobQuery has no account, server or tracking of its own. It doesn't send telemetry or crash reports. The list below covers everything that leaves your computer.
 
 - **Your AI provider.** Each AI call goes straight to the provider you chose, with your key. Depending on the step, it can include the job posting, your profile, the text of your resume, your notes, your writing samples and the questions on an application form. With Ollama or LM Studio on this computer, none of it leaves. Read your provider's data policy, because a free tier may use what you send to train its models.
-- **Job sources.** To find jobs, jobpls asks the public job APIs you turned on for postings, and sends the company names, search words and places you set up. It identifies itself as jobpls in the request. For Adzuna it sends your own Adzuna app ID and key.
-- **Pages you give it.** When you paste a job link or add a portfolio link, jobpls loads that page to read its text.
-- **Update checks.** jobpls asks GitHub whether a newer version exists, and on Windows and Linux downloads it if there is one. GitHub sees your IP address and the version you run, as with any download. No account or personal data is sent. You can turn automatic checks off under Settings, Updates.
-- **Employers.** To read or fill an application, jobpls opens the form in your own Chrome or Edge, like a visit you made yourself. For Greenhouse jobs it can read the form from Greenhouse's public API first. What you fill in goes to the employer only when you submit, or when auto-submit does it for you.
+- **Job sources.** To find jobs, JobQuery asks the public job APIs you turned on for postings, and sends the company names, search words and places you set up. It identifies itself as JobQuery in the request. For Adzuna it sends your own Adzuna app ID and key.
+- **Pages you give it.** When you paste a job link or add a portfolio link, JobQuery loads that page to read its text.
+- **Update checks.** JobQuery asks GitHub whether a newer version exists, and on Windows and Linux downloads it if there is one. GitHub sees your IP address and the version you run, as with any download. No account or personal data is sent. You can turn automatic checks off under Settings, Updates.
+- **Employers.** To read or fill an application, JobQuery opens the form in your own Chrome or Edge, like a visit you made yourself. For Greenhouse jobs it can read the form from Greenhouse's public API first. What you fill in goes to the employer only when you submit, or when auto-submit does it for you.
 
 Links in the app open in your default browser, and only when you click them.
 
@@ -185,4 +187,4 @@ This is an early version. Known gaps:
 
 ## Disclaimer
 
-jobpls is provided as is, without warranty. You're responsible for charges from your AI providers, for everything sent to employers in your name, and for following the terms of the job sites and AI providers you use. jobpls isn't affiliated with any AI provider or job board. Their names are trademarks of their owners.
+JobQuery is provided as is, without warranty. You're responsible for charges from your AI providers, for everything sent to employers in your name, and for following the terms of the job sites and AI providers you use. JobQuery isn't affiliated with any AI provider or job board. Their names are trademarks of their owners.

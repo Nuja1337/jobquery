@@ -6,7 +6,7 @@ import { READABLE_ATS, detectAts } from './detect'
 const URL_RE = /https?:\/\/[^\s"'<>\\)]+/gi
 
 /**
- * The first link in some HTML or text that points at one posting on an application system jobpls can
+ * The first link in some HTML or text that points at one posting on an application system JobQuery can
  * read. Board pages without a posting id, such as a company's whole Greenhouse board, are skipped.
  */
 export function findAtsLink(text: string): string | null {

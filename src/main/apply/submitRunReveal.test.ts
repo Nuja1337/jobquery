@@ -42,7 +42,7 @@ const answer = (fieldKey: string, label: string, value: string, patch: Partial<P
 describe.skipIf(!executablePath)('user-only questions revealed on a later pass', () => {
   let browser: Browser
   let page: Page
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-reveal-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-reveal-'))
   beforeAll(async () => {
     browser = await chromium.launch({ executablePath, headless: true })
   }, 30_000)

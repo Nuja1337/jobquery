@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { Db, migrationHandle } from './database'
 import { MIGRATIONS, type Migration } from './schema'
 
-const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-db-'))
+const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-db-'))
 
 /** A database file at schema version 10, as an installed app would have it. */
 function version10(file: string, setup: (job: (id: string, stage: string, fit: number | null) => void, app: (id: string, jobId: string, status: string, extra?: Record<string, string>) => void) => void): void {

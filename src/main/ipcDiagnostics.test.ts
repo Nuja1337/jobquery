@@ -16,14 +16,14 @@ afterEach(async () => {
 })
 
 async function start() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobpls-diag-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobquery-diag-'))
   const paths = appPaths(dir)
   const s = await createServices({ paths, vault: testVault, emit: () => {}, appVersion: '1.2.3' })
   open.push(async () => {
     await s.shutdown()
     fs.rmSync(dir, { recursive: true, force: true })
   })
-  return { ...s, dir, paths, logFile: path.join(dir, 'logs', 'jobpls.log') }
+  return { ...s, dir, paths, logFile: path.join(dir, 'logs', 'jobquery.log') }
 }
 
 describe('database export', () => {
@@ -49,7 +49,7 @@ describe('file log', () => {
     env.ctx.events.add('error', 'The scoring worker hit a problem. Request failed with sk-ant-api03-abcdefghijklmnop1234', 'job-1', { prompt: 'My full name and address' })
     env.ctx.events.add('submitted', 'Sent Engineer at Acme.', 'job-2')
     const text = fs.readFileSync(env.logFile, 'utf8')
-    expect(text).toMatch(/INFO\s+jobpls 1\.2\.3 started, database version \d+/)
+    expect(text).toMatch(/INFO\s+JobQuery 1\.2\.3 started, database version \d+/)
     expect(text).toMatch(/ERROR error job=job-1 The scoring worker hit a problem\. Request failed with \[removed\]/)
     expect(text).toMatch(/INFO\s+submitted job=job-2 Sent Engineer at Acme\./)
     expect(text).not.toContain('sk-ant')
@@ -68,7 +68,7 @@ describe('file log', () => {
 
   it('logs a failed export', async () => {
     const env = await start()
-    const block = path.join(env.paths.exportsDir, `jobpls-backup-${new Date().toISOString().slice(0, 10)}.sqlite`)
+    const block = path.join(env.paths.exportsDir, `jobquery-backup-${new Date().toISOString().slice(0, 10)}.sqlite`)
     // The default file name is a folder, so the copy can't replace it.
     fs.mkdirSync(block)
     await expect(env.api.exportDatabase()).rejects.toThrow()

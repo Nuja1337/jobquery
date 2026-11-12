@@ -67,7 +67,7 @@ function initialUpdateStatus(param: string | null): UpdateStatus {
     case 'downloading':
       return { ...base, state: 'downloading', version: '0.2.0', percent: 42 }
     case 'error':
-      return { ...base, state: 'error', message: "jobpls couldn't check for updates. Check your internet connection, or try again later." }
+      return { ...base, state: 'error', message: "JobQuery couldn't check for updates. Check your internet connection, or try again later." }
     case 'disabled':
       return { ...base, state: 'disabled', checkedAt: null, message: 'Updates work only in the installed app.' }
     default:
@@ -251,7 +251,7 @@ export function createMockBridge(): Bridge {
 
   const api: Api = {
     async getAppInfo(): Promise<AppInfo> {
-      return { version: DEMO_VERSION, dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\jobpls', platform: 'win32', secureKeyStorage: true, openAtLogin: settings.system.startAtLogin }
+      return { version: DEMO_VERSION, dataDir: 'C:\\Users\\Demo\\AppData\\Roaming\\JobQuery', platform: 'win32', secureKeyStorage: true, openAtLogin: settings.system.startAtLogin }
     },
     async openExternal(url) {
       window.open(url, '_blank', 'noopener')
@@ -260,10 +260,10 @@ export function createMockBridge(): Bridge {
       console.info('[demo] openPath', path)
     },
     async exportData() {
-      return 'C:\\Users\\Demo\\Documents\\jobpls-export.json'
+      return 'C:\\Users\\Demo\\Documents\\jobquery-export.json'
     },
     async exportDatabase() {
-      return 'C:\Users\Demo\Documents\jobpls-backup.sqlite'
+      return 'C:\Users\Demo\Documents\jobquery-backup.sqlite'
     },
 
     async getSettings() {
@@ -577,7 +577,7 @@ export function createMockBridge(): Bridge {
       a.submitMode = mode
       a.submittedAt = iso(0)
       a.confirmation = 'Thanks for applying. We will be in touch.'
-      a.screenshotPath = `C:\\Users\\Demo\\AppData\\Roaming\\jobpls\\screenshots\\${a.id}.png`
+      a.screenshotPath = `C:\\Users\\Demo\\AppData\\Roaming\\JobQuery\\screenshots\\${a.id}.png`
       const j = jobs.find((x) => x.id === a.jobId)
       if (j) j.stage = 'applied'
       addEvent('submitted', a.jobId, `Submitted the application to ${a.company}.`)

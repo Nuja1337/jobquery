@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { isJobBoardUrl } from './jobBoards'
 
 describe('isJobBoardUrl', () => {
-  it('knows the aggregator sites jobpls reads', () => {
+  it('knows the aggregator sites JobQuery reads', () => {
     for (const url of [
       'https://www.themuse.com/jobs/gitlab/staff-backend-engineer-6d4207',
       'https://jobicy.com/jobs/159648-staff-machine-learning-engineer',
