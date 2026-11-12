@@ -4,7 +4,7 @@ How to publish a new version so installed copies of JobQuery can update to it.
 
 ## Where releases live
 
-Installed copies look for updates on the public repo `Nuja1337/jobquery-releases`. It holds only installers. The source repo stays private.
+Installed copies look for updates on the public repo `Nuja1337/jobquery-releases`. It holds only installers.
 
 The location is set in two places, `build.publish` in `package.json` and `RELEASES_URL` in `src/shared/defaults.ts`. A test keeps the two matched, so change them together.
 

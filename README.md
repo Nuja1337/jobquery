@@ -188,3 +188,7 @@ This is an early version. Known gaps:
 ## Disclaimer
 
 JobQuery is provided as is, without warranty. You're responsible for charges from your AI providers, for everything sent to employers in your name, and for following the terms of the job sites and AI providers you use. JobQuery isn't affiliated with any AI provider or job board. Their names are trademarks of their owners.
+
+## License
+
+JobQuery is free to use, change and share under the [MIT License](LICENSE).
